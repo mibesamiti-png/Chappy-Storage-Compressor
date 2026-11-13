@@ -33,10 +33,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Synthetic NTFS probe failed" }
 
       - name: Validate and unpack the pinned R2.6 source kit
-        if: hashFiles('ChappyStorageCompressor_R2_6_SourceKit.zip') != '' && hashFiles('ChappyStorageCompressor.csproj') == ''
+        if: hashFiles('Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip') != '' && hashFiles('ChappyStorageCompressor.csproj') == ''
         shell: pwsh
         run: |
-          $archive = "ChappyStorageCompressor_R2_6_SourceKit.zip"
+          $archive = "Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip"
           $expected = "a2b3ed077deb0a5be856a57ab32e39ebfcd0b650c572e7923dc974b4d0fff5ec"
           $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "R2.6 SourceKit checksum mismatch" }

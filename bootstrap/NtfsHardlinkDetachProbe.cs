@@ -470,10 +470,14 @@ internal static class Program
                 }
                 else
                 {
-                    using var writer = new FileStream(alias, FileMode.Open, FileAccess.Write,
-                        FileShare.None);
-                    writer.WriteByte((byte)(fixture.Bytes[0] ^ 0xFF));
-                    writer.Flush(true);
+                    using (var writer = new FileStream(alias, FileMode.Open, FileAccess.Write,
+                               FileShare.None))
+                    {
+                        writer.WriteByte((byte)(fixture.Bytes[0] ^ 0xFF));
+                        writer.Flush(true);
+                    }
+                    // The writer is gone: this must fail on altered bytes,
+                    // not merely because of an exclusive open handle.
                     MustRefuse(() => Replay(dir, fixture.Nonce, fixture.Sha), guard);
                 }
                 Assert(GetIdentity(At(dir, Master)) == GetIdentity(alias),

@@ -29,6 +29,27 @@ Windows向け **完全一致ファイルの重複調査** と **PNG/JPG完全無
 
 [実測検証結果](docs/R28_VERIFIED_RESULTS.md) / [未完了の安全ゲート](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2)
 
+## R2.9：プロセス強制終了と復旧
+
+合成ファイルの処理中に別のWindowsプロセスを実際に強制終了させ、復旧用ジャーナルの再実行を検証しました。
+
+- **9/9** 強制終了シナリオ、**7/7** SHA-256完全復元、**6/6** 危険操作の拒否
+- バックアップ改変、共有ハードリンク、書き込みロック、NTFSの代替ストリーム、読み取り専用などを検査
+- これは**プロセス終了試験**で、実際の電源断やディスク書き込みキャッシュの耐久性は未検証
+
+[検証記録](docs/R29_PROCESS_CRASH_GATE.md) / [R2.9の統合PR #4](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/4)
+
+## R2.10：重複統合したハードリンクを再び独立化する試験
+
+4MiBの生成ファイル2つをNTFSの同じファイルIDで共有させた後、片方を別ファイルIDへ戻しました。
+
+- **4/4** 強制終了地点、**4/4** 独立ファイル復元、**4/4** 独立した編集、**7/7** 危険操作の拒否
+- 解除後も内容のSHA-256と通常属性・作成/更新日時を検証
+- **独立化には追加のディスク容量が必要**。削減ではなく、独立した書き込み動作を取り戻す処理
+- 本番用の統合解除やACL・所有者・特殊ストリームの復元は未実装。試験コードは`bootstrap/`内に隔離
+
+[検証記録](docs/R210_INDEPENDENT_UNDO_GATE.md) / [R3本番機能の未完了条件](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/6)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

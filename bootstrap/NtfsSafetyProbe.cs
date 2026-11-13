@@ -14,7 +14,7 @@ try
     string? root = Path.GetPathRoot(sandbox);
     if (string.IsNullOrWhiteSpace(root)) throw new InvalidOperationException("No volume root");
     var fsName = new StringBuilder(64);
-    if (!GetVolumeInformationW(root, null, 0, out _, out _, out _, fsName, (uint)fsName.Capacity))
+    if (!NativeMethods.GetVolumeInformationW(root, null, 0, out _, out _, out _, fsName, (uint)fsName.Capacity))
         throw new Win32Exception(Marshal.GetLastWin32Error(), "Volume query failed");
     if (!string.Equals(fsName.ToString(), "NTFS", StringComparison.OrdinalIgnoreCase))
         throw new InvalidOperationException("TEMP drive is not NTFS; the test cannot be credited");
@@ -25,7 +25,7 @@ try
     byte[] modified = Encoding.ASCII.GetBytes("different synthetic bytes");
     File.WriteAllBytes(source, original);
 
-    if (!CreateHardLinkW(hardlink, source, IntPtr.Zero))
+    if (!NativeMethods.CreateHardLinkW(hardlink, source, IntPtr.Zero))
         throw new Win32Exception(Marshal.GetLastWin32Error(), "Synthetic hardlink failed");
     if (!File.ReadAllBytes(hardlink).AsSpan().SequenceEqual(original))
         throw new InvalidOperationException("Synthetic hardlink content mismatch");
@@ -62,19 +62,17 @@ finally
         Directory.Delete(sandbox, recursive: true);
 }
 
-[DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
-[return: MarshalAs(UnmanagedType.Bool)]
-static extern bool GetVolumeInformationW(
-    string lpRootPathName,
-    StringBuilder? lpVolumeNameBuffer,
-    uint nVolumeNameSize,
-    out uint lpVolumeSerialNumber,
-    out uint lpMaximumComponentLength,
-    out uint lpFileSystemFlags,
-    StringBuilder lpFileSystemNameBuffer,
-    uint nFileSystemNameSize);
+internal static class NativeMethods
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetVolumeInformationW(
+        string lpRootPathName, StringBuilder? lpVolumeNameBuffer, uint nVolumeNameSize,
+        out uint lpVolumeSerialNumber, out uint lpMaximumComponentLength,
+        out uint lpFileSystemFlags, StringBuilder lpFileSystemNameBuffer, uint nFileSystemNameSize);
 
-[DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
-[return: MarshalAs(UnmanagedType.Bool)]
-static extern bool CreateHardLinkW(
-    string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool CreateHardLinkW(
+        string lpFileName, string lpExistingFileName, IntPtr lpSecurityAttributes);
+}

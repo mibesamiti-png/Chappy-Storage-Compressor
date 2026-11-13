@@ -1,0 +1,42 @@
+name: Import R2.7 tracked source into a review branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - bootstrap/r27-import-request.txt
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    if: github.repository == 'mibesamiti-png/Chappy-Storage-Compressor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout pinned source archive and importer
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Import and inspect the R2.6 archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 bootstrap/import_r27.py
+          git status --short
+      - name: Commit imported source to an isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c feature/r27-tracked-source
+          git add --all
+          if git diff --cached --quiet; then
+            echo "::error::No source files were imported"
+            exit 1
+          fi
+          git commit -m "feat: track R2.7 C# sources and repair isolated tests"
+          git push --set-upstream origin feature/r27-tracked-source
+          echo "Imported source branch pushed for pull-request review."

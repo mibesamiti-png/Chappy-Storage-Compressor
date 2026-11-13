@@ -1,4 +1,4 @@
-name: Windows build and safety smoke tests
+name: Windows toolchain + NTFS probe (R2.6 app gated)
 
 on:
   push:
@@ -56,6 +56,7 @@ jobs:
           } else {
             "mode=bootstrap" >> $env:GITHUB_OUTPUT
             Write-Host "::notice::Bootstrap-only run. R2.6 application sources not yet uploaded."
+            "R2.6 WPF application: NOT BUILT (source kit absent). Windows/NTFS bootstrap only." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
 
       - name: Build checked-in WPF source tree and isolated NTFS tests

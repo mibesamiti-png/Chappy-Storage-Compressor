@@ -302,7 +302,8 @@ internal static class Program
         try { action(); }
         catch (Exception ex) when (ex is IOException ||
                                    ex is UnauthorizedAccessException ||
-                                   ex is Win32Exception)
+                                   ex is Win32Exception ||
+                                   ex is InvalidOperationException)
         {
             return;
         }
@@ -461,7 +462,7 @@ internal static class Program
 
     private sealed class StreamHandle : SafeHandle
     {
-        private StreamHandle() : base(IntPtr.Zero, ownsHandle: true) { }
+        public StreamHandle() : base(IntPtr.Zero, ownsHandle: true) { }
         public override bool IsInvalid => handle == new IntPtr(-1) || handle == IntPtr.Zero;
         protected override bool ReleaseHandle() => Native.FindClose(handle);
     }

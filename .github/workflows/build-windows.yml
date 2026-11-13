@@ -43,7 +43,14 @@ jobs:
           Expand-Archive -LiteralPath $archive -DestinationPath "sourcekit"
           $project = "sourcekit/ChappyStorageCompressor_R2_6/ChappyStorageCompressor.csproj"
           if (-not (Test-Path $project)) { throw "Unexpected SourceKit layout" }
-          Write-Host "Verified R2.6 SourceKit; ready for actual WPF build"
+          # The archive smoke-test project links Core/*.cs but omits the app's
+          # shared GlobalUsings.cs. Copy that source file into the isolated
+          # test project so its IO types resolve without editing the pinned ZIP.
+          $globals = "sourcekit/ChappyStorageCompressor_R2_6/GlobalUsings.cs"
+          $testGlobals = "sourcekit/ChappyStorageCompressor_R2_6/tests/GlobalUsings.cs"
+          if (-not (Test-Path $globals)) { throw "Missing application global usings" }
+          Copy-Item -LiteralPath $globals -Destination $testGlobals
+          Write-Host "Verified R2.6 SourceKit; app globals shared with synthetic tests"
 
       - name: Detect application sources
         id: source

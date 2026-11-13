@@ -32,3 +32,20 @@ The machine-readable report `diagnostics/r212-security-preservation.json` record
 - [Microsoft ReplaceFileW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew): original DACL and attributes may be merged; ignored ACL merge errors can lose metadata.
 - [Microsoft SetNamedSecurityInfoW](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setnamedsecurityinfow): explicit security information mutation requires appropriate access rights.
 - [R3 production undo issue #6](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/6) and [filesystem safety issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2).
+
+## Verified Windows CI results
+
+[GitHub Actions PR run #43516165756](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43516165756) **passed** on the actual Windows NTFS runner.
+
+| Test | Result |
+|---|---:|
+| Replacement with matching owner+DACL SDDL and staged candidate bytes | **1/1 PASS** |
+| Byte-exact original restoration with matching owner+DACL | **1/1 PASS** |
+| Unsafe preflight refusals (ACL changes, ADS, stage identity, extra link) | **5/5 PASS** |
+| Baseline C# synthetic safety checks | **359/359 PASS** |
+| R2.8 NTFS allocation / R2.9 process-kill / R2.10 detach / R2.11 metadata guards | **PASS** |
+| Windows WPF build and self-contained win-x64 publish | **PASS** |
+
+The run uploaded structured evidence to `chappy-windows-diagnostics/diagnostics/r212-security-preservation.json`. The report intentionally does not expose any raw owner SID, ACL, or security descriptor.
+
+**Interpretation:** an explicitly copied owner+DACL on one synthetic Windows fixture survived replacement and exact rollback. The independent source backup was retained. This does **not** mean ownership restoration is reliable under arbitrary user privileges, ACL inheritance, SACL, EFS, named streams, shared user media, power loss or concurrent writers.

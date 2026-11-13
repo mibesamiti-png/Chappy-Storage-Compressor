@@ -26,6 +26,12 @@ jobs:
           dotnet run --project bootstrap/WindowsCompilerProbe.csproj -c Release
           if ($LASTEXITCODE -ne 0) { throw "Bootstrap compiler probe failed" }
 
+      - name: Verify NTFS hardlinks and synthetic backup restoration
+        shell: pwsh
+        run: |
+          dotnet run --project bootstrap/NtfsSafetyProbe.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Synthetic NTFS probe failed" }
+
       - name: Validate and unpack the pinned R2.6 source kit
         if: hashFiles('ChappyStorageCompressor_R2_6_SourceKit.zip') != '' && hashFiles('ChappyStorageCompressor.csproj') == ''
         shell: pwsh

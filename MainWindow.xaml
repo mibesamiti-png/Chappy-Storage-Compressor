@@ -58,6 +58,7 @@
     <StackPanel Grid.Row="3" Margin="0,0,0,12">
       <WrapPanel Margin="0,0,0,10">
         <Button x:Name="ScanButton" Content="① 読み取り専用スキャン" Background="#2B7B70" BorderBrush="#3E9E8F" Click="Scan_Click"/>
+        <Button x:Name="MediaReportButton" Content="JPG / PNG / MP4別の重複容量レポート・CSV" Click="MediaReport_Click" IsEnabled="False"/>
         <Button x:Name="DetailsButton" Content="選択グループの全パス" Click="Details_Click" IsEnabled="False"/>
         <Button x:Name="MergeButton" Content="② 統合（実機安全試験まで停止）" Click="Merge_Click" IsEnabled="False"/>
         <Button x:Name="StopButton" Content="中断要求" Click="Stop_Click" IsEnabled="False"/>

@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.8 synthetic measurement status
+# Chappy Storage Compressor — R2.9 synthetic recovery verification
 
 Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -39,6 +39,19 @@ New test in [PR #3](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/
 
 [Full measurement table and remaining gates](R28_VERIFIED_RESULTS.md).
 
+## R2.9 — actual child-process termination and guarded journal replay
+
+[PR #4](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/4) / [successful Windows CI #43491388797](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43491388797).
+
+- **9/9** independently launched synthetic child processes were force-killed at durable checkpoints: before journal, after journal, after commit, during rollback stage, plus five adversarial recovery cases.
+- **7/7** byte-exact SHA-256 restores and **6/6** fail-closed refusals.
+- Unknown/missing journal, altered backup, added hardlink alias, active writer, ADS and read-only attributes remain blocking safety conditions.
+- Recovery is **idempotent** on a second replay for completed synthetic transactions.
+- The test harness uncovered and corrected a native `BY_HANDLE_FILE_INFORMATION` FILETIME struct alignment bug before any unsafe restoration.
+- Existing **359/359** C# checks, R2.8 physical-allocation test, WPF build and win-x64 EXE publish remain PASS.
+
+[Detailed R2.9 test scope, results and limitations](R29_PROCESS_CRASH_GATE.md). This proves **test-only process termination handling**, not sudden loss of power or crash consistency of storage hardware. The independent test backup stays on the same runner drive. No user media was altered, and no extra end-user disk space was recovered in this test.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.
@@ -53,7 +66,7 @@ New test in [PR #3](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/
 
 1. **Completed:** merge R2.7's directly tracked source without relaxing mutation locks. Validate the merged `main` CI.
 2. Check historical static scripts and update CI to run only against reviewed source, reducing the old pinned ZIP path to archival use.
-3. **R2.8 [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2):** first synthetic NTFS allocation/free-space measurement and exception-based rollback completed; dedicated VHDX, crash/power loss, ACL/ADS, concurrency, and application integration remain open.
+3. **R2.8/R2.9 [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2):** synthetic NTFS allocation measurement and real subprocess-kill replay completed; dedicated VHDX, true OS/power interruption, full ACL/ownership metadata, adversarial concurrency and actual app-engine integration remain open.
 4. Establish a release gate for future opt-in mutations only after rigorous rollback and on-disk metadata verification.
 
 Source changes: [PR #1](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/1).

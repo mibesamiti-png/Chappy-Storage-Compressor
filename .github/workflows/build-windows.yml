@@ -104,6 +104,24 @@ jobs:
             throw "R2.8 measurement or safety invariants failed"
           }
 
+      - name: Force-kill disposable NTFS transaction subprocesses and verify exact replay
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          dotnet run --project bootstrap/NtfsProcessKillRecoveryProbe.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "R2.9 process-kill recovery tests failed" }
+          if (-not (Test-Path "diagnostics/r29-process-crash.json")) {
+            throw "R2.9 machine-readable test report missing"
+          }
+          $report = Get-Content -Raw "diagnostics/r29-process-crash.json" | ConvertFrom-Json
+          if ($report.result -ne "PASS" -or $report.forcedKillCases -ne 9 -or
+              $report.exactRestorations -ne 7 -or $report.failClosedRejections -ne 6 -or
+              $report.productionMutationEnabled -ne $false -or
+              $report.realMediaAffected -ne $false) {
+            throw "R2.9 crash-recovery safety invariants failed"
+          }
+          Get-Content "diagnostics/r29-process-crash.json"
+
       - name: Build unpacked R2.6 ZIP and isolated NTFS tests
         if: steps.source.outputs.mode == 'zip'
         shell: cmd

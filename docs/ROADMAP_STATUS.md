@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.11 NTFS security metadata preflight verification
+# Chappy Storage Compressor — R2.12 synthetic owner/DACL preservation verification
 
 Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -77,6 +77,18 @@ New test in [PR #3](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/
 - Baseline **359/359** C# checks, R2.8 allocation measurement, R2.9 process-kill recovery, R2.10 independent-file undo, WPF build and win-x64 publish remain successful.
 
 This is an independent `bootstrap/` synthetic **preflight refusal test only**: it does not prove actual ACL/owner persistence through cutover, user-owned metadata restore, SACL/EFS, power-loss safety, race-free file mutation or normal-app integration. Normal app hardlink merge/replacement remain disabled. [Full details](R211_NTFS_METADATA_GUARD.md).
+
+## R2.12 — synthetic owner+DACL preservation across replace and rollback
+
+[PR #8](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/8) / [verified Windows CI #43516165756](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43516165756).
+
+- One generated synthetic NTFS file with a deliberately customized DACL was replaced by an independently staged candidate whose owner+DACL was explicitly copied from the original.
+- **1/1** post-replacement owner+DACL SDDL match and staged SHA-256 verified.
+- **1/1** independent-backup rollback restored the exact original SHA-256 bytes, owner+DACL SDDL and creation timestamp.
+- **5/5** unsafe preflight changes refused, including stage/target DACL tampering, unexpected ADS, identical-hash stage file identity substitution and an extra hardlink.
+- Existing **359/359** C# safety tests, R2.8 synthetic NTFS space measurement, R2.9 actual subprocess-kill recovery, R2.10 independent-file detach, R2.11 metadata refusal, WPF build and Windows x64 EXE publish all pass.
+
+[Details and limitations](R212_SECURITY_PRESERVATION_GATE.md). The owner+DACL preservation result is **one synthetic same-account scenario**, not arbitrary ACL/owner preservation or integration into the shipped application. SACL/EFS, nondefault named streams, complex inheritance, real power loss, concurrent source modification and isolated VHDX remain open. **Production deduplication, original-file replacement and undo remain disabled.**
 
 ## Remaining risks / safeguards
 

@@ -68,6 +68,15 @@ jobs:
             "R2.6 WPF application: NOT BUILT (source kit absent). Windows/NTFS bootstrap only." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           }
 
+      - name: Verify tracked R2.6 source contract and reference model
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          python tools/r26_contract_check.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/r26_reference_check.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build checked-in WPF source tree and isolated NTFS tests
         if: steps.source.outputs.mode == 'tree'
         shell: cmd

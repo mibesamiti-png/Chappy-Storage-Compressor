@@ -1,7 +1,7 @@
 <Window x:Class="ChappyStorageCompressor.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Chappy Storage Compressor R2.2 — 容量回復の事前安全診断" Width="1140" Height="830"
+        Title="Chappy Storage Compressor R2.13 — 個人メディア容量の読み取り診断" Width="1140" Height="830"
         MinWidth="900" MinHeight="660" Background="#0E1724" FontFamily="Yu Gothic UI, Segoe UI"
         Foreground="#F1F6FC" WindowStartupLocation="CenterScreen">
   <Grid Margin="24">
@@ -16,7 +16,7 @@
 
     <DockPanel Grid.Row="0" Margin="0,0,0,20" LastChildFill="True">
       <Border DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Top" Background="#173E3D" CornerRadius="14" Padding="10,5" Margin="10,0,0,0">
-        <TextBlock Foreground="#79E1C8" Text="R2.1  ·  重複と圧縮の重なり分析" FontSize="12"/>
+        <TextBlock Foreground="#79E1C8" Text="R2.13  ·  JPG / PNG / MP4 重複分析" FontSize="12"/>
       </Border>
       <StackPanel>
         <TextBlock Text="CHAPPY  /  STORAGE LAB" Foreground="#57D1BC" FontSize="12" FontWeight="Bold"/>
@@ -58,6 +58,7 @@
     <StackPanel Grid.Row="3" Margin="0,0,0,12">
       <WrapPanel Margin="0,0,0,10">
         <Button x:Name="ScanButton" Content="① 読み取り専用スキャン" Background="#2B7B70" BorderBrush="#3E9E8F" Click="Scan_Click"/>
+        <Button x:Name="MediaReportButton" Content="JPG / PNG / MP4別の重複容量レポート・CSV" Click="MediaReport_Click" IsEnabled="False"/>
         <Button x:Name="DetailsButton" Content="選択グループの全パス" Click="Details_Click" IsEnabled="False"/>
         <Button x:Name="MergeButton" Content="② 統合（実機安全試験まで停止）" Click="Merge_Click" IsEnabled="False"/>
         <Button x:Name="StopButton" Content="中断要求" Click="Stop_Click" IsEnabled="False"/>

@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.12 synthetic owner/DACL preservation verification
+# Chappy Storage Compressor — R2.13 personal-media capacity report
 
 Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -89,6 +89,18 @@ This is an independent `bootstrap/` synthetic **preflight refusal test only**: i
 - Existing **359/359** C# safety tests, R2.8 synthetic NTFS space measurement, R2.9 actual subprocess-kill recovery, R2.10 independent-file detach, R2.11 metadata refusal, WPF build and Windows x64 EXE publish all pass.
 
 [Details and limitations](R212_SECURITY_PRESERVATION_GATE.md). The owner+DACL preservation result is **one synthetic same-account scenario**, not arbitrary ACL/owner preservation or integration into the shipped application. SACL/EFS, nondefault named streams, complex inheritance, real power loss, concurrent source modification and isolated VHDX remain open. **Production deduplication, original-file replacement and undo remain disabled.**
+
+## R2.13 — personal-media development priority / format-specific read-only report
+
+The user-facing objective is **safe lossless JPG/PNG preview candidates, byte-identical JPG/PNG/MP4 duplicate discovery, batch throughput and measured capacity effects** on one person's Windows HDD/SSD. Complex cross-account ownership/inheritance, SACL, EFS, and arbitrary ADS preservation are deferred; special files remain excluded, not silently stripped. Existing safety tests and mutation locks are retained.
+
+[PR #9](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/9) adds a **real WPF GUI button** to summarize reverified exact-duplicate scan results by MP4, JPG/JPEG, PNG and other/mixed extensions, with per-group CSV export. Stale file identities/hashes/bytes are rejected; optional differing timestamps follow the explicit UI checkbox. Outputs are **logical savings estimates only**, not recovered bytes. Full functional design: [R2.13 personal media focus](R213_PERSONAL_MEDIA_FOCUS.md).
+
+**Gates and next priorities**
+- Windows WPF build, previous 359 synthetic tests and new per-format report assertions must pass.
+- The normal application hardlink merge, original media replacement and independent undo are still **disabled**.
+- Next build actual user-facing benefit: improve JPG/PNG batch candidate throughput and measurement, MP4 exact-duplicate inspection on large libraries, and nonoverlapping capacity estimates. Do **not** spend upcoming primary rounds on rare multi-account permission edge cases.
+- Dedicated VHDX and power-loss validation are tracked as separate safety gates, not a prerequisite for this read-only format summary.
 
 ## Remaining risks / safeguards
 

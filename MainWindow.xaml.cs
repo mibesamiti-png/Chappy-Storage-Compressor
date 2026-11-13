@@ -38,6 +38,7 @@ public partial class MainWindow : Window
         BrowseButton.IsEnabled = !busy;
         ScanButton.IsEnabled = !busy;
         MergeButton.IsEnabled = false; // R1.5: release gate until NTFS runtime verified.
+        MediaReportButton.IsEnabled = !busy && _lastScan != null;
         DetailsButton.IsEnabled = !busy && GroupsGrid.SelectedItems.Count == 1;
         StopButton.IsEnabled = busy;
         RecoveryButton.IsEnabled = !busy;
@@ -67,6 +68,7 @@ public partial class MainWindow : Window
         JobProgress.Value = 0;
         ProgressText.Text = "待機中";
         MergeButton.IsEnabled = false;
+        MediaReportButton.IsEnabled = false;
         DetailsButton.IsEnabled = false;
     }
 
@@ -230,6 +232,80 @@ public partial class MainWindow : Window
             // スキャン結果は統合前のファイルIDを保持しているため再使用しない。
             ClearScan();
             Log("統合済みファイルの状態を更新するには、もう一度スキャンしてください。");
+        }
+    }
+
+    // R2.13: format-specific, read-only deduplication analysis of media scans.
+    // Does not create hardlinks or replace original files.
+    private async void MediaReport_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _lastScan == null) return;
+        var scan = _lastScan;
+        bool allowTimestampDifference = TimeDifferenceCheck.IsChecked == true;
+        _work = new CancellationTokenSource();
+        CancellationToken ct = _work.Token;
+        Busy(true);
+        ProgressText.Text = "JPG/PNG/MP4を再照合中";
+        JobProgress.Value = 0;
+        Log("拡張子別の重複レポートを生成中（既存ファイルは変更しません）");
+        var recheckProgress = new Progress<(int Done, int Total)>(p =>
+        {
+            JobProgress.Value = p.Total == 0 ? 100 : 100.0 * p.Done / p.Total;
+            ProgressText.Text = $"再照合 {p.Done:N0}/{p.Total:N0}";
+        });
+        try
+        {
+            var report = await Task.Run(() =>
+                MediaDuplicateReport.Analyze(scan, allowTimestampDifference, ct, recheckProgress), ct);
+            ct.ThrowIfCancellationRequested();
+            ProgressText.Text = "重複容量レポート完成";
+            JobProgress.Value = 100;
+            string byFormat = string.Join(Environment.NewLine, report.Formats
+                .Select(x => $"{x.Format}: {x.EligibleGroups:N0}グループ・{x.EligibleFiles:N0}件 / {GroupRow.HumanSize(x.PotentialBytes)}"));
+            string info = $"再照合したグループ: {report.InspectedGroups:N0}件\n" +
+                $"条件一致: {report.EligibleGroups:N0}件、対象外: {report.BlockedGroups:N0}件、変更あり: {report.ChangedGroups:N0}件\n" +
+                $"重複削減の理論値: {GroupRow.HumanSize(report.PotentialBytes)}\n" +
+                $"実際に回復した容量: {GroupRow.HumanSize(report.ActualFreedBytes)}\n\n" +
+                byFormat + "\n\n" +
+                "拡張子別の分類です。MP4の再エンコード・画質変更はしません。\n" +
+                "これは原本変更なしの見込み値です。統合機能は現在も無効です。\n" +
+                "グループ別のCSVを保存しますか？";
+            Log($"拡張子別の重複検出: 条件一致 {report.EligibleGroups:N0}、再スキャン必要 {report.ChangedGroups:N0}、" +
+                $"理論削減 {GroupRow.HumanSize(report.PotentialBytes)}、実回復 0B。");
+            if (MessageBox.Show(info, "JPG/PNG/MP4 重複容量レポート",
+                MessageBoxButton.YesNo, MessageBoxImage.Information, MessageBoxResult.Yes) != MessageBoxResult.Yes)
+                return;
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "重複容量のCSV（スキャン対象フォルダの外に保存）",
+                Filter = "CSV (*.csv)|*.csv", AddExtension = true,
+                FileName = "chappy-r213-media-duplicate-report.csv",
+                OverwritePrompt = false
+            };
+            if (dialog.ShowDialog(this) == true)
+            {
+                ct.ThrowIfCancellationRequested();
+                await Task.Run(() => MediaDuplicateReport.ExportCsv(report, scan.Root, dialog.FileName), ct);
+                Log("JPG/PNG/MP4の読み取り専用CSVを保存: " + dialog.FileName);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            ProgressText.Text = "重複レポート中断";
+            Log("拡張子別の重複レポートを中断しました。原本変更なし。");
+        }
+        catch (Exception ex)
+        {
+            ProgressText.Text = "重複レポート失敗";
+            Log("拡張子別重複レポートのエラー: " + ex.Message);
+            MessageBox.Show(ex.Message, "重複レポートを確認してください",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            Busy(false);
+            _work?.Dispose();
+            _work = null;
         }
     }
 

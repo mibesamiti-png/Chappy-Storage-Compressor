@@ -72,6 +72,18 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [Windows CI検証結果](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43516585860) / [R2.12検証記録](docs/R212_SECURITY_PRESERVATION_GATE.md) / [統合PR #8](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/8)
 
+## R2.13：個人用JPG・PNG・MP4の重複容量レポート
+
+開発の優先順位を見直し、**普段のWindowsで使う画像・動画を安全に容量削減すること**へ重点を戻しました。別ユーザーの所有権や複雑なACL継承への対応は後回しにし、特殊属性やADSのあるファイルは安全に除外します。
+
+- 読み取り専用の重複スキャン後、**「JPG / PNG / MP4別の重複容量レポート・CSV」**ボタンから種類別の削減見込を確認。
+- 以前のスキャン結果をそのまま信じず、SHA-256・ファイルID・全バイトの一致を**再検証**。変更されたグループは見込み量から外します。
+- MP4は**バイト完全一致の重複検出のみ**。再エンコードや画質変更は行いません。
+- CSVはユーザーが保存を選んだときだけ出力し、原本フォルダ内への保存・既存ファイルの上書き・表計算式注入を防ぎます。
+- **削減見込は論理値で、実際の回復容量は0B**。通常アプリの統合・原本置換・統合解除はまだ無効です。
+
+[仕様と安全範囲](docs/R213_PERSONAL_MEDIA_FOCUS.md) / [PR #9](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/9)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

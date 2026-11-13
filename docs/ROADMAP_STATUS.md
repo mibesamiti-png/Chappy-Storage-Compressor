@@ -1,6 +1,6 @@
 # Chappy Storage Compressor — R2.7 verified status
 
-Updated 2026-11-13 UTC. The tracked-source R2.7 branch builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
+Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
 ## Overall roadmap
 
@@ -39,9 +39,9 @@ Updated 2026-11-13 UTC. The tracked-source R2.7 branch builds a version 0.2.6 WP
 
 ## Next gate
 
-1. Merge and validate R2.7's directly tracked source without relaxing mutation locks.
+1. **Completed:** merge R2.7's directly tracked source without relaxing mutation locks. Validate the merged `main` CI.
 2. Check historical static scripts and update CI to run only against reviewed source, reducing the old pinned ZIP path to archival use.
-3. Add a synthetic-only measured disk-space-recovery test with independent backup and fault injection; report actual disk free space, not just logical byte savings.
+3. **R2.8 [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2):** add a synthetic-only measured disk-space-recovery test with independent backup and fault injection; report actual disk free space, not just logical byte savings.
 4. Establish a release gate for future opt-in mutations only after rigorous rollback and on-disk metadata verification.
 
 Source changes: [PR #1](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/1).

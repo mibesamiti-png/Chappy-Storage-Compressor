@@ -42,3 +42,17 @@ The test is a **safe refusal gate**, not an ACL preservation implementation. Pro
 Run `dotnet run --project bootstrap/NtfsMetadataGuardProbe.csproj -c Release` from the Windows CI checkout; it deliberately rejects any non-GitHub Actions runner. Check the uploaded `r211-ntfs-metadata.json` alongside the existing R2.8, R2.9 and R2.10 diagnostics.
 
 Documentation on the Windows APIs used: [GetNamedSecurityInfoW](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getnamedsecurityinfow) and [FindFirstStreamW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-findfirststreamw).
+
+## Verified Windows CI evidence
+
+[R2.11 Windows Actions run #43501540844](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43501540844) **succeeded**, including the isolated metadata probe, baseline WPF build, 359 C# safety checks, R2.8 NTFS space measurement, R2.9 process-kill journal replay, R2.10 hardlink independent restoration, and self-contained win-x64 publish.
+
+- Clean preflight samples: **7/7**
+- Unsafe modification scenarios correctly refused: **7/7**
+- Original/staged file owner+DACL descriptor modifications detected: **2/2**
+- Named ADS injection correctly detected: **1/1**
+- Exact original SHA-256 bytes were preserved in all negative cases
+
+Machine-readable evidence: `diagnostics/r211-ntfs-metadata.json` in the workflow's `chappy-windows-diagnostics` artifact. No raw SDDL or account SID is emitted.
+
+The test uses `icacls` to alter only temporary generated files, not user content. The ability to **detect** an ACL/owner state change does not by itself prove that any production copy, replace or undo algorithm correctly **preserves** ACL/owner information.

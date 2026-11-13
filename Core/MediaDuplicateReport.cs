@@ -24,7 +24,7 @@ public static class MediaDuplicateReport
         ["MP4", "JPG", "PNG", "混合拡張子", "その他"];
 
     public static Summary Analyze(ScanResult scan, bool allowTimestampDifference,
-        CancellationToken ct = default)
+        CancellationToken ct = default, IProgress<(int Done, int Total)>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(scan);
         string root = Safety.ValidateRoot(scan.Root);
@@ -66,7 +66,7 @@ public static class MediaDuplicateReport
                         try
                         {
                             if (!Safety.SameSnapshot(file) ||
-                                file.Identity.LinkCount != 1 ||
+                                NativeFile.GetIdentity(full).LinkCount != 1 ||
                                 !string.Equals(Safety.ComputeSha256(full, ct),
                                     group.Hash, StringComparison.OrdinalIgnoreCase) ||
                                 (!string.Equals(full, representative.Path,
@@ -109,6 +109,7 @@ public static class MediaDuplicateReport
                 rows.Add(new Row(number, format, status, reason ?? "",
                     relative, file.snapshot.Length, file.i == 0 ? saving : 0, group.Hash));
             }
+            progress?.Report((number, scan.Groups.Count));
         }
 
         return new Summary(scan.Groups.Count, eligible, blocked, changed, potential, 0,

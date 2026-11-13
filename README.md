@@ -50,6 +50,18 @@ Windows向け **完全一致ファイルの重複調査** と **PNG/JPG完全無
 
 [検証記録](docs/R210_INDEPENDENT_UNDO_GATE.md) / [R3本番機能の未完了条件](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/6)
 
+## R2.11：NTFSの所有者・アクセス権・ADSを検査
+
+Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも、所有者・DACL、NTFSファイルID、代替データストリーム等が変更された場合は処理を拒否**する検証を追加。
+
+- 正常事前検証 **7/7成功**、危険条件 **7/7拒否**
+- ファイルのDACL変更 **2/2検出**、NTFS ADS追加 **1/1検出**
+- 元ファイルのデータはすべての拒否試験で変更なし
+- セキュリティ情報の詳細は公開CIログへ出力しない
+- **本番ファイルでのACL/所有者の完全な保存・復元は未検証**。元データを変更する機能は無効
+
+[Windows CI証拠](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43501972438) / [詳細検証記録](docs/R211_NTFS_METADATA_GUARD.md) / [統合PR #7](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/7)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

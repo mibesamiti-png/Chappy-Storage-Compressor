@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.7 verified status
+# Chappy Storage Compressor — R2.8 synthetic measurement status
 
 Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -27,6 +27,18 @@ Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through 
 - Two source-level test fixes: shared imports for smoke tests, explicit synthetic sentinel handle disposal.
 - Four PNG `CA2014` stackalloc-in-loop warnings eliminated by reusing the small spans outside loops.
 
+## R2.8 — measured physical savings on generated Windows NTFS files
+
+New test in [PR #3](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/3); verified [Windows CI #43487742467](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43487742467):
+
+- Two independent 16 MiB synthetic duplicates occupied **32 MiB** of unique-file-ID allocation; after synthetic hardlink consolidation the shared file occupied **16 MiB**. The measured volume free-space increase on that run was **16 MiB**.
+- Deliberately uncompressed generated PNG reduced from **1,049,371 B to 3,596 B**, with all non-IDAT chunks and inflated filtered scanlines identical.
+- Independent same-volume PNG backup, injected precommit stop, postcommit rollback: **PASS**; exact original SHA-256 restored. Backups consume space, and the PNG logical reduction is **not credited** as recovered end-user disk capacity.
+- Existing **359/359** C# synthetic checks, WPF build (0 errors / 2 safety-lock warnings), and win-x64 publish: **PASS**.
+- The experiment uses a disposable Windows runner `RUNNER_TEMP` sandbox only. The measurement code is not the production application. Production mutation is still disabled.
+
+[Full measurement table and remaining gates](R28_VERIFIED_RESULTS.md).
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.
@@ -41,7 +53,7 @@ Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through 
 
 1. **Completed:** merge R2.7's directly tracked source without relaxing mutation locks. Validate the merged `main` CI.
 2. Check historical static scripts and update CI to run only against reviewed source, reducing the old pinned ZIP path to archival use.
-3. **R2.8 [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2):** add a synthetic-only measured disk-space-recovery test with independent backup and fault injection; report actual disk free space, not just logical byte savings.
+3. **R2.8 [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2):** first synthetic NTFS allocation/free-space measurement and exception-based rollback completed; dedicated VHDX, crash/power loss, ACL/ADS, concurrency, and application integration remain open.
 4. Establish a release gate for future opt-in mutations only after rigorous rollback and on-disk metadata verification.
 
 Source changes: [PR #1](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/1).

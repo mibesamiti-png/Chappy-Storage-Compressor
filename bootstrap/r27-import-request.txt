@@ -1,0 +1,5 @@
+R2.7 source tracking request
+Approved input: Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip
+Pinned SHA256: a2b3ed077deb0a5be856a57ab32e39ebfcd0b650c572e7923dc974b4d0fff5ec
+Action: stage imported sources and test fixes in feature/r27-tracked-source.
+Do not mutate main's application sources automatically.

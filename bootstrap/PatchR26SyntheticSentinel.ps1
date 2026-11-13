@@ -6,28 +6,16 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Only patch the extracted, verified R2.6 SourceKit in CI. This source code
-# does not run in the production WPF application (CHAPPY_TESTING only).
+# CI-only patch to the already SHA-256 verified and extracted R2.6 test source.
+# The source file holds an exclusive sentinel handle until its method exits,
+# then reads it back while still locked. Close the handle before validation.
 $resolved = (Resolve-Path -LiteralPath $SourcePath).Path
 $source = [System.IO.File]::ReadAllText($resolved)
-$before = @'
-        using var stream = new FileStream(sentinel, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        byte[] text = System.Text.Encoding.ASCII.GetBytes("CHAPPY-R23-SYNTHETIC-ONLY\n");
-        stream.Write(text);
-        stream.Flush(true);
-        ValidateIsolatedDirectory(full);
-'@
-$after = @'
-        using (var stream = new FileStream(sentinel, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-        {
-            byte[] text = System.Text.Encoding.ASCII.GetBytes("CHAPPY-R23-SYNTHETIC-ONLY\n");
-            stream.Write(text);
-            stream.Flush(true);
-        }
-        ValidateIsolatedDirectory(full);
-'@
-if (-not $source.Contains($before) -or $source.IndexOf($before) -ne $source.LastIndexOf($before)) {
-    throw "R2.6 synthetic test-only patch context mismatch; refusing to modify"
+$needle = '        ValidateIsolatedDirectory(full);'
+$occurrences = $source.Split(@($needle), [StringSplitOptions]::None).Length - 1
+if ($occurrences -ne 1 -or -not $source.Contains('using var stream = new FileStream(sentinel,')) {
+    throw "R2.6 synthetic-only patch context mismatch; refusing to modify"
 }
-[System.IO.File]::WriteAllText($resolved, $source.Replace($before, $after), [System.Text.UTF8Encoding]::new($false))
-Write-Host "Patched test-only sentinel handle lifetime"
+$source = $source.Replace($needle, '        stream.Dispose();' + [Environment]::NewLine + $needle)
+[System.IO.File]::WriteAllText($resolved, $source, [System.Text.UTF8Encoding]::new($false))
+Write-Host "Patched R2.6 synthetic test: close sentinel stream before checking"

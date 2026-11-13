@@ -1,0 +1,62 @@
+name: Windows build and safety smoke tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Verify Windows compiler independently
+        shell: pwsh
+        run: |
+          dotnet --info
+          dotnet run --project bootstrap/WindowsCompilerProbe.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Bootstrap compiler probe failed" }
+
+      - name: Detect full R2.6 source kit
+        id: source
+        shell: pwsh
+        run: |
+          $hasApp = Test-Path "ChappyStorageCompressor.csproj"
+          $hasTests = Test-Path "tests/ChappyStorageCompressor.SmokeTests.csproj"
+          if ($hasApp -and $hasTests) {
+            "present=true" >> $env:GITHUB_OUTPUT
+            Write-Host "Full sources detected; app build and tests enabled."
+          } else {
+            "present=false" >> $env:GITHUB_OUTPUT
+            Write-Host "::notice::Bootstrap-only run. R2.6 application sources not yet uploaded."
+          }
+
+      - name: Build WPF app and isolated NTFS tests
+        if: steps.source.outputs.present == 'true'
+        shell: cmd
+        run: call RUN_DIAGNOSTICS.bat
+
+      - name: Upload diagnostic logs
+        if: always() && steps.source.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chappy-windows-diagnostics
+          path: diagnostics/
+          if-no-files-found: warn
+
+      - name: Upload compiled app
+        if: success() && steps.source.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chappy-win-x64-unverified
+          path: dist/win-x64/
+          if-no-files-found: error

@@ -35,6 +35,24 @@ CI uploads `diagnostics/r29-process-crash.json` with all scenario outcomes, whet
 
 **Important limits:** Killing an ordinary process does **not** simulate removing electrical power or an OS crash. NTFS log durability, partial sector writes, delayed flushes, real user ACL ownership, file watcher races, and dedicated VHDX volume measurement still need independent work. The backup is independent by file identity but remains on the **same physical runner volume**.
 
+## Verified Windows CI results (2026-11-13 UTC)
+
+[Windows Actions run #43491388797](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43491388797) completed successfully after a native Windows struct layout fix. Diagnostic JSON: `diagnostics/r29-process-crash.json`, archived with the `chappy-windows-diagnostics` artifact.
+
+| Result | Verified |
+|---|---:|
+| Child processes terminated at flushed checkpoints | **9 / 9** |
+| Exact SHA-256 restores following committed cutover | **7 / 7** |
+| Unsafe automatic recovery refused | **6 / 6** |
+| Second recovery replay makes no new change | **PASS** |
+| Existing C# synthetic safety checks | **359 / 359** |
+| R2.8 independent NTFS space measurement | **PASS** |
+| Windows WPF build + self-contained EXE publish | **PASS** |
+
+The initial run failed before the checkpoint because a `BY_HANDLE_FILE_INFORMATION` P/Invoke struct mapped native FILETIME fields as 8-byte-aligned C# `long` values, shifting the NTFS link-count field. The fix represents each native FILETIME as **two 32-bit integers**, matching Windows DWORD alignment. Fail-closed behavior stopped the test before an unsafe cutover; that initial failure is not counted as a pass.
+
+The results are *process-kill durability and replay evidence on generated TEMP data*, not power-loss safety, end-user recovery or proof of crash-consistent physical storage barriers.
+
 ## Acceptance criteria
 
 - 9 disposable child process terminations and verified checkpoint markers.

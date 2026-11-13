@@ -122,6 +122,27 @@ jobs:
           }
           Get-Content "diagnostics/r29-process-crash.json"
 
+      - name: Detach synthetic hardlinked files and verify independent editing and crash replay
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          dotnet run --project bootstrap/NtfsHardlinkDetachProbe.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "R2.10 synthetic hardlink detach failed" }
+          if (-not (Test-Path "diagnostics/r210-detach.json")) {
+            throw "R2.10 structured detach report missing"
+          }
+          $report = Get-Content -Raw "diagnostics/r210-detach.json" | ConvertFrom-Json
+          if ($report.verdict -ne "PASS" -or
+              $report.forcedProcessTerminationCheckpoints -ne 4 -or
+              $report.completeIndependentRestoreCases -ne 4 -or
+              $report.independentEditingValidatedCases -ne 4 -or
+              $report.unsafeMutationRefusals -ne 7 -or
+              $report.productionHardlinkMutationEnabled -ne $false -or
+              $report.productionOriginalReplacementEnabled -ne $false) {
+            throw "R2.10 independent undo safety invariants failed"
+          }
+          Get-Content "diagnostics/r210-detach.json"
+
       - name: Build unpacked R2.6 ZIP and isolated NTFS tests
         if: steps.source.outputs.mode == 'zip'
         shell: cmd

@@ -12,7 +12,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -26,37 +26,59 @@ jobs:
           dotnet run --project bootstrap/WindowsCompilerProbe.csproj -c Release
           if ($LASTEXITCODE -ne 0) { throw "Bootstrap compiler probe failed" }
 
-      - name: Detect full R2.6 source kit
+      - name: Validate and unpack the pinned R2.6 source kit
+        if: hashFiles('ChappyStorageCompressor_R2_6_SourceKit.zip') != '' && hashFiles('ChappyStorageCompressor.csproj') == ''
+        shell: pwsh
+        run: |
+          $archive = "ChappyStorageCompressor_R2_6_SourceKit.zip"
+          $expected = "a2b3ed077deb0a5be856a57ab32e39ebfcd0b650c572e7923dc974b4d0fff5ec"
+          $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "R2.6 SourceKit checksum mismatch" }
+          Expand-Archive -LiteralPath $archive -DestinationPath "sourcekit"
+          $project = "sourcekit/ChappyStorageCompressor_R2_6/ChappyStorageCompressor.csproj"
+          if (-not (Test-Path $project)) { throw "Unexpected SourceKit layout" }
+          Write-Host "Verified R2.6 SourceKit; ready for actual WPF build"
+
+      - name: Detect application sources
         id: source
         shell: pwsh
         run: |
-          $hasApp = Test-Path "ChappyStorageCompressor.csproj"
-          $hasTests = Test-Path "tests/ChappyStorageCompressor.SmokeTests.csproj"
-          if ($hasApp -and $hasTests) {
-            "present=true" >> $env:GITHUB_OUTPUT
-            Write-Host "Full sources detected; app build and tests enabled."
+          if (Test-Path "ChappyStorageCompressor.csproj") {
+            "mode=tree" >> $env:GITHUB_OUTPUT
+          } elseif (Test-Path "sourcekit/ChappyStorageCompressor_R2_6/ChappyStorageCompressor.csproj") {
+            "mode=zip" >> $env:GITHUB_OUTPUT
           } else {
-            "present=false" >> $env:GITHUB_OUTPUT
+            "mode=bootstrap" >> $env:GITHUB_OUTPUT
             Write-Host "::notice::Bootstrap-only run. R2.6 application sources not yet uploaded."
           }
 
-      - name: Build WPF app and isolated NTFS tests
-        if: steps.source.outputs.present == 'true'
+      - name: Build checked-in WPF source tree and isolated NTFS tests
+        if: steps.source.outputs.mode == 'tree'
         shell: cmd
         run: call RUN_DIAGNOSTICS.bat
 
+      - name: Build unpacked R2.6 ZIP and isolated NTFS tests
+        if: steps.source.outputs.mode == 'zip'
+        shell: cmd
+        working-directory: sourcekit/ChappyStorageCompressor_R2_6
+        run: call RUN_DIAGNOSTICS.bat
+
       - name: Upload diagnostic logs
-        if: always() && steps.source.outputs.present == 'true'
+        if: always() && steps.source.outputs.mode != 'bootstrap'
         uses: actions/upload-artifact@v4
         with:
           name: chappy-windows-diagnostics
-          path: diagnostics/
+          path: |
+            diagnostics/
+            sourcekit/ChappyStorageCompressor_R2_6/diagnostics/
           if-no-files-found: warn
 
       - name: Upload compiled app
-        if: success() && steps.source.outputs.present == 'true'
+        if: success() && steps.source.outputs.mode != 'bootstrap'
         uses: actions/upload-artifact@v4
         with:
           name: chappy-win-x64-unverified
-          path: dist/win-x64/
+          path: |
+            dist/win-x64/
+            sourcekit/ChappyStorageCompressor_R2_6/dist/win-x64/
           if-no-files-found: error

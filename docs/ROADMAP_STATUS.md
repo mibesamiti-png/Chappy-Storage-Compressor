@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.10 independent-file restoration research
+# Chappy Storage Compressor — R2.11 NTFS security metadata preflight verification
 
 Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -65,6 +65,18 @@ New test in [PR #3](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/
 - Baseline **359/359** C# safety checks, R2.8 measurements, R2.9 recovery tests, WPF build and Windows EXE publish remain successful.
 
 [Detailed test plan, evidence and limits](R210_INDEPENDENT_UNDO_GATE.md). This is separate experimental code under `bootstrap/`; **the normal application still cannot perform production deduplication or independent-file restoration**. In particular, the experiment does not prove security ACL/ownership inheritance, nondefault streams, third-party writers, EFS, VHDX, or power-failure durability.
+
+## R2.11 — owner/DACL, alternate-stream and identity fail-closed preflight
+
+[R2.11 PR #7](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/7) and [verified Windows CI #43501540844](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43501540844):
+
+- **7/7** clean metadata baselines and **7/7** unsafe conditions rejected, without changing original synthetic file bytes.
+- **2/2** owner+DACL security-descriptor changes detected (target and staged file), even with matching SHA-256 data. Original owner/DACL descriptor is captured in memory and not published in logs.
+- **1/1** named NTFS ADS injection detected, with the stream left intact after refusal.
+- Extra hardlink alias, same-hash stage file identity swap, read-only original and active exclusive writer also rejected.
+- Baseline **359/359** C# checks, R2.8 allocation measurement, R2.9 process-kill recovery, R2.10 independent-file undo, WPF build and win-x64 publish remain successful.
+
+This is an independent `bootstrap/` synthetic **preflight refusal test only**: it does not prove actual ACL/owner persistence through cutover, user-owned metadata restore, SACL/EFS, power-loss safety, race-free file mutation or normal-app integration. Normal app hardlink merge/replacement remain disabled. [Full details](R211_NTFS_METADATA_GUARD.md).
 
 ## Remaining risks / safeguards
 

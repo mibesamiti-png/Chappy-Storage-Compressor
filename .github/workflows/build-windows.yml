@@ -143,6 +143,29 @@ jobs:
           }
           Get-Content "diagnostics/r210-detach.json"
 
+      - name: Refuse NTFS owner/DACL, ADS, identity and concurrent changes on synthetic files
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          dotnet run --project bootstrap/NtfsMetadataGuardProbe.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "R2.11 synthetic metadata guard failed" }
+          if (-not (Test-Path "diagnostics/r211-ntfs-metadata.json")) {
+            throw "R2.11 structured metadata report missing"
+          }
+          $report = Get-Content -Raw "diagnostics/r211-ntfs-metadata.json" | ConvertFrom-Json
+          if ($report.result -ne "PASS" -or
+              $report.baselineMetadataPasses -ne 7 -or
+              $report.unsafeMetadataRefusals -ne 7 -or
+              $report.descriptorMutationDetected -ne 2 -or
+              $report.namedStreamMutationDetected -ne 1 -or
+              $report.originalBytesPreservedInAllCases -ne $true -or
+              $report.aclOwnerPreservationAfterCommitProved -ne $false -or
+              $report.normalApplicationMutationsEnabled -ne $false -or
+              $report.originalMediaUsed -ne $false) {
+            throw "R2.11 metadata preflight invariants failed"
+          }
+          Get-Content "diagnostics/r211-ntfs-metadata.json"
+
       - name: Build unpacked R2.6 ZIP and isolated NTFS tests
         if: steps.source.outputs.mode == 'zip'
         shell: cmd

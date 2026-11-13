@@ -50,31 +50,8 @@ jobs:
           $testGlobals = "sourcekit/ChappyStorageCompressor_R2_6/tests/GlobalUsings.cs"
           if (-not (Test-Path $globals)) { throw "Missing application global usings" }
           Copy-Item -LiteralPath $globals -Destination $testGlobals
-          # R2.6 synthetic harness bug: PrepareTestDirectory held an exclusive
-          # handle on its sentinel while immediately reading it back.
-          # Patch only CI's extracted disposable test copy; fail closed when
-          # the pinned source does not match the expected exact fragment.
-          $synthetic = "sourcekit/ChappyStorageCompressor_R2_6/Core/SyntheticReplacementExperiment.cs"
-          $srcText = Get-Content -LiteralPath $synthetic -Raw -Encoding UTF8
-          $old = @'
-        using var stream = new FileStream(sentinel, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        byte[] text = System.Text.Encoding.ASCII.GetBytes("CHAPPY-R23-SYNTHETIC-ONLY\n");
-        stream.Write(text);
-        stream.Flush(true);
-        ValidateIsolatedDirectory(full);
-'@
-          $new = @'
-        using (var stream = new FileStream(sentinel, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-        {
-            byte[] text = System.Text.Encoding.ASCII.GetBytes("CHAPPY-R23-SYNTHETIC-ONLY\n");
-            stream.Write(text);
-            stream.Flush(true);
-        }
-        ValidateIsolatedDirectory(full);
-'@
-          if (-not $srcText.Contains($old)) { throw "R2.6 synthetic sentinel patch context mismatch" }
-          [System.IO.File]::WriteAllText((Resolve-Path $synthetic), $srcText.Replace($old,$new), [System.Text.UTF8Encoding]::new($false))
-          Write-Host "Patched isolated test sentinel handle lifetime"
+          # Apply the isolated test-only workaround to the extracted sources.
+          & "$env:GITHUB_WORKSPACE/bootstrap/PatchR26SyntheticSentinel.ps1" -SourcePath "sourcekit/ChappyStorageCompressor_R2_6/Core/SyntheticReplacementExperiment.cs"
           Write-Host "Verified R2.6 SourceKit; app globals shared with synthetic tests"
 
       - name: Detect application sources

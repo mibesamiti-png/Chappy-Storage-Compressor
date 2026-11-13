@@ -441,13 +441,22 @@ internal static class Program
         Directory.Delete(dir, recursive: true);
     }
 
+    // FILETIME is two DWORDs with 4-byte alignment. Using a C# long here
+    // shifts the following Win32 fields under default struct packing.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeFileTime
+    {
+        internal uint Low;
+        internal uint High;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeFileInfo
     {
         internal uint Attributes;
-        internal long CreationTime;
-        internal long LastAccessTime;
-        internal long LastWriteTime;
+        internal NativeFileTime CreationTime;
+        internal NativeFileTime LastAccessTime;
+        internal NativeFileTime LastWriteTime;
         internal uint VolumeSerialNumber;
         internal uint FileSizeHigh;
         internal uint FileSizeLow;

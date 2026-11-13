@@ -62,6 +62,16 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [Windows CI証拠](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43501972438) / [詳細検証記録](docs/R211_NTFS_METADATA_GUARD.md) / [統合PR #7](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/7)
 
+## R2.12：所有者・アクセス権を維持する置換と復元の合成試験
+
+- Windowsの合成NTFSファイルで、元ファイルと異なるアクセス権を持つステージへ所有者・DACLを引き継ぎ、**置換後のデータと権限が一致することを検証**。
+- 別の独立バックアップから元のSHA-256・所有者・DACLを一致させて復元する試験も成功。
+- **1/1 置換成功・1/1 完全復元・5/5 危険な変更の拒否**。
+- これは同一Windows実行アカウント上の合成データの検証。**異なる所有者の復元、任意のACL、SACL、ADS、EFS、実際の電源断、利用者ファイルの安全性は未検証**。
+- 通常のアプリでの重複統合・原本置換・統合解除は引き続き無効。
+
+[Windows CI検証結果](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43516585860) / [R2.12検証記録](docs/R212_SECURITY_PRESERVATION_GATE.md) / [統合PR #8](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/8)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

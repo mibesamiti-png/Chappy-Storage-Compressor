@@ -92,6 +92,17 @@ jobs:
             throw "R2.8 structured measurement missing"
           }
           Get-Content "diagnostics/r28-ntfs-space.json"
+          $report = Get-Content -Raw "diagnostics/r28-ntfs-space.json" | ConvertFrom-Json
+          if ($report.productionMutationEnabled -ne $false) {
+            throw "Production mutation must remain disabled"
+          }
+          if ($report.syntheticTestsPassed -ne $true -or
+              $report.duplicates.uniqueFileIdAllocatedSavingsBytes -le 0 -or
+              $report.duplicates.bothNamesShareNtfsIdentity -ne $true -or
+              $report.png.faultAfterCommitRolledBackExactly -ne $true -or
+              $null -ne $report.png.realWorldCapacityReclaimedBytes) {
+            throw "R2.8 measurement or safety invariants failed"
+          }
 
       - name: Build unpacked R2.6 ZIP and isolated NTFS tests
         if: steps.source.outputs.mode == 'zip'

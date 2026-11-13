@@ -275,7 +275,7 @@ internal static class Program
         var info = new ProcessStartInfo("dotnet")
         {
             UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = false, RedirectStandardError = false
+            RedirectStandardOutput = true, RedirectStandardError = true
         };
         info.ArgumentList.Add(assembly);
         info.ArgumentList.Add("--worker");
@@ -289,12 +289,16 @@ internal static class Program
             child.WaitForExit();
             throw new TimeoutException("Synthetic child failed to terminate");
         }
+        string childOut = child.StandardOutput.ReadToEnd();
+        string childError = child.StandardError.ReadToEnd();
         Require(child.ExitCode != 0, "Child exited normally instead of being killed");
         string directory = SandboxPath(nonce);
         string checkpoint = At(directory, CheckpointName);
-        Require(File.Exists(checkpoint) &&
-                File.ReadAllText(checkpoint) == phase,
-            "Child did not reach its forced-kill checkpoint");
+        if (!File.Exists(checkpoint) || File.ReadAllText(checkpoint) != phase)
+            throw new InvalidOperationException(
+                "Child missed forced-kill checkpoint; phase=" + phase +
+                "; exit=" + child.ExitCode +
+                "; stdout=" + childOut + "; stderr=" + childError);
     }
 
     private static void MustRefuse(Action action, string reason)

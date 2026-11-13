@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.9 synthetic recovery verification
+# Chappy Storage Compressor — R2.10 independent-file restoration research
 
 Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -9,10 +9,10 @@ Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through 
 | R1 Duplicate detection / hardlink prototype | 90% | Synthetic safety checks pass; production merging disabled |
 | R1.x Failure recovery / safety | 98% | Windows synthetic tests pass; full fault-injection matrix incomplete |
 | R2 Lossless JPG/PNG candidate creation | 68% | Candidate-only; original replacement disabled |
-| R3 Restore independent files | 15% | Implementation incomplete |
+| R3 Restore independent files | 15% | Separate synthetic detachment tests pass; app undo and metadata guarantees not implemented |
 | R4 Batch queue / capacity analysis | 76% | Synthetic CI passes; large dataset benchmarks pending |
 
-**Overall estimated source implementation: 69.4%.** This number is only an unweighted historical estimate of source coverage, not release readiness, measured reliability, or a data-loss probability.
+**Overall estimated source implementation: 69.4% (unchanged).** This number is only an unweighted historical estimate of source coverage, not release readiness, measured reliability, or a data-loss probability.
 
 ## Verified R2.7 tracked-source test result
 
@@ -52,6 +52,20 @@ New test in [PR #3](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/
 
 [Detailed R2.9 test scope, results and limitations](R29_PROCESS_CRASH_GATE.md). This proves **test-only process termination handling**, not sudden loss of power or crash consistency of storage hardware. The independent test backup stays on the same runner drive. No user media was altered, and no extra end-user disk space was recovered in this test.
 
+## R2.10 — synthetic restoration of independent files after deduplication
+
+[PR #5](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/5) / [verified Windows CI #43496747086](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43496747086).
+
+- **4/4** forcibly terminated synthetic child process scenarios passed, with a journal/no-journal distinction.
+- **4/4** safe independent restorations (regular operation plus three restart scenarios). Both path names retained the SHA-256 data but used different NTFS file IDs.
+- **4/4** editing-independence checks passed: changing one detached name did not modify the other name.
+- **7/7** fail-closed refusals passed: missing journal, altered stage bytes, added hardlink, exclusive writer, unexpected ADS, read-only alias and modified shared source data.
+- Creation/write timestamps and ordinary file attributes were checked for equality on these synthetic fixtures.
+- Independent restoration *increases* physical NTFS allocation; any observed volume free-space delta is noisy and not proof of production capacity changes.
+- Baseline **359/359** C# safety checks, R2.8 measurements, R2.9 recovery tests, WPF build and Windows EXE publish remain successful.
+
+[Detailed test plan, evidence and limits](R210_INDEPENDENT_UNDO_GATE.md). This is separate experimental code under `bootstrap/`; **the normal application still cannot perform production deduplication or independent-file restoration**. In particular, the experiment does not prove security ACL/ownership inheritance, nondefault streams, third-party writers, EFS, VHDX, or power-failure durability.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.
@@ -66,7 +80,7 @@ New test in [PR #3](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/
 
 1. **Completed:** merge R2.7's directly tracked source without relaxing mutation locks. Validate the merged `main` CI.
 2. Check historical static scripts and update CI to run only against reviewed source, reducing the old pinned ZIP path to archival use.
-3. **R2.8/R2.9 [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2):** synthetic NTFS allocation measurement and real subprocess-kill replay completed; dedicated VHDX, true OS/power interruption, full ACL/ownership metadata, adversarial concurrency and actual app-engine integration remain open.
+3. **R2.8–R2.10 [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2):** synthetic allocation, process-kill recovery and independent hardlink detach passed; VHDX, true OS/power interruption, ACL/ownership/ADS and production app integration remain open.
 4. Establish a release gate for future opt-in mutations only after rigorous rollback and on-disk metadata verification.
 
 Source changes: [PR #1](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/1).

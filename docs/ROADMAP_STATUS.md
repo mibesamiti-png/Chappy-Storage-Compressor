@@ -14,7 +14,8 @@ Snapshot: **R2.6 source kit (local, not yet uploaded to this public repository)*
 
 ### Current repository status
 
-- The repository is public and initially empty; a bootstrap workflow has been committed.
+- The repository is public; the bootstrap workflow and compiler probe are committed.
+- **Windows bootstrap compiler probe: PASS** (GitHub Actions [run #43468251610](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43468251610)). This verifies the Windows runner, .NET 10 compiler, SHA-256, and disposable TEMP file I/O only, **not** the R2.6 app.
 - The **full R2.6 C#/WPF sources and original R2.6 test suite have not yet been uploaded**. Until then CI can only prove the Windows SDK/toolchain via an isolated bootstrap probe.
 - No real photos/videos, test media from the user's disks, logs, secrets or backups are committed.
 - Recovery of physical disk space is not demonstrated: **0 B**. Original modification remains disabled.

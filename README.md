@@ -19,6 +19,16 @@ Windows向け **完全一致ファイルの重複調査** と **PNG/JPG完全無
 進捗：[docs/ROADMAP_STATUS.md](docs/ROADMAP_STATUS.md)。
 変更履歴：[PR #1](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/1)。
 
+## R2.8：合成NTFSデータの容量回復を初めて実測
+
+- Windows GitHub Actions上で16MiBずつの完全一致ファイル2個を作成し、ハードリンクによる重複統合後の**実測空き容量増加16MiB**を確認。
+- 一意なNTFSファイルIDの物理割当量は**32MiB → 16MiB**。ただし実測値はCI環境固有で、他のドライブで同じ値になる保証はありません。
+- 意図的に非圧縮で生成したPNGは**1,049,371B → 3,596B**。画像のscanlineと非IDATメタデータの完全一致、独立バックアップからのバイト完全復元を確認。
+- 既存C#安全テスト**359/359成功**、WPFビルドとEXE発行も成功。
+- **実際の写真・動画の容量回復は未検証**。バックアップを保持している間は圧縮しただけで空き容量が増えるとは限りません。
+
+[実測検証結果](docs/R28_VERIFIED_RESULTS.md) / [未完了の安全ゲート](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

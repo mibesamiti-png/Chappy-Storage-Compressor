@@ -246,13 +246,20 @@ public partial class MainWindow : Window
         CancellationToken ct = _work.Token;
         Busy(true);
         ProgressText.Text = "JPG/PNG/MP4を再照合中";
+        JobProgress.Value = 0;
         Log("拡張子別の重複レポートを生成中（既存ファイルは変更しません）");
+        var recheckProgress = new Progress<(int Done, int Total)>(p =>
+        {
+            JobProgress.Value = p.Total == 0 ? 100 : 100.0 * p.Done / p.Total;
+            ProgressText.Text = $"再照合 {p.Done:N0}/{p.Total:N0}";
+        });
         try
         {
             var report = await Task.Run(() =>
-                MediaDuplicateReport.Analyze(scan, allowTimestampDifference, ct), ct);
+                MediaDuplicateReport.Analyze(scan, allowTimestampDifference, ct, recheckProgress), ct);
             ct.ThrowIfCancellationRequested();
             ProgressText.Text = "重複容量レポート完成";
+            JobProgress.Value = 100;
             string byFormat = string.Join(Environment.NewLine, report.Formats
                 .Select(x => $"{x.Format}: {x.EligibleGroups:N0}グループ・{x.EligibleFiles:N0}件 / {GroupRow.HumanSize(x.PotentialBytes)}"));
             string info = $"再照合したグループ: {report.InspectedGroups:N0}件\n" +

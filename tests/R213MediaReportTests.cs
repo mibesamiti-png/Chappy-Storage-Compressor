@@ -66,6 +66,14 @@ internal static class R213MediaReportTests
             check(permissive.EligibleGroups == 3 && permissive.ChangedGroups == 1 &&
                   permissive.PotentialBytes == 3072 + 2048 + 1536,
                 "R2.13: 日時差許容は既存の明示設定時のみ反映");
+
+            string newLink = Path.Combine(root, "unexpected-hardlink.jpg");
+            NativeFile.NewHardLink(newLink, Path.Combine(root, "=HYPERLINK.jpg"));
+            var linked = MediaDuplicateReport.Analyze(scan, false);
+            check(linked.ChangedGroups == 2 && linked.EligibleGroups == 1 &&
+                  linked.PotentialBytes == 3072,
+                "R2.13: スキャン後に追加された外部ハードリンクを見込から除外");
+            File.Delete(newLink);
         }
         finally
         {

@@ -19,5 +19,6 @@ __pycache__/
 *.avi
 *.7z
 *.zip
+!ChappyStorageCompressor_R2_6_SourceKit.zip
 *.bak
 *.backup

@@ -82,6 +82,17 @@ jobs:
         shell: cmd
         run: call RUN_DIAGNOSTICS.bat
 
+      - name: Measure NTFS allocated bytes and synthetic rollback
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          dotnet run --project bootstrap/NtfsSpaceMeasurementProbe.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "R2.8 synthetic NTFS measurement failed" }
+          if (-not (Test-Path "diagnostics/r28-ntfs-space.json")) {
+            throw "R2.8 structured measurement missing"
+          }
+          Get-Content "diagnostics/r28-ntfs-space.json"
+
       - name: Build unpacked R2.6 ZIP and isolated NTFS tests
         if: steps.source.outputs.mode == 'zip'
         shell: cmd

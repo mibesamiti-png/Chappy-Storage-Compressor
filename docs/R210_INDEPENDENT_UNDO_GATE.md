@@ -41,3 +41,23 @@ The experiment only tests generated files and is not part of the installed WPF a
 The R2.8 volume space delta was a **saving** from deduplication; R2.10's independent restoration requires additional physical allocation (typically the size of the duplicate), and free-space sampling on a shared runner is noisy. The original images and videos are never accessed. Production hardlink consolidation and production file replacement remain disabled.
 
 The real source restore/undo engine remains blocked until those constraints are handled. See [Issue #2](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/2) and [R2.9 process-kill tests](R29_PROCESS_CRASH_GATE.md).
+
+
+## Windows CI verification — 2026-11-13 UTC
+
+[PR #5 Windows CI run #43496747086](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43496747086) **passed every job step**. The new test ran on a real NTFS Windows runner and emitted a machine-readable `diagnostics/r210-detach.json`, archived in the `chappy-windows-diagnostics` artifact.
+
+| Gate | Observed |
+|---|---:|
+| Child subprocess kill checkpoints reached | **4 / 4** |
+| Independent file restorations (including normal path) | **4 / 4** |
+| Verify editing former alias does not change master | **4 / 4** |
+| Unsafe detach/replay refused | **7 / 7** |
+| R2.9 process-kill journal tests | **9 scenarios passed** |
+| R2.8 generated NTFS allocated-space measurement | **PASS** |
+| Existing isolated C# safety checks | **359 / 359** |
+| Windows WPF build and self-contained EXE publish | **PASS** |
+
+The test verifies that the new file has an independent file ID and exact SHA-256 bytes, and that its creation/write timestamps and regular file attributes match the synthetic pre-detach original. A later independent edit does not change the master. The test also confirms that restoring independent storage **requires additional allocated bytes**; the raw runner free-space sample is noisy and **not** a release benchmark.
+
+Only fixed synthetic fixture files inside a randomly created, sentinel-verified `RUNNER_TEMP` directory are involved. **No installed-app undo, arbitrary path mutation, ACL/ownership or ADS preservation, VHDX isolation, actual power loss, EFS/compression, or real media safety is proven.**

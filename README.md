@@ -10,7 +10,7 @@ Windows向けの **JPG/PNG完全無劣化最適化 + 完全一致ファイルの
 - .NET 10 / Windows WPF / C#
 - 原本を変更しない読み取り専用分析、PNG/JPGの別ファイル候補生成
 - R2.6は隔離合成ファイルによる復旧実験を含みますが、**通常版では無効**
-- これからWindows GitHub Actionsでコンパイルとスモークテストを実証する予定です。
+- GitHub ActionsのWindows/.NET 10環境と、使い捨てNTFSテスト（ハードリンク・バックアップ付き置換・復元）は検証済み。**R2.6アプリ本体のビルドとテストはソース未登録のため未実施**。
 
 ## ソースの登録
 
@@ -25,4 +25,6 @@ Windows向けの **JPG/PNG完全無劣化最適化 + 完全一致ファイルの
 3. 原本は一切変更せず、候補に対する可逆性を確認すること
 4. 実際の容量回復は、独立バックアップ・クラッシュ復旧の実証後に別ゲートとして解放すること
 
-詳細進捗は今後 `docs/ROADMAP_STATUS.md` に記録します。
+**Windowsの独立NTFSテスト結果：** [成功したCI](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43470917936)。このテストは`bootstrap/NtfsSafetyProbe.cs`にあり、原本・個人データを読み込まず、Windows TEMPに作成した合成ファイルのみを操作します。R2.6の本体テストに代わるものではありません。
+
+詳細な実装進捗と、実機検証済み項目の区別は `docs/ROADMAP_STATUS.md` に記録しています。

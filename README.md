@@ -1,30 +1,32 @@
 # Chappy Storage Compressor
 
-Windows向けの **JPG/PNG完全無劣化最適化 + 完全一致ファイルの重複調査** を行う開発中のツールです。
+Windows向けの **JPG・PNGの完全無劣化最適化候補生成** と **完全一致ファイルの重複検出** を行う開発中の C# / WPF ツールです。
 
-> ⚠ **試作段階。大切な写真・動画の原本で使用しないでください。** 現時点でソースのWindows/.NETビルドとNTFSの実行検証は未完了で、通常版のハードリンク統合と原本置換は無効です。
+> ⚠️ **試作版：大切な写真・動画の原本では使用しないでください。** 通常版のハードリンク統合・原本置換は無効です。Windowsでビルド・合成データによる安全テストに合格したことは、本番でのデータ安全性や容量回復を保証しません。
 
-## 現在のベース
+## R2.6 Windows CI — 初の本体ビルド成功
 
-- ローカルで作成した最新スナップショット: **R2.6**
-- .NET 10 / Windows WPF / C#
-- 原本を変更しない読み取り専用分析、PNG/JPGの別ファイル候補生成
-- R2.6は隔離合成ファイルによる復旧実験を含みますが、**通常版では無効**
-- GitHub ActionsのWindows/.NET 10環境と、使い捨てNTFSテスト（ハードリンク・バックアップ付き置換・復元）は検証済み。**R2.6アプリ本体のビルドとテストはソース未登録のため未実施**。
+[成功したGitHub Actions実行](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842)
 
-## ソースの登録
+| 項目 | 結果 |
+|---|---|
+| Windows / .NET 10 WPF 本体ビルド | **PASS（0 errors / 6 warnings）** |
+| C# 合成データ安全試験 | **359 / 359 PASS** |
+| 自己完結型 win-x64 EXE publish | **PASS** |
+| 基礎NTFSハードリンク・復旧テスト | **PASS** |
+| 本番データの安全性・GUI手動試験 | **未検証** |
+| 実際に回復したディスク容量 | **未検証（実測値なし）** |
 
-現時点のGitHubリポジトリはCI導入用のブートストラップです。**R2.6のソース本体はまだこのリポジトリに登録されていません。** 実際のC#ビルドに必要なのは、SourceKit内の `ChappyStorageCompressor.csproj`、`Core/`、`tests/`、`tools/`、GUIのXAML群です。
+- アップロードされたソースキット: `Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip`（233,860 bytes、SHA-256ピン留め済み）
+- CI成果物: [chappy-win-x64-unverified](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842/artifacts/14061958635) ／ [診断ログ](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842/artifacts/14063440051)
+- CIはZIPを検証・展開してテストを実行します。C#のソースツリーは今後Gitへ直接取り込む予定です。
+- ZIP本体にはまだ取り込まれていない**CI限定の試験修正**があります。テストプロジェクトへの共有global using追加と、テスト専用 `PrepareTestDirectory` のsentinelファイルハンドル解放です。後続のソース更新で正式反映します。
 
-公開リポジトリに写真・動画の実データ、ユーザー固有のファイルパス、診断ログ、認証情報は追加しないでください。
+## 今後の優先事項
 
-## 開発のゲート
+1. 本体C#のソースツリーをZIPからGit管理へ移行し、CI限定修正を正式ソースへ反映する。
+2. 警告（特にPNGの `CA2014` stackalloc-in-loop）を調査し修正する。
+3. PNG/JPG無劣化候補の互換性・メタデータ・破損時挙動を検証する。
+4. 独立バックアップ・クラッシュ復旧・復元可能性をさらに検証してから容量回復機能の実装ゲートを判断する。
 
-1. Windowsで `dotnet build` / `dotnet run --project tests` が成功すること
-2. 合成ファイルでNTFSのメタデータと復旧処理が合格すること
-3. 原本は一切変更せず、候補に対する可逆性を確認すること
-4. 実際の容量回復は、独立バックアップ・クラッシュ復旧の実証後に別ゲートとして解放すること
-
-**Windowsの独立NTFSテスト結果：** [成功したCI](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43470917936)。このテストは`bootstrap/NtfsSafetyProbe.cs`にあり、原本・個人データを読み込まず、Windows TEMPに作成した合成ファイルのみを操作します。R2.6の本体テストに代わるものではありません。
-
-詳細な実装進捗と、実機検証済み項目の区別は `docs/ROADMAP_STATUS.md` に記録しています。
+公開リポジトリに個人の写真・動画、固有パス、デバッグログ、認証情報を登録しないでください。進捗の正本は [docs/ROADMAP_STATUS.md](docs/ROADMAP_STATUS.md) です。

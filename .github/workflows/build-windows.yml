@@ -166,6 +166,32 @@ jobs:
           }
           Get-Content "diagnostics/r211-ntfs-metadata.json"
 
+      - name: Preserve synthetic NTFS owner DACL across replacement and exact rollback
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          dotnet run --project bootstrap/NtfsSecurityPreservationProbe.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw "R2.12 security preservation experiment failed" }
+          if (-not (Test-Path "diagnostics/r212-security-preservation.json")) {
+            throw "R2.12 security preservation evidence missing"
+          }
+          $report = Get-Content -Raw "diagnostics/r212-security-preservation.json" | ConvertFrom-Json
+          if ($report.verdict -ne "PASS" -or
+              $report.customDaclReproducedInStage -ne $true -or
+              $report.exactOwnerDaclAfterFileReplace -ne $true -or
+              $report.exactOwnerDaclAfterRollback -ne $true -or
+              $report.exactOriginalSha256AfterRollback -ne $true -or
+              $report.negativePreflightRefusals -ne 5 -or
+              $report.negativeDaclAlterationsDetected -ne 2 -or
+              $report.negativeAdsChangesDetected -ne 1 -or
+              $report.powerLossResilienceProven -ne $false -or
+              $report.arbitraryAclAdsSaclPreservationProven -ne $false -or
+              $report.productionMutationEnabled -ne $false -or
+              $report.realUserMediaTouched -ne $false) {
+            throw "R2.12 preservation evidence or fail-closed invariants not met"
+          }
+          Get-Content "diagnostics/r212-security-preservation.json"
+
       - name: Build unpacked R2.6 ZIP and isolated NTFS tests
         if: steps.source.outputs.mode == 'zip'
         shell: cmd

@@ -1,0 +1,23 @@
+# Build products and local data
+**/bin/
+**/obj/
+dist/
+diagnostics/
+*.user
+*.suo
+.vs/
+*.log
+__pycache__/
+*.pyc
+
+# Do not commit raw media or local backups
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.mov
+*.avi
+*.7z
+*.zip
+*.bak
+*.backup

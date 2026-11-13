@@ -1,0 +1,50 @@
+<Window x:Class="ChappyStorageCompressor.RecoveryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Chappy Recovery Wizard R1.3 — 復旧状態を検査" Width="1050" Height="720"
+        MinWidth="800" MinHeight="550" WindowStartupLocation="CenterOwner"
+        Background="#0E1724" Foreground="#F1F6FC" FontFamily="Yu Gothic UI, Segoe UI">
+  <Grid Margin="20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="175"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <StackPanel Grid.Row="0" Margin="0,0,0,14">
+      <TextBlock Text="RECOVERY / SAFETY FIRST" FontSize="12" FontWeight="Bold" Foreground="#57D1BC"/>
+      <TextBlock Text="復旧ウィザード" FontSize="25" FontWeight="SemiBold" Margin="0,4,0,4"/>
+      <TextBlock Text="まず現在のファイル実体とSHA-256を再検証します。曖昧な状態のファイルは変更しません。"
+                 Foreground="#B1C5D7" FontSize="13" TextWrapping="Wrap"/>
+    </StackPanel>
+    <Border Grid.Row="1" Background="#193044" CornerRadius="9" Padding="12" Margin="0,0,0,13">
+      <TextBlock x:Name="SummaryText" Text="状態を読み込んでいます…" Foreground="#C7E0EF" FontSize="13" TextWrapping="Wrap"/>
+    </Border>
+    <DataGrid Grid.Row="2" x:Name="RecoveryGrid" Background="#182434" Foreground="#F1F6FC"
+              RowBackground="#1C2A3A" AlternatingRowBackground="#223246" BorderThickness="0"
+              GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#35475A"
+              HeadersVisibility="Column" AutoGenerateColumns="False" CanUserAddRows="False"
+              IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
+              SelectionChanged="RecoverySelectionChanged" RowHeight="29" FontSize="12"
+              Margin="0,0,0,12">
+      <DataGrid.Columns>
+        <DataGridTextColumn Header="対象ファイル" Binding="{Binding DisplayName}" Width="2*"/>
+        <DataGridTextColumn Header="検査結果" Binding="{Binding ActionText}" Width="3*"/>
+        <DataGridTextColumn Header="元パス" Binding="{Binding OriginalPath}" Width="4*"/>
+      </DataGrid.Columns>
+    </DataGrid>
+    <Border Grid.Row="3" Background="#172739" CornerRadius="9" Padding="12" Margin="0,0,0,12">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <TextBlock x:Name="DetailText" Text="ファイルを選ぶと、検証内容と復旧手順が表示されます。"
+                   Foreground="#D8E8F4" TextWrapping="Wrap" FontSize="12"/>
+      </ScrollViewer>
+    </Border>
+    <WrapPanel Grid.Row="4" HorizontalAlignment="Right">
+      <Button x:Name="RefreshButton" Content="状態を再検査" Click="Refresh_Click" Margin="4" MinWidth="125"/>
+      <Button x:Name="ApplyButton" Content="選択した1件を安全に復旧" Click="Apply_Click"
+              Margin="4" MinWidth="200" IsEnabled="False" Background="#2B7B70" BorderBrush="#3E9E8F"/>
+      <Button Content="閉じる" Click="Close_Click" Margin="4" MinWidth="90"/>
+    </WrapPanel>
+  </Grid>
+</Window>

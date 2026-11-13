@@ -1,0 +1,21 @@
+PASS synthetic experiment compiled only in test assembly
+PASS production project does not define CHAPPY_TESTING
+PASS test project defines CHAPPY_TESTING
+PASS test project links Core sources
+PASS GUI has no synthetic replacement entry point
+PASS test-only isolation sentinel required
+PASS unrelated root paths rejected
+PASS reject shared hardlinks
+PASS reject changed source snapshots
+PASS refuse an active writer
+PASS verified backup before replacement
+PASS journal flushed to physical media
+PASS Windows synthetic File.Replace present
+PASS rollback requires verified external backup
+PASS manual review for mismatched paths
+PASS no silent commit
+PASS six fault injection points covered
+PASS test case invoked by smoke entrypoint
+PASS negative tamper tests included
+PASS negative hardlink test included
+R2.3 structural contract: 20/20 PASS (NOT a C# build)

@@ -1,35 +1,47 @@
-# Chappy Storage Compressor — R2.6 verified status
+# Chappy Storage Compressor — R2.7 verified status
 
-Updated: 2026-11-13 UTC. Sources: pinned R2.6 uploaded ZIP, GitHub Actions run [#43474468842](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842).
+Updated 2026-11-13 UTC. The tracked-source R2.7 branch builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
-| Workstream | Source-implementation estimate | Current gate |
+## Overall roadmap
+
+| Phase | Source implementation estimate | Gate |
 |---|---:|---|
-| R1 duplicate detection / hardlink prototype | 90% | Windows synthetic tests pass; production linking disabled |
-| R1.x safety / crash recovery | 98% | 359 C# safety assertions pass in synthetic Windows run; real-world fault matrix incomplete |
-| R2 JPG/PNG lossless candidate creation | 68% | Candidate-only; originals not automatically replaced |
-| R3 restore independent files | 15% | Unfinished |
-| R4 batch queue / capacity analysis | 76% | Synthetic tests pass; large disk and UI tests pending |
+| R1 Duplicate detection / hardlink prototype | 90% | Synthetic safety checks pass; production merging disabled |
+| R1.x Failure recovery / safety | 98% | Windows synthetic tests pass; full fault-injection matrix incomplete |
+| R2 Lossless JPG/PNG candidate creation | 68% | Candidate-only; original replacement disabled |
+| R3 Restore independent files | 15% | Implementation incomplete |
+| R4 Batch queue / capacity analysis | 76% | Synthetic CI passes; large dataset benchmarks pending |
 
-**Overall code coverage estimate: 69.4%** (unweighted mean of historical subjective estimates; unchanged by the CI breakthrough). This number is **not** product readiness, not 359-test pass rate, and not a guarantee of no data loss.
+**Overall estimated source implementation: 69.4%.** This number is only an unweighted historical estimate of source coverage, not release readiness, measured reliability, or a data-loss probability.
 
-## Verified in the Windows CI
+## Verified R2.7 tracked-source test result
 
-- Windows / .NET 10 WPF application build: **PASS**, 0 errors and 6 warnings.
-- R2.6 C# isolated synthetic safety test harness: **359/359 PASS**, including duplicate detection, synthetic hardlinks, PNG/JPG candidate checks, journaling, rollback, tampered artifacts, metadata and synthetic fault injection.
-- Self-contained win-x64 publish: **PASS**; [compiled artifact](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842/artifacts/14061958635) named `chappy-win-x64-unverified`.
-- [Test diagnostics](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842/artifacts/14063440051) archived.
-- Windows independently generated NTFS hardlink and backup restoration probe: **PASS**.
-- GitHub repository contains the original pinned `Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip`, not the expanded source tree.
+[Windows pull-request CI run #43479758919](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43479758919) for commit `706b4d789ccc099f50fd7132f92470601e8a3932`:
 
-## Unverified and blocked for production
+- Source files imported from verified R2.6 SourceKit ZIP into tracked `Core/`, `tests/`, `tools/`, WPF and docs.
+- .NET 10 WPF application build **PASS**: **0 errors, 2 warnings**, down from 6 warnings with archived R2.6.
+- C# isolated synthetic safety suite **359/359 PASS**.
+- Self-contained win-x64 publish **PASS**, artifact `chappy-win-x64-unverified`.
+- Windows independent NTFS hardlink/backup restore probe **PASS**.
+- R2.6 structural checks and independent Python filesystem reference checks **PASS**.
+- Two source-level test fixes: shared imports for smoke tests, explicit synthetic sentinel handle disposal.
+- Four PNG `CA2014` stackalloc-in-loop warnings eliminated by reusing the small spans outside loops.
 
-- No end-user GUI click-through / installer testing or personal media testing.
-- Real recovered disk capacity: **no measurement** (do not count synthetic estimates as actual savings).
-- Production file replacement and hardlink merge stay **disabled**.
-- The ZIP was immutable during CI. CI applies two targeted **test-only** compatibility patches: inclusion of shared `GlobalUsings.cs` in the smoke-test project, and explicit sentinel stream disposal in `PrepareTestDirectory`. These must be incorporated into the next published source revision.
-- Six compiler warnings remain, including `CA2014` potential stack overflow on stackalloc inside loops.
-- Need Windows real NTFS identity/ADS/ACL/performance tests and reproducible recovery criteria prior to a production release.
+## Remaining risks / safeguards
 
-## Next development gate
+- The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.
+- Only generated synthetic data used in CI. No GUI interactive tests or original personal photos/videos were used.
+- PNG/JPG previews are output candidates. Physical disk capacity recovered from end-user media has **not been measured**.
+- Original replacement and hardlink consolidation remain **DISABLED** in ordinary app builds.
+- Real NTFS crash/power-loss resilience, ADS, ACL, simultaneous mutation and test-drive performance still require controlled evaluation.
+- `Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip` is retained for audit as a pinned historical source; the tracked tree is now the intended editable source.
+- No user media, local diagnostic logs, credentials or private backups are included.
 
-Move R2.6 files from archived ZIP into normal tracked source directories; permanently fix the test harness; reduce warnings; run CI from the tracked tree; build a measurable, safely revertible *synthetic-only* disk-space recovery gate. **Do not enable production mutation only because CI is green.**
+## Next gate
+
+1. Merge and validate R2.7's directly tracked source without relaxing mutation locks.
+2. Check historical static scripts and update CI to run only against reviewed source, reducing the old pinned ZIP path to archival use.
+3. Add a synthetic-only measured disk-space-recovery test with independent backup and fault injection; report actual disk free space, not just logical byte savings.
+4. Establish a release gate for future opt-in mutations only after rigorous rollback and on-disk metadata verification.
+
+Source changes: [PR #1](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/1).

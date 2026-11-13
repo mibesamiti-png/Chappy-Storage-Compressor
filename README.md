@@ -1,32 +1,29 @@
 # Chappy Storage Compressor
 
-Windows向けの **JPG・PNGの完全無劣化最適化候補生成** と **完全一致ファイルの重複検出** を行う開発中の C# / WPF ツールです。
+Windows向け **完全一致ファイルの重複調査** と **PNG/JPG完全無劣化の圧縮候補生成** を行う開発中のC# / WPFアプリ。
 
-> ⚠️ **試作版：大切な写真・動画の原本では使用しないでください。** 通常版のハードリンク統合・原本置換は無効です。Windowsでビルド・合成データによる安全テストに合格したことは、本番でのデータ安全性や容量回復を保証しません。
+> ⚠️ **開発中です。大切な写真・動画の原本には使用しないでください。** 通常版のハードリンク統合・原本置換は安全のため無効です。GitHub Actionsの合格は製品の安全性保証ではありません。
 
-## R2.6 Windows CI — 初の本体ビルド成功
+## R2.7：ソースを直接GitHub管理
 
-[成功したGitHub Actions実行](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842)
+従来はZIP内のC#を展開し、CI上で一時修正を加えてテストしていました。R2.7では `Core/`、`tests/`、`tools/` とWPFソースをGitで直接管理してCIで検証しています。
 
-| 項目 | 結果 |
-|---|---|
-| Windows / .NET 10 WPF 本体ビルド | **PASS（0 errors / 6 warnings）** |
-| C# 合成データ安全試験 | **359 / 359 PASS** |
-| 自己完結型 win-x64 EXE publish | **PASS** |
-| 基礎NTFSハードリンク・復旧テスト | **PASS** |
-| 本番データの安全性・GUI手動試験 | **未検証** |
-| 実際に回復したディスク容量 | **未検証（実測値なし）** |
+- Windows .NET 10 WPFビルド **成功（エラー0件、警告2件）**
+- 合成ファイルを使ったC#安全テスト **359/359成功**
+- Windows x64単一EXE発行 **成功**
+- PNG解析の `CA2014` ループ内スタック使用警告 **4件修正**
+- テスト側の共有インポート・ファイルハンドルの閉じ忘れ **正式ソースで修正**
+- **本番のディスク容量回復は未検証**、原本置換・ハードリンク統合は引き続き無効
 
-- アップロードされたソースキット: `Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip`（233,860 bytes、SHA-256ピン留め済み）
-- CI成果物: [chappy-win-x64-unverified](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842/artifacts/14061958635) ／ [診断ログ](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43474468842/artifacts/14063440051)
-- CIはZIPを検証・展開してテストを実行します。C#のソースツリーは今後Gitへ直接取り込む予定です。
-- ZIP本体にはまだ取り込まれていない**CI限定の試験修正**があります。テストプロジェクトへの共有global using追加と、テスト専用 `PrepareTestDirectory` のsentinelファイルハンドル解放です。後続のソース更新で正式反映します。
+実行結果： [R2.7 Windows CI](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43479758919)。
+進捗：[docs/ROADMAP_STATUS.md](docs/ROADMAP_STATUS.md)。
+変更履歴：[PR #1](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/1)。
 
-## 今後の優先事項
+## 開発の安全ゲート
 
-1. 本体C#のソースツリーをZIPからGit管理へ移行し、CI限定修正を正式ソースへ反映する。
-2. 警告（特にPNGの `CA2014` stackalloc-in-loop）を調査し修正する。
-3. PNG/JPG無劣化候補の互換性・メタデータ・破損時挙動を検証する。
-4. 独立バックアップ・クラッシュ復旧・復元可能性をさらに検証してから容量回復機能の実装ゲートを判断する。
+1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。
+2. ファイルサイズ・バイト内容だけでなくファイルID、ACL、ADS、ハードリンク状態、同時変更の危険性を検証する。
+3. 元の写真・動画を削除・上書きする機能は本番検証完了まで**無効**とする。
+4. 容量回復は実測の空き容量として報告し、圧縮候補の削減見込みと区別する。
 
-公開リポジトリに個人の写真・動画、固有パス、デバッグログ、認証情報を登録しないでください。進捗の正本は [docs/ROADMAP_STATUS.md](docs/ROADMAP_STATUS.md) です。
+公開リポジトリに個人の写真・動画、ユーザー固有パス、実行ログ、認証情報、バックアップを追加しないでください。旧 `Chappy_Storage_Compressor_R2_6_REDOWNLOAD.zip` は照合用アーカイブで、これからの正本はGit管理されたC#ソースです。

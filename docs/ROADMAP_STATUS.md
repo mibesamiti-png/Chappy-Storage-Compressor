@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.15 nonoverlapping JPG/PNG/MP4 capacity accounting
+# Chappy Storage Compressor — R2.16 measured two-stage media scanner
 
 Updated 2026-11-14 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -117,6 +117,14 @@ Existing `CombinedSavingsPlanner` and its WPF report were extended, rather than 
 Windows synthetic smoke coverage includes JPG triples, PNG pairs, MP4 pairs, singleton candidate previews, formula/path-safe report output, stale same-size MP4 content, extra hardlink alias, CSV destination restrictions and cancellation. [Detailed method and limitations](R215_RECONCILED_CAPACITY_BY_FORMAT.md).
 
 **Actual freed disk space remains zero**, because production source replacement/deduplication stay locked. The combined figure is hypothetical and subject to NTFS allocation and independent candidate feasibility, never an observed capacity recovery. Keep source progress estimate **69.4% historical and unchanged** until a grounded reassessment.
+
+## R2.16 — two-stage personal-media scanner and measured synthetic work
+
+The actual `Core/Scanner.cs` read-only duplicate finder has been optimized: the first pass collects lightweight length/time/attribute snapshots, while only paths with repeated file sizes trigger `Safety.Capture` (NTFS file identity, owner/ACL, ADS), SHA-256 and byte equality. Candidate metadata is compared against the first pass to reject changed files. `ScanResult` and the WPF scan log now report the number of deep-validated and hashed candidates. **Production original-file mutation remains disabled.**
+
+The generated Windows benchmark checks **372** shallow-eligible files (360 unique sizes + 12 ambiguous), expected **12 deep checks**, **3 byte-identical JPG/PNG/MP4 groups**, ADS and hardlink rejection, cancellation, rough elapsed time and managed thread allocations. No runtime speedup threshold is asserted; the counts are a reproducible indicator of reduced security-descriptor lookups only for this test distribution. [Design, evidence and limitations](R216_TWO_STAGE_SCANNER_BENCHMARK.md).
+
+**Source implementation percentage: historical 69.4% unchanged** pending an evidence-based release functionality assessment. Free disk space physically reclaimed remains **0B**, as original replacement, deduplication and independent undo remain disabled.
 
 ## Remaining risks / safeguards
 

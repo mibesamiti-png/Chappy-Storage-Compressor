@@ -1,114 +1,269 @@
+using System.Text;
+
 namespace ChappyStorageCompressor.Core;
 
 /// <summary>
-/// Read-only, deliberately hypothetical capacity estimate when file-level
-/// deduplication and lossless previews cover the same input paths.  No files
-/// are modified. All figures are logical byte estimates, NOT reclaimed blocks.
-/// The caller must use a freshly verified duplicate scan.
+/// Read-only, hypothetical estimate combining separately verified JPG/PNG
+/// preview savings with fully revalidated identical-file groups. Does not
+/// mutate originals or measure physical free space.
 /// </summary>
 public static class CombinedSavingsPlanner
 {
+    public sealed record FormatEstimate(string Format, int VerifiedDuplicateGroups,
+        int SkippedDuplicateGroups, long PreviewOnlyBytes, long DedupeOnlyBytes,
+        long DoubleCountAvoidedBytes, long CombinedHypotheticalBytes);
+
     public sealed record Estimate(long PreviewOnlyBytes, long DedupeOnlyBytes,
         long CombinedHypotheticalBytes, long DoubleCountAvoidedBytes,
         int VerifiedDuplicateGroups, int SkippedDuplicateGroups,
-        long ActualFreedBytes);
+        long ActualFreedBytes)
+    {
+        public IReadOnlyList<FormatEstimate> Formats { get; init; } = [];
+    }
+
+    private static readonly string[] Order = ["MP4", "JPG", "PNG", "混合拡張子", "その他"];
+
+    private sealed class Totals
+    {
+        public int Verified;
+        public int Skipped;
+        public long Preview;
+        public long Dedupe;
+        public long Overlap;
+    }
 
     public static Estimate Analyze(CombinedCapacityReport.Summary preview,
-        ScanResult scan, bool allowTimestampDifference, CancellationToken ct = default)
+        ScanResult scan, bool allowTimestampDifference, CancellationToken ct = default,
+        IProgress<(int Done, int Total)>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(preview);
         ArgumentNullException.ThrowIfNull(scan);
-        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(scan.Root));
-        if (!Directory.Exists(root)) throw new DirectoryNotFoundException(root);
+        string root = Safety.ValidateRoot(scan.Root);
+        var totals = Order.ToDictionary(x => x, _ => new Totals(), StringComparer.Ordinal);
         var savingsByPath = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         foreach (var r in preview.Rows)
         {
             ct.ThrowIfCancellationRequested();
-            // Rows originate from the read-only validated batch report. Reject
-            // malformed relative paths rather than letting them escape root.
-            if (r.EstimatedSavingBytes <= 0 || r.SourceBytes <= 0 ||
-                Path.IsPathRooted(r.RelativePath)) continue;
+            // Reports are expected to have been authenticated by
+            // CombinedCapacityReport.Inspect. Still reject malformed or
+            // inconsistent inputs if called directly by another code path.
+            if (!ValidPreviewRow(r) || Path.IsPathRooted(r.RelativePath)) continue;
             string full;
             try { full = Path.GetFullPath(Path.Combine(root, r.RelativePath)); }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException) { continue; }
-            if (!Inside(full, root) || full.Equals(root, StringComparison.OrdinalIgnoreCase)) continue;
-            // A disappearing or reparse-point file must not abort analysis or
-            // inflate the estimate via another target.
-            if (!MatchesLength(full, r.SourceBytes)) continue;
-            if (r.EstimatedSavingBytes > r.SourceBytes) continue;
-            if (!savingsByPath.TryGetValue(full, out long old) || old < r.EstimatedSavingBytes)
-                savingsByPath[full] = r.EstimatedSavingBytes;
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            { continue; }
+            if (!Inside(full, root) || full.Equals(root, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!SafePreviewSource(full, r.SourceBytes)) continue;
+            if (savingsByPath.TryGetValue(full, out long previous))
+                savingsByPath[full] = Math.Max(previous, r.EstimatedSavingBytes);
+            else savingsByPath.Add(full, r.EstimatedSavingBytes);
         }
 
         long previewOnly = 0;
-        foreach (long amount in savingsByPath.Values) previewOnly = checked(previewOnly + amount);
+        foreach (var item in savingsByPath)
+        {
+            long bytes = item.Value;
+            previewOnly = checked(previewOnly + bytes);
+            totals[PathFormat(item.Key)].Preview =
+                checked(totals[PathFormat(item.Key)].Preview + bytes);
+        }
+
         long dedupeOnly = 0, overlap = 0;
-        int verified = 0, skipped = 0;
-        var counted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int verified = 0, skipped = 0, processed = 0;
+        var globallySeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var group in scan.Groups)
         {
             ct.ThrowIfCancellationRequested();
-            if (group.Files.Count < 2 || group.BlockReason(allowTimestampDifference) != null)
-            { skipped++; continue; }
-            var paths = new List<string>();
-            bool safe = true;
-            foreach (var file in group.Files)
+            string type = GroupFormat(group);
+            var bucket = totals[type];
+            bool safe = group.Files.Count >= 2 &&
+                group.Hash.Length == 64 && group.Hash.All(Uri.IsHexDigit) &&
+                group.BlockReason(allowTimestampDifference) is null;
+            var paths = new List<(FileSnapshot Snapshot, string Full)>(group.Files.Count);
+            var localNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (safe)
             {
-                string full = Path.GetFullPath(file.Path);
-                if (!Inside(full, root) || !counted.Add(full)) { safe = false; break; }
-                paths.Add(full);
-                // Refresh file metadata and content, not just the prior scan's
-                // hash. A changed file disables this group's estimate.
-                try
+                foreach (var item in group.Files)
                 {
-                    if (!Safety.SameSnapshot(file) ||
-                        !string.Equals(Safety.ComputeSha256(full, ct), group.Hash,
-                            StringComparison.OrdinalIgnoreCase)) { safe = false; break; }
+                    ct.ThrowIfCancellationRequested();
+                    string full;
+                    try { full = Path.GetFullPath(item.Path); }
+                    catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+                    { safe = false; break; }
+                    if (!Inside(full, root) || !localNames.Add(full) ||
+                        globallySeen.Contains(full))
+                    { safe = false; break; }
+                    try
+                    {
+                        if (!Safety.SameSnapshot(item) ||
+                            NativeFile.GetIdentity(full).LinkCount != 1 ||
+                            !string.Equals(Safety.ComputeSha256(full, ct), group.Hash,
+                                StringComparison.OrdinalIgnoreCase) ||
+                            (paths.Count > 0 && !Safety.ByteEqual(full, paths[0].Full, ct)) ||
+                            !Safety.SameSnapshot(item))
+                        { safe = false; break; }
+                        paths.Add((item, full));
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                        or InvalidOperationException or System.ComponentModel.Win32Exception)
+                    { safe = false; break; }
                 }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                { safe = false; break; }
             }
-            if (!safe)
+            if (safe)
             {
-                // Release tentative path reservations on an aborted group.
-                foreach (var path in paths) counted.Remove(path);
+                long bytes = checked(group.Representative.Length * (paths.Count - 1L));
+                long sum = 0, max = 0;
+                foreach (var p in paths)
+                {
+                    if (savingsByPath.TryGetValue(p.Full, out long saving))
+                    {
+                        sum = checked(sum + saving);
+                        max = Math.Max(max, saving);
+                    }
+                }
+                long duplicatePreviewSavings = checked(sum - max);
+                dedupeOnly = checked(dedupeOnly + bytes);
+                overlap = checked(overlap + duplicatePreviewSavings);
+                bucket.Dedupe = checked(bucket.Dedupe + bytes);
+                bucket.Overlap = checked(bucket.Overlap + duplicatePreviewSavings);
+                bucket.Verified++;
+                verified++;
+                foreach (var p in paths) globallySeen.Add(p.Full);
+            }
+            else
+            {
                 skipped++;
-                continue;
+                bucket.Skipped++;
             }
-            verified++;
-            dedupeOnly = checked(dedupeOnly + group.Savings);
-            long sum = 0, max = 0;
-            foreach (var file in group.Files)
-            {
-                string path = Path.GetFullPath(file.Path);
-                if (savingsByPath.TryGetValue(path, out long saving) &&
-                    MatchesLength(path, file.Length))
-                {
-                    sum = checked(sum + saving);
-                    max = Math.Max(max, saving);
-                }
-            }
-            // After deduplication a shared byte stream could be optimized at
-            // most once. This does NOT implement such an operation.
-            overlap = checked(overlap + (sum - max));
+            progress?.Report((++processed, scan.Groups.Count));
         }
-        return new Estimate(previewOnly, dedupeOnly,
-            checked(checked(previewOnly + dedupeOnly) - overlap),
-            overlap, verified, skipped, 0);
+
+        long combined = checked(checked(previewOnly + dedupeOnly) - overlap);
+        var formatRows = Order.Select(name =>
+        {
+            var b = totals[name];
+            return new FormatEstimate(name, b.Verified, b.Skipped, b.Preview,
+                b.Dedupe, b.Overlap,
+                checked(checked(b.Preview + b.Dedupe) - b.Overlap));
+        }).ToList();
+        // Mixed-extension groups can overlap with JPG/PNG preview rows. The
+        // per-format net may be negative in that mixed bucket; only the TOTAL
+        // is a meaningful capacity scenario, not each bucket as a promise.
+        if (formatRows.Sum(x => x.PreviewOnlyBytes) != previewOnly ||
+            formatRows.Sum(x => x.DedupeOnlyBytes) != dedupeOnly ||
+            formatRows.Sum(x => x.DoubleCountAvoidedBytes) != overlap ||
+            formatRows.Sum(x => x.CombinedHypotheticalBytes) != combined)
+            throw new InvalidDataException("集計の合計が一致しません。安全のため停止します。");
+        return new Estimate(previewOnly, dedupeOnly, combined, overlap,
+            verified, skipped, 0) { Formats = formatRows };
     }
 
-    private static bool MatchesLength(string path, long expected)
+    public static void ExportFormatCsv(Estimate estimate, string scanRoot,
+        string previewRoot, string csvFile)
+    {
+        ArgumentNullException.ThrowIfNull(estimate);
+        string source = Safety.ValidateRoot(scanRoot);
+        string candidates = JpegBatchPreviewEngine.CanonicalFolder(previewRoot);
+        JpegBatchPreviewEngine.ValidateFolders(source, candidates);
+        string dest = Path.GetFullPath(csvFile);
+        if (!Path.GetExtension(dest).Equals(".csv", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("CSV形式を選択してください。");
+        string folder = Path.GetDirectoryName(dest) ??
+            throw new InvalidOperationException("CSVの保存先がありません。");
+        if (!Directory.Exists(folder)) throw new DirectoryNotFoundException(folder);
+        JpegBatchPreviewEngine.CheckNoReparse(folder);
+        if (Inside(dest, source) || Inside(dest, candidates))
+            throw new InvalidOperationException("CSVは原本・候補フォルダの外へ保存してください。");
+        if (File.Exists(dest) || Directory.Exists(dest))
+            throw new IOException("既存ファイルを上書きしません。別名を指定してください。");
+        if (estimate.Formats.Count != Order.Length ||
+            !Order.SequenceEqual(estimate.Formats.Select(f => f.Format)) ||
+            estimate.Formats.Sum(f => f.CombinedHypotheticalBytes) !=
+                estimate.CombinedHypotheticalBytes)
+            throw new InvalidDataException("形式別集計が不整合です。CSVは保存しません。");
+
+        string temporary = dest + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None, 65536, FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(true)))
+            {
+                writer.WriteLine("Format,VerifiedDuplicateGroups,SkippedDuplicateGroups,PreviewOnlyBytes,DedupeOnlyBytes,OverlapAvoidedBytes,CombinedHypotheticalBytes,ActualFreedBytes");
+                foreach (var row in estimate.Formats)
+                    writer.WriteLine(string.Join(",", new[] {
+                        Csv(row.Format), Csv(Num(row.VerifiedDuplicateGroups)),
+                        Csv(Num(row.SkippedDuplicateGroups)), Csv(Num(row.PreviewOnlyBytes)),
+                        Csv(Num(row.DedupeOnlyBytes)), Csv(Num(row.DoubleCountAvoidedBytes)),
+                        Csv(Num(row.CombinedHypotheticalBytes)), Csv("0") }));
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(temporary, dest);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+            {
+                try { File.Delete(temporary); }
+                catch { /* no existing file is touched on failed export */ }
+            }
+        }
+    }
+
+    private static bool ValidPreviewRow(CombinedCapacityReport.Row r)
+    {
+        if (r.SourceBytes <= 0 || r.CandidateBytes < 0 ||
+            r.CandidateBytes >= r.SourceBytes || r.EstimatedSavingBytes <= 0 ||
+            r.EstimatedSavingBytes != r.SourceBytes - r.CandidateBytes ||
+            string.IsNullOrWhiteSpace(r.RelativePath)) return false;
+        string format = PathFormat(r.RelativePath);
+        return (format == "JPG" && r.Format == "JPG" && r.State == "Completed") ||
+            (format == "PNG" && r.Format == "PNG" && r.State == "CandidatePresent");
+    }
+
+    private static bool SafePreviewSource(string path, long bytes)
     {
         try
         {
-            var attrs = File.GetAttributes(path);
-            if ((attrs & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
-                return false;
-            return new FileInfo(path).Length == expected;
+            var info = new FileInfo(path);
+            info.Refresh();
+            return info.Exists && info.Length == bytes &&
+                Safety.EligibleAttributes(info.Attributes) &&
+                NativeFile.GetIdentity(path).LinkCount == 1 &&
+                !NativeFile.HasNamedDataStreams(path);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or InvalidOperationException or System.ComponentModel.Win32Exception)
         { return false; }
+    }
+
+    private static string GroupFormat(DuplicateGroup group)
+    {
+        var kinds = group.Files.Select(f => PathFormat(f.Path)).Distinct().ToArray();
+        return kinds.Length == 1 ? kinds[0] : "混合拡張子";
+    }
+
+    private static string PathFormat(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".mp4" => "MP4",
+            ".jpg" or ".jpeg" => "JPG",
+            ".png" => "PNG",
+            _ => "その他"
+        };
+
+    private static string Num(long value) =>
+        value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string Csv(string s)
+    {
+        string stripped = s.TrimStart(' ', '\t', '\n', '\r');
+        if (stripped.Length > 0 && stripped[0] is '=' or '+' or '-' or '@')
+            s = "'" + s;
+        return "\"" + s.Replace("\"", "\"\"") + "\"";
     }
 
     private static bool Inside(string path, string root) =>

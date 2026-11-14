@@ -39,6 +39,32 @@ The earlier tests for generated valid JPEG marker/WIC decoding (R2.17 part 2), i
 - It does not validate every possible Exif/ICC/XMP encoding or unusual nonbaseline JPEG; candidate validation remains conservative and fails closed for unsupported structures.
 - No GUI mouse actions or production hardlink consolidation, original replacement, independent undo were enabled by this change.
 
-## Windows CI result
+## Verified Windows CI result — 2026-11-14
 
-Pending actual Windows workflow verification. Do not assert successful execution or timing results until CI artifacts are verified.
+[PR Windows CI #43619218988](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43619218988): **26/26 workflow steps passed**, including building the exact source-pinned official libjpeg-turbo 3.2.1 tool, WPF build and win-x64 publish, previous R2.8–R2.12 NTFS security/crash tests, the routed WPF Start/Stop UI test, and **486/486 C# safety assertions** (previously 476, plus 10 newly measured real-jpegtran assertions).
+
+The machine-readable artifact `diagnostics/r217-pinned-jpegtran-profile.json` recorded:
+
+| Observation on this single Windows CI host | Result |
+| --- | ---: |
+| libjpeg-turbo official tag | 3.2.1 |
+| Full source commit verified before building | `7b4993786d856cbccabfc0ed2f923ba000e326cc` |
+| Tool reported version | `libjpeg-turbo version 3.2.1 (build 20261114)` |
+| Source-built SIMD | Disabled |
+| Generated baseline JPEG input files | **8** (4 with synthetic comments) |
+| Successfully kept smaller candidates | **8 / 8** |
+| Failures, deferred, not-smaller skips | **0 / 0 / 0** |
+| Independently verified pixel-identical candidates | **8 / 8** |
+| Protected JPEG metadata marker matches | **8 / 8** |
+| Input byte total | **690,225 B** |
+| Candidate byte total | **598,438 B** |
+| Candidate-size savings | **91,787 B** (**13.30% of input bytes**) |
+| Initial real JPEG batch wall-clock | **284.64 ms** |
+| Repeated batch/resume wall-clock | **5.74 ms** |
+| Current-thread managed allocations during first batch | **2,383,920 B** |
+| Process working set before and after | **79,126,528 B → 74,252,288 B** (not per-operation peak) |
+| Real user disk free-space increase | **0 B** |
+
+All generated source JPEG files retained their pre-run SHA-256, length and modified timestamps. Rerunning the batch created **no duplicate JPEG previews**. The data do not prove cold-cache throughput or an optimized SIMD official binary's performance, and the apparent process working-set difference is **not** a memory-saving claim.
+
+The initial PR CI attempt failed only because the new GitHub Windows runner had Visual Studio 2026, not the specified Visual Studio 2022. The generator was corrected to **Visual Studio 18 2026** and the final PR CI then passed with the actual official-source executable.

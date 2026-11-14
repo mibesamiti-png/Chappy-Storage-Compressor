@@ -149,6 +149,16 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [実装・検証条件と残るUI実機テスト](docs/R217_HASH_BYTE_PROGRESS.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第4段階）：PNG/JPG一括候補の安全な再開確認
+
+- PNG/JPGのまとめて無劣化候補作成を始める前に、**選択した出力先を読み取り専用で診断**。新規作成か、PNG/JPGの既存計画からの再開かを画面で明示する。
+- 入力フォルダ・選択したjpegtran.exeが前回の作業記録と一致しない場合、未知のファイルが出力先にある場合、記録が欠けている・壊れている場合、既存ハードリンクの計画ファイルがある場合は安全のため開始を拒否する。
+- 作業記録や候補は勝手に修復・削除しない。別の空フォルダを選べる。
+- 「中断要求」を押すと表示をすぐに「中断要求中…」へ切り替える。GUIの実クリック自動テストは未実施で、引き続き確認項目。
+- 以前の安全ロックを維持し、原本置換・重複統合は無効。実際に空いた容量は0B。
+
+[再開診断の仕様と制限](docs/R217_SAFE_COMBINED_RESUME.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

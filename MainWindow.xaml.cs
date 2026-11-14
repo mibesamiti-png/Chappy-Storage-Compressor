@@ -848,7 +848,13 @@ public partial class MainWindow : Window
         _work = new CancellationTokenSource();
         var ct = _work.Token;
         Busy(true);
+        JobProgress.Value = 0;
         ProgressText.Text = "PNG/JPG候補の照合中";
+        var recheckProgress = new Progress<(int Done, int Total)>(p =>
+        {
+            JobProgress.Value = p.Total == 0 ? 100 : 10.0 + 90.0 * p.Done / p.Total;
+            ProgressText.Text = $"重複・候補を再照合中 {p.Done:N0}/{p.Total:N0}";
+        });
         try
         {
             var lastScan = _lastScan;
@@ -860,35 +866,52 @@ public partial class MainWindow : Window
                 if (lastScan != null &&
                     Path.GetFullPath(lastScan.Root).Equals(Path.GetFullPath(input), StringComparison.OrdinalIgnoreCase))
                     estimate = CombinedSavingsPlanner.Analyze(r, lastScan,
-                        allowTimeForEstimate, ct);
+                        allowTimeForEstimate, ct, recheckProgress);
                 return (r, estimate);
             }, ct);
+            JobProgress.Value = 100;
             ProgressText.Text = "統合候補レポート完了";
+            string formatSummary = combinedEstimate is null ? "" :
+                string.Join("\n", combinedEstimate.Formats.Select(f =>
+                    $"{f.Format}: 重複 {GroupRow.HumanSize(f.DedupeOnlyBytes)}、" +
+                    $"候補 {GroupRow.HumanSize(f.PreviewOnlyBytes)}、" +
+                    $"重なり -{GroupRow.HumanSize(f.DoubleCountAvoidedBytes)}、" +
+                    $"補正後 {GroupRow.HumanSize(f.CombinedHypotheticalBytes)}"));
             string overlapSummary = combinedEstimate is null
                 ? "先に同じフォルダを読み取り専用スキャンすると、重複と圧縮の二重計上を分析できます。\n"
                 : $"重複の理論削減量 {GroupRow.HumanSize(combinedEstimate.DedupeOnlyBytes)}\n" +
                   $"重複と圧縮の重なり {GroupRow.HumanSize(combinedEstimate.DoubleCountAvoidedBytes)}\n" +
                   $"重複も含めた非重複の理論上限（概算） {GroupRow.HumanSize(combinedEstimate.CombinedHypotheticalBytes)}\n" +
-                  $"再検証済み重複グループ {combinedEstimate.VerifiedDuplicateGroups:N0}件・除外 {combinedEstimate.SkippedDuplicateGroups:N0}件\n";
+                  $"再検証済み重複グループ {combinedEstimate.VerifiedDuplicateGroups:N0}件・除外 {combinedEstimate.SkippedDuplicateGroups:N0}件\n\n" +
+                  $"形式別の補正見込:\n{formatSummary}\n";
             string summary = $"PNG {report.PngFiles:N0}件・JPG {report.JpegFiles:N0}件\n" +
                 $"有効な圧縮候補 {report.CandidateCount:N0}件・要確認 {report.NeedsReview:N0}件\n" +
                 $"候補による削減見込 {GroupRow.HumanSize(report.EstimatedSavingBytes)}\n" +
                 $"実際に回復した容量 {GroupRow.HumanSize(report.ActualFreedBytes)}\n\n" +
                 overlapSummary + "\n" +
                 "計算値は論理バイトの仮定上の目安で、実空き容量ではありません。\n" +
-                "CSVに保存しますか？（親フォルダ・候補保存先の外）";
+                "CSVに保存しますか？（重複スキャンがある場合は形式別補正表と候補詳細を選択可能）";
             Log(summary);
             if (MessageBox.Show(summary, "PNG/JPG統合候補レポート", MessageBoxButton.YesNo,
                 MessageBoxImage.Information, MessageBoxResult.Yes) != MessageBoxResult.Yes) return;
             var save = new Microsoft.Win32.SaveFileDialog
             {
-                Title = "PNG/JPG統合プレビューレポート（原本・候補フォルダの外）",
-                Filter = "CSV (*.csv)|*.csv", AddExtension = true,
-                FileName = "chappy-r20-combined-report.csv", OverwritePrompt = false
+                Title = "統合容量CSV（原本・候補フォルダの外に保存）",
+                Filter = combinedEstimate is null ? "候補詳細CSV (*.csv)|*.csv" :
+                    "形式別の非重複見込CSV (*.csv)|*.csv|候補詳細CSV (*.csv)|*.csv",
+                AddExtension = true,
+                FileName = combinedEstimate is null
+                    ? "chappy-r20-combined-report.csv"
+                    : "chappy-r215-nonoverlapping-by-format.csv",
+                OverwritePrompt = false
             };
             if (save.ShowDialog(this) == true)
             {
-                CombinedCapacityReport.ExportCsv(report, input, output, save.FileName);
+                ct.ThrowIfCancellationRequested();
+                if (combinedEstimate is not null && save.FilterIndex == 1)
+                    CombinedSavingsPlanner.ExportFormatCsv(combinedEstimate, input, output, save.FileName);
+                else
+                    CombinedCapacityReport.ExportCsv(report, input, output, save.FileName);
                 Log("PNG/JPG統合CSV: " + save.FileName);
             }
         }

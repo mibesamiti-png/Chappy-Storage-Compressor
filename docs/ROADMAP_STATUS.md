@@ -1,4 +1,4 @@
-# Chappy Storage Compressor — R2.14 unified personal-image batch preview
+# Chappy Storage Compressor — R2.15 nonoverlapping JPG/PNG/MP4 capacity accounting
 
 Updated 2026-11-14 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
@@ -109,6 +109,14 @@ The user-facing objective is **safe lossless JPG/PNG preview candidates, byte-id
 Synthetic Windows smoke tests are extended to verify preflight PNG/JPG/JPEG counts, MP4 exclusion, safe root separation, cancellation, capacity sample, no output changes and handling of common special file attributes. Neither the preflight nor the combined GUI button replaces original photos or videos. Candidate size savings are logical estimates; **actual recovered capacity remains 0 B**.
 
 [Detailed R2.14 workflow and limitations](R214_UNIFIED_IMAGE_BATCH.md). Advanced cross-account ACL preservation is deferred; existing unusual-file safety gates remain in force. **Retain the historical 69.4% source estimate until real release-readiness evaluation.**
+
+## R2.15 — format-specific, nonoverlapping hypothetical capacity report
+
+Existing `CombinedSavingsPlanner` and its WPF report were extended, rather than creating another analysis engine. The normal app now shows **MP4 / JPG / PNG / mixed / other** breakdowns for byte-identical duplicate saving, independently validated PNG/JPG candidate saving, overlap deducted, and the corrected combined hypothetical. It also exports separate per-format reconciliation CSV or existing candidate detail CSV. Users see progress and can cancel. The duplicate scan is **reverified** (snapshot, identity, link count, SHA-256 and exact bytes) and no expired group is counted.
+
+Windows synthetic smoke coverage includes JPG triples, PNG pairs, MP4 pairs, singleton candidate previews, formula/path-safe report output, stale same-size MP4 content, extra hardlink alias, CSV destination restrictions and cancellation. [Detailed method and limitations](R215_RECONCILED_CAPACITY_BY_FORMAT.md).
+
+**Actual freed disk space remains zero**, because production source replacement/deduplication stay locked. The combined figure is hypothetical and subject to NTFS allocation and independent candidate feasibility, never an observed capacity recovery. Keep source progress estimate **69.4% historical and unchanged** until a grounded reassessment.
 
 ## Remaining risks / safeguards
 

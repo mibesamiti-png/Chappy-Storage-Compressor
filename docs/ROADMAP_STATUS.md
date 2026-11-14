@@ -1,6 +1,6 @@
-# Chappy Storage Compressor — R2.13 personal-media capacity report
+# Chappy Storage Compressor — R2.14 unified personal-image batch preview
 
-Updated 2026-11-13 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
+Updated 2026-11-14 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
 ## Overall roadmap
 
@@ -101,6 +101,14 @@ The user-facing objective is **safe lossless JPG/PNG preview candidates, byte-id
 - The normal application hardlink merge, original media replacement and independent undo are still **disabled**.
 - Next build actual user-facing benefit: improve JPG/PNG batch candidate throughput and measurement, MP4 exact-duplicate inspection on large libraries, and nonoverlapping capacity estimates. Do **not** spend upcoming primary rounds on rare multi-account permission edge cases.
 - Dedicated VHDX and power-loss validation are tracked as separate safety gates, not a prerequisite for this read-only format summary.
+
+## R2.14 — single-entry JPG/PNG lossless candidate batch
+
+[Issue #10](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/10) tracks the personal-media workflow priority. A new normal-app WPF button starts **PNG then JPG** candidate generation using one output folder and the *existing separate resumable journals*, without introducing new source mutation code. The integrated preflight reports approximate image counts and source bytes, an output free-space sample, special/empty file exclusions from **inventory estimates**, and scan errors. If PNG defers for insufficient space, JPG is not started; both queues can be resumed with the same folder and tool.
+
+Synthetic Windows smoke tests are extended to verify preflight PNG/JPG/JPEG counts, MP4 exclusion, safe root separation, cancellation, capacity sample, no output changes and handling of common special file attributes. Neither the preflight nor the combined GUI button replaces original photos or videos. Candidate size savings are logical estimates; **actual recovered capacity remains 0 B**.
+
+[Detailed R2.14 workflow and limitations](R214_UNIFIED_IMAGE_BATCH.md). Advanced cross-account ACL preservation is deferred; existing unusual-file safety gates remain in force. **Retain the historical 69.4% source estimate until real release-readiness evaluation.**
 
 ## Remaining risks / safeguards
 

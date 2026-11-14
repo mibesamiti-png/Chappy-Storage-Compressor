@@ -84,6 +84,17 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [仕様と安全範囲](docs/R213_PERSONAL_MEDIA_FOCUS.md) / [PR #9](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/pull/9)
 
+## R2.14：PNGとJPGをまとめて無劣化候補作成・再開
+
+- **「PNG＋JPGまとめて無劣化候補作成／再開」**ボタンをWindows画面に追加。
+- 親フォルダ、jpegtran.exe、候補保存先を選択すると、**PNG→JPGの順に**既存の一括候補エンジンを実行。別々の進捗記録をそのまま使って再開可能。
+- 開始前にPNG/JPG/JPEGの件数と入力サイズ、候補保存先の空き容量を読み取り専用で確認。容量不足の可能性を案内。
+- 中断ボタン、失敗・要確認のログ、処理済み件数と候補のサイズ差を表示。
+- **元の写真・動画は変更しない**。保存する候補は追加のディスク容量を使い、実際に回復した空き容量は0B。MP4再エンコードはしない。
+- 特殊属性ファイルの件数は事前見積の対象外として記録。最終的な採否は従来の各形式エンジンが個別に検証。
+
+[仕様・制限](docs/R214_UNIFIED_IMAGE_BATCH.md) / [R2.14開発予定](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/10)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

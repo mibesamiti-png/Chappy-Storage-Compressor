@@ -95,6 +95,9 @@ jobs:
               $r.hashAttempts -gt 9 -or
               $r.verifiedDuplicateGroups -ne 3 -or
               $r.baselineDeepCaptures -lt 370 -or
+              $r.pooledOperationCount -ne 24 -or
+              $r.repeatedPooledOperationAllocatedBytes -ge 4000000 -or
+              $r.buffersClearedOnReturn -ne $true -or
               $r.timingImprovementAsserted -ne $false -or
               $r.productionFileMutationEnabled -ne $false -or
               $r.actualFreedBytes -ne 0 -or

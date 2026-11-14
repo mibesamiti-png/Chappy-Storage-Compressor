@@ -105,8 +105,13 @@ internal static class R217SameSizeScannerBenchmarks
             // these bytes are not meant to decode as actual JPG/PNG/MP4.
             for (int i = 0; i < 72; i++)
             {
-                string ext = i < 2 ? ".jpg" : i < 4 ? ".png" : i < 6 ? ".mp4" :
-                    (i % 3) switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
+                // Keep switch separate from ?:; C# switch-expression precedence
+                // must not reinterpret a conditional expression as the operand.
+                string ext;
+                if (i < 2) ext = ".jpg";
+                else if (i < 4) ext = ".png";
+                else if (i < 6) ext = ".mp4";
+                else ext = (i % 3) switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
                 int seed = 217500 + (i < 6 ? i / 2 : i);
                 byte[] bytes = new byte[SameSizeBytes];
                 new Random(seed).NextBytes(bytes);

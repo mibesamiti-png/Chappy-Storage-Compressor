@@ -159,6 +159,15 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [再開診断の仕様と制限](docs/R217_SAFE_COMBINED_RESUME.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第5段階）：WPF画面のボタン操作経路を自動検証
+
+- Windowsの実際のWPF XAMLを読み込み、**スキャン開始・停止要求ボタンのClickイベント**を合成NTFSデータで実行する専用UIテストを追加。
+- 32MiBの同一バイトMP4風合成ファイル2件で、スキャン中の停止要求、トークン伝播、中断後のUI状態、もう一度スキャンして完全一致1グループを検出するまで確認。
+- PNG/JPG候補生成・マウスの物理クリック・画面の見た目・実際のJPEG圧縮速度はこのテストの対象外。WPFイベント実行と実機のマウス操作は区別する。
+- テストは人工ファイルのみを使い、原本SHA-256不変・ハードリンク統合/原本置換の本番停止を維持。実容量回復0B。
+
+[WPFイベント検証の条件・限界](docs/R217_WPF_ROUTED_CLICK_SMOKE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

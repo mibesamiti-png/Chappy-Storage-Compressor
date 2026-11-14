@@ -9,6 +9,9 @@
     <DefineConstants>$(DefineConstants);CHAPPY_TESTING</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <!-- The UI runner references the real WPF app; do not include it in the
+         standalone Core-only synthetic assembly. -->
+    <Compile Remove="UiInteractionSmoke.cs" />
     <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

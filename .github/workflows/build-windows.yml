@@ -242,6 +242,39 @@ jobs:
           "R2.17 fail-closed combined preview resume inspection PASS"
           Get-Content $path
 
+      - name: Verify R2.17 WPF routed Scan and Stop interaction (synthetic)
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-wpf-routed-click.json"
+          if (-not (Test-Path $path)) { throw "R2.17 routed WPF test evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.syntheticInputFiles -ne 2 -or
+              $r.syntheticBytesPerFile -ne 33554432 -or
+              $r.applicationXamlLoaded -ne $true -or
+              $r.scanStartRoutedClickVerified -ne $true -or
+              $r.stopRoutedClickVerified -ne $true -or
+              $r.cancellationTokenSignaledByActualHandler -ne $true -or
+              $r.canceledUiReturnedToIdle -ne $true -or
+              $r.canceledUiHasNoPartialGroups -ne $true -or
+              $r.secondScanCompletedRoutedClick -ne $true -or
+              $r.completedUiDuplicateGroups -ne 1 -or
+              $r.completedUiProgressPercent -ne 100 -or
+              $r.sourceOracleSha256Unchanged -ne $true -or
+              $r.actualPhysicalMouseClickVerified -ne $false -or
+              $r.interactiveDesktopDisplayed -ne $false -or
+              $r.jpegLosslessCandidateMeasured -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or
+              $r.realMediaTouched -ne $false) {
+            throw "R2.17 WPF routed event smoke evidence or safety gate invalid"
+          }
+          "R2.17 WPF routed Scan/Stop UI test PASS (NO physical desktop automation)"
+          Get-Content $path
+
       - name: Measure NTFS allocated bytes and synthetic rollback
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

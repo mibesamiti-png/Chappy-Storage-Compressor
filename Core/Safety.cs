@@ -110,13 +110,21 @@ public static class Safety
     // creates another 256 KiB managed buffer per operation.
     private const int CompareBufferBytes = 256 * 1024;
 
-    public static string ComputeSha256(string path, CancellationToken ct)
+    // R2.17 part 3: report byte-level reading at 4 MiB boundaries, or EOF.
+    // The callback is only observation, never a permission to alter source data.
+    // It may cancel the token; the method then aborts before returning any hash.
+    private const int HashProgressStepBytes = 4 * 1024 * 1024;
+
+    public static string ComputeSha256(string path, CancellationToken ct,
+        Action<long, long>? onBytesRead = null)
     {
         ct.ThrowIfCancellationRequested();
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read,
             FileShare.Read, 1, FileOptions.SequentialScan);
+        long totalBytes = file.Length;
         byte[] buffer = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
+        long bytesRead = 0, lastReportedBytes = 0;
         try
         {
             int read;
@@ -124,7 +132,21 @@ public static class Safety
             {
                 ct.ThrowIfCancellationRequested();
                 hash.AppendData(buffer, 0, read);
+                bytesRead = checked(bytesRead + read);
+                if (onBytesRead != null &&
+                    (bytesRead - lastReportedBytes >= HashProgressStepBytes ||
+                     bytesRead == totalBytes))
+                {
+                    onBytesRead(bytesRead, totalBytes);
+                    lastReportedBytes = bytesRead;
+                    ct.ThrowIfCancellationRequested();
+                }
             }
+            ct.ThrowIfCancellationRequested();
+            // In an abnormal short read or source-size race, do not claim a
+            // full read; callers still revalidate the NTFS snapshot separately.
+            if (onBytesRead != null && lastReportedBytes != bytesRead)
+                onBytesRead(bytesRead, totalBytes);
             ct.ThrowIfCancellationRequested();
             return Convert.ToHexString(hash.GetHashAndReset());
         }

@@ -58,6 +58,24 @@ public sealed class ScanResult
     public int HashAttemptedFiles { get; init; }
 }
 
+/// <summary>
+/// R2.17 part 3: read-only scan hashing progress in candidate bytes.
+/// SettledCandidateBytes includes inspected, skipped and failed candidates;
+/// CurrentFileBytes represents bytes read inside the current SHA-256 call.
+/// This is progress towards finishing candidate work, NOT verified savings.
+/// </summary>
+public sealed record ScanHashProgress(int SettledFiles, int CandidateFiles,
+    long SettledCandidateBytes, long TotalCandidateBytes,
+    long CurrentFileBytes, long CurrentFileTotalBytes)
+{
+    public long ProcessedCandidateBytes =>
+        Math.Min(TotalCandidateBytes, checked(SettledCandidateBytes + CurrentFileBytes));
+    public double Percent => TotalCandidateBytes == 0 ? 100 :
+        Math.Clamp(100.0 * ProcessedCandidateBytes / TotalCandidateBytes, 0, 100);
+    public double CurrentFilePercent => CurrentFileTotalBytes == 0 ? 100 :
+        Math.Clamp(100.0 * CurrentFileBytes / CurrentFileTotalBytes, 0, 100);
+}
+
 public sealed class GroupRow
 {
     public required DuplicateGroup Group { get; init; }

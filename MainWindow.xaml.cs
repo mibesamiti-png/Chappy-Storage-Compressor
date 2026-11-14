@@ -66,6 +66,7 @@ public partial class MainWindow : Window
         _lastScan = null;
         _rows.Clear();
         ScannedCountText.Text = GroupCountText.Text = SafeCountText.Text = SavingsText.Text = "—";
+        JobProgress.IsIndeterminate = false;
         JobProgress.Value = 0;
         ProgressText.Text = "待機中";
         MergeButton.IsEnabled = false;
@@ -113,14 +114,34 @@ public partial class MainWindow : Window
         _lastRoot = root;
         _work = new CancellationTokenSource();
         Busy(true);
+        JobProgress.IsIndeterminate = true; // Inventory has no known total.
         ProgressText.Text = "読み取り専用スキャン中";
         Log("スキャン開始: " + root);
-        var progress = new Progress<string>(message => { ProgressText.Text = "処理中"; Log(message); });
         bool mediaOnly = MediaOnlyCheck.IsChecked == true;
         var token = _work.Token;
+        // Hash progress is separate from messages: no per-chunk log flood.
+        // Progress<T> marshals worker updates to the WPF UI context.
+        var progress = new Progress<string>(message =>
+        {
+            if (!_busy || token.IsCancellationRequested) return;
+            if (!message.StartsWith("SHA-256計算", StringComparison.Ordinal))
+                ProgressText.Text = "サイズ・安全性を検査中";
+            Log(message);
+        });
+        var hashProgress = new Progress<ScanHashProgress>(p =>
+        {
+            if (!_busy || token.IsCancellationRequested) return;
+            JobProgress.IsIndeterminate = false;
+            JobProgress.Value = p.Percent;
+            ProgressText.Text = p.CandidateFiles == 0 ? "同サイズの候補なし" :
+                p.CurrentFileTotalBytes > 0
+                    ? $"SHA {p.Percent:F0}%・単体 {p.CurrentFilePercent:F0}%"
+                    : $"SHA {p.Percent:F0}%・{p.SettledFiles}/{p.CandidateFiles}";
+        });
         try
         {
-            var result = await Task.Run(() => Scanner.Run(root, mediaOnly, progress, token));
+            var result = await Task.Run(() => Scanner.Run(root, mediaOnly, progress,
+                token, hashProgress));
             _lastScan = result;
             RefreshRows();
             ProgressText.Text = "スキャン完了";
@@ -131,7 +152,13 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException) { Log("スキャンを中断しました。ファイル変更はありません。"); ProgressText.Text = "中断"; }
         catch (Exception ex) { Log("スキャンエラー: " + ex); MessageBox.Show(ex.Message, "スキャン失敗", MessageBoxButton.OK, MessageBoxImage.Error); }
-        finally { Busy(false); _work?.Dispose(); _work = null; }
+        finally
+        {
+            JobProgress.IsIndeterminate = false;
+            Busy(false);
+            _work?.Dispose();
+            _work = null;
+        }
     }
 
     private void RefreshRows()

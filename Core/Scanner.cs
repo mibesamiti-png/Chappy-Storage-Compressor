@@ -12,7 +12,8 @@ public static class Scanner
         DateTime ModifiedUtc, FileAttributes Attributes);
 
     public static ScanResult Run(string root, bool mediaOnly,
-        IProgress<string>? progress, CancellationToken ct)
+        IProgress<string>? progress, CancellationToken ct,
+        IProgress<ScanHashProgress>? hashProgress = null)
     {
         root = Safety.ValidateRoot(root);
         var bySize = new Dictionary<long, List<InventoryItem>>();
@@ -121,8 +122,16 @@ public static class Scanner
         }
 
         int hashed = 0;
-        // R2.17: bound progress messages to about 20 per hash phase. This
-        // keeps long same-size batches observable without flooding the GUI.
+        // R2.17 part 3: a typed byte progress channel for the WPF bar, with
+        // the old human-readable messages preserved for existing callers.
+        // 'settled' includes rejected/failed candidates: it is a completion
+        // metric, not an assertion that these bytes formed valid hash groups.
+        long totalCandidateBytes = candidates.Sum(x => x.Length);
+        long settledCandidateBytes = 0;
+        int settledFiles = 0;
+        hashProgress?.Report(new ScanHashProgress(0, candidates.Count, 0,
+            totalCandidateBytes, 0, 0));
+        ct.ThrowIfCancellationRequested();
         int hashProgressStep = Math.Max(1, (candidates.Count + 19) / 20);
         progress?.Report($"SHA-256計算を開始: 0 / {candidates.Count:N0}");
         var sameHash = new Dictionary<(long, string), List<FileSnapshot>>();
@@ -132,7 +141,11 @@ public static class Scanner
             try
             {
                 if (!Safety.SameSnapshot(f)) { skipped++; continue; }
-                string digest = Safety.ComputeSha256(f.Path, ct);
+                string digest = Safety.ComputeSha256(f.Path, ct,
+                    hashProgress is null ? null : (read, length) =>
+                        hashProgress.Report(new ScanHashProgress(settledFiles,
+                            candidates.Count, settledCandidateBytes, totalCandidateBytes,
+                            read, length)));
                 if (!Safety.SameSnapshot(f)) { skipped++; continue; }
                 f.Sha256 = digest;
                 var key = (f.Length, digest);
@@ -144,6 +157,17 @@ public static class Scanner
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                 or InvalidOperationException or System.ComponentModel.Win32Exception)
             { errors++; }
+            finally
+            {
+                // Even a rejected candidate is now a completed unit of work.
+                // Cancellation still propagates and never returns a partial result.
+                settledCandidateBytes = checked(settledCandidateBytes + f.Length);
+                settledFiles++;
+                if (!ct.IsCancellationRequested)
+                    hashProgress?.Report(new ScanHashProgress(settledFiles,
+                        candidates.Count, settledCandidateBytes,
+                        totalCandidateBytes, 0, 0));
+            }
             hashed++;
             if (hashed % hashProgressStep == 0 || hashed == candidates.Count)
                 progress?.Report($"SHA-256計算: {hashed:N0} / {candidates.Count:N0}");

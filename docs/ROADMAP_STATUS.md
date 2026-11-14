@@ -158,6 +158,12 @@ PNG＋JPG一括候補の出力先選択後に、保存済みPNG/JPG計画の有�
 
 [手順と制限](R217_WPF_ROUTED_CLICK_SMOKE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17 (part 6) — source-pinned official jpegtran candidate profile
+
+公式libjpeg-turbo 3.2.1 の**フルGitコミット**検証→Windows CIでjpegtranをソースビルド（SIMD無効）→人工JPEG 8件の実際のプレビューエンジン候補生成までの安全な性能計測を追加。WIC全画素・APP/COM/量子化/SOFマーカー一致、SHA256原本不変、再実行時の作業記録/候補再利用を確認する。単一CIホストの経過時間は利用者のHDD/SSDやSIMD最適化済み公式バイナリの実力を保証しない。温冷キャッシュ制御と実機UIは引き続き別課題。生産環境の原本置換・重複統合・独立Undoは無効。実容量回復0B、歴史的ソース実装率69.4%を変更しない。
+
+[試験詳細](R217_OFFICIAL_JPEGTRAN_PROFILE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

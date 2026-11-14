@@ -15,7 +15,7 @@ internal static class R216MediaScannerBenchmarks
         {
             for (int i = 0; i < 360; i++)
             {
-                string extension = i % 3 switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
+                string extension = (i % 3) switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
                 File.WriteAllBytes(Path.Combine(dir, $"unique-{i:D4}{extension}"),
                     RandomNumberGenerator.GetBytes(512 + i));
             }

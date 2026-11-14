@@ -82,6 +82,32 @@ jobs:
         shell: cmd
         run: call RUN_DIAGNOSTICS.bat
 
+      - name: Verify R2.16 synthetic scanner benchmark and NTFS deep-check reduction
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r216-scanner-benchmark.json"
+          if (-not (Test-Path $path)) { throw "R2.16 synthetic benchmark report missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.fileCount -ne 372 -or
+              $r.repeatedSizeFiles -ne 12 -or
+              $r.hashAttempts -gt 9 -or
+              $r.verifiedDuplicateGroups -ne 3 -or
+              $r.baselineDeepCaptures -lt 370 -or
+              $r.pooledOperationCount -ne 24 -or
+              $r.repeatedPooledOperationAllocatedBytes -ge 4000000 -or
+              $r.buffersClearedOnReturn -ne $true -or
+              $r.timingImprovementAsserted -ne $false -or
+              $r.productionFileMutationEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or
+              $r.realMediaTouched -ne $false) {
+            throw "R2.16 synthetic scanner evidence invalid or safety contract changed"
+          }
+          $ratio = 100.0 * (1 - $r.repeatedSizeFiles / $r.fileCount)
+          "R2.16: synthetic expensive NTFS captures reduced by $([math]::Round($ratio, 1))% (NO timing speedup guarantee)"
+          Get-Content $path
+
       - name: Measure NTFS allocated bytes and synthetic rollback
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

@@ -52,6 +52,10 @@ public sealed class ScanResult
     public int FileCount { get; init; }
     public int Skipped { get; init; }
     public int Errors { get; init; }
+    // R2.16 performance counters. FileCount is shallow-eligible inventory;
+    // only repeated-size candidates require full ADS/owner/ACL/NTFS checks.
+    public int DeepInspectedFiles { get; init; }
+    public int HashAttemptedFiles { get; init; }
 }
 
 public sealed class GroupRow

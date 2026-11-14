@@ -95,6 +95,18 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [仕様・制限](docs/R214_UNIFIED_IMAGE_BATCH.md) / [R2.14開発予定](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/10)
 
+## R2.15：JPG・PNG圧縮候補とMP4重複の二重計上を防ぐ容量分析
+
+既存の**「PNG/JPG統合容量レポート／CSV」**を拡張。先に同じフォルダを重複スキャンしておけば、JPG・PNG候補の削減見込とMP4を含む完全一致重複の見込を**形式別に補正**して表示します。
+
+- JPG・PNG・MP4別に「重複」「候補」「重複して数えた分」「補正後」の見込を表示。
+- 重複スキャン後に内容が変わったファイル、追加ハードリンクができたファイルは再照合で除外。
+- 大量データの再照合進捗と中断に対応。
+- CSVで形式別補正表と従来の候補詳細表を選んで保存。原本・候補内への出力や同名上書きは拒否。
+- MP4の再圧縮は一切せず、ファイルのバイト完全一致のみ対象。**実際に回復した容量は0B**のまま。
+
+[算定方法と限界](docs/R215_RECONCILED_CAPACITY_BY_FORMAT.md) / [R2.14からの引継ぎ課題](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/10)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

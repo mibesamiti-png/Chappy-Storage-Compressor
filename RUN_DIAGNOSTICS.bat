@@ -36,20 +36,24 @@ if not errorlevel 1 (
 ) else (
   echo SKIPPED: Python not installed; independent reference checks were NOT run. > "%LOGDIR%\static-checks.log"
 )
-echo [1/3] Building Windows WPF application...
+echo [1/4] Building Windows WPF application...
 dotnet build "ChappyStorageCompressor.csproj" -c Release --nologo > "%LOGDIR%\build.log" 2>&1
 if errorlevel 1 goto failBuild
 
-echo [2/3] Running isolated synthetic safety tests...
+echo [2/4] Running isolated synthetic safety tests...
 dotnet run -c Release --project "tests\ChappyStorageCompressor.SmokeTests.csproj" > "%LOGDIR%\smoke-tests.log" 2>&1
 if errorlevel 1 goto failTests
 
-echo [3/3] Publishing self-contained Windows executable...
+echo [3/4] Exercising WPF routed Scan/Stop button events on synthetic media...
+dotnet run -c Release --project "tests\ChappyStorageCompressor.UiSmokeTests.csproj" > "%LOGDIR%\wpf-routed-click.log" 2>&1
+if errorlevel 1 goto failUiTests
+
+echo [4/4] Publishing self-contained Windows executable...
 dotnet publish "ChappyStorageCompressor.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o "dist\win-x64" > "%LOGDIR%\publish.log" 2>&1
 if errorlevel 1 goto failPublish
 
-echo PASS: Build, smoke tests and publish. > "%LOGDIR%\RESULT.txt"
-echo PASS: Build, smoke tests and publish.
+echo PASS: Build, synthetic safety tests, routed WPF UI events and publish. > "%LOGDIR%\RESULT.txt"
+echo PASS: Build, synthetic safety tests, routed WPF UI events and publish.
 echo See diagnostics\ logs, and dist\win-x64 for binaries.
 echo IMPORTANT: This does not authorize use on original media.
 exit /b 0
@@ -68,6 +72,11 @@ exit /b 4
 echo FAIL: isolated tests. Read diagnostics\smoke-tests.log. > "%LOGDIR%\RESULT.txt"
 echo Tests failed. Read diagnostics\smoke-tests.log.
 exit /b 5
+:failUiTests
+echo FAIL: WPF routed Click smoke tests. Read diagnostics\wpf-routed-click.log. > "%LOGDIR%\RESULT.txt"
+echo WPF routed UI event test failed. Read diagnostics\wpf-routed-click.log.
+exit /b 8
+
 :failPublish
 echo FAIL: publish. Read diagnostics\publish.log. > "%LOGDIR%\RESULT.txt"
 echo Publish failed. Read diagnostics\publish.log.

@@ -180,6 +180,37 @@ jobs:
           "R2.17 valid image PNG candidate and JPEG decoding benchmark evidence PASS"
           Get-Content $path
 
+      - name: Verify R2.17 mid-file SHA byte progress and cancellation
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-hash-byte-progress.json"
+          if (-not (Test-Path $path)) { throw "R2.17 hash progress evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.syntheticFiles -ne 2 -or
+              $r.bytesPerFile -ne 12582912 -or
+              $r.checkedSha256MatchesFramework -ne $true -or
+              $r.scannerVerifiedGroups -ne 1 -or
+              $r.scannerHashAttempts -ne 2 -or
+              $r.directHashProgressUpdates -lt 3 -or
+              $r.scannerByteProgressUpdates -lt 8 -or
+              $r.scannerIntermediateFileProgressObserved -ne $true -or
+              $r.shaMidFileCancellationConfirmed -ne $true -or
+              $r.scannerMidFileCancellationConfirmed -ne $true -or
+              $r.allOriginalHashesPreserved -ne $true -or
+              $r.actualWpfButtonClickedByGuiAutomation -ne $false -or
+              $r.guiCompiledButInteractionUnverified -ne $true -or
+              $r.automaticScanResumptionSupported -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or
+              $r.realMediaTouched -ne $false) {
+            throw "R2.17 hash/cancel safety or evidence contract invalid"
+          }
+          "R2.17 typed SHA byte progress and mid-file cancellation tests PASS"
+          Get-Content $path
+
       - name: Measure NTFS allocated bytes and synthetic rollback
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

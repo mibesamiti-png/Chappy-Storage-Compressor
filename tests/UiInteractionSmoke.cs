@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 using ChappyStorageCompressor;
@@ -41,9 +42,18 @@ internal static class UiInteractionSmoke
             app.InitializeComponent();
             application = app;
             window = new MainWindow();
+            // x:Name fields are internal in the production app assembly.
+            // Resolve real WPF named controls from the loaded XAML namescope.
+            var scanButton = Named<Button>(window, "ScanButton");
+            var stopButton = Named<Button>(window, "StopButton");
+            var mergeButton = Named<Button>(window, "MergeButton");
+            var jobProgress = Named<ProgressBar>(window, "JobProgress");
+            var progressText = Named<TextBlock>(window, "ProgressText");
+            var groupsGrid = Named<DataGrid>(window, "GroupsGrid");
+            var pathBox = Named<TextBox>(window, "PathBox");
 
-            Require(!window.MergeButton.IsEnabled &&
-                    !window.StopButton.IsEnabled && window.ScanButton.IsEnabled,
+            Require(!mergeButton.IsEnabled &&
+                    !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
 
             string originals = Path.Combine(testRoot, "synthetic-originals");
@@ -60,23 +70,23 @@ internal static class UiInteractionSmoke
 
             string beforeA = OracleHash(left), beforeB = OracleHash(right);
             Require(beforeA == beforeB, "Independent identical generated source contents");
-            window.PathBox.Text = originals;
-            Require(window.ScanButton.IsEnabled, "Target path allows scan before run");
+            pathBox.Text = originals;
+            Require(scanButton.IsEnabled, "Target path allows scan before run");
 
             // A synthetic routed WPF click, using the real XAML handler.
-            window.ScanButton.RaiseEvent(new RoutedEventArgs(
-                ButtonBase.ClickEvent, window.ScanButton));
-            Require(window.StopButton.IsEnabled && !window.ScanButton.IsEnabled,
+            scanButton.RaiseEvent(new RoutedEventArgs(
+                ButtonBase.ClickEvent, scanButton));
+            Require(stopButton.IsEnabled && !scanButton.IsEnabled,
                 "Scan_Click enters busy mode and enables Stop in WPF");
-            Require(window.JobProgress.IsIndeterminate,
+            Require(jobProgress.IsIndeterminate,
                 "Scanning begins with indeterminate WPF progress");
 
             // Click without pumping yet: work starts via Task.Run, while this
             // STA keeps the dispatcher queued until the stop event fires.
-            window.StopButton.RaiseEvent(new RoutedEventArgs(
-                ButtonBase.ClickEvent, window.StopButton));
-            Require(window.ProgressText.Text == "中断要求中…" &&
-                    !window.StopButton.IsEnabled,
+            stopButton.RaiseEvent(new RoutedEventArgs(
+                ButtonBase.ClickEvent, stopButton));
+            Require(progressText.Text == "中断要求中…" &&
+                    !stopButton.IsEnabled,
                 "Stop routed Click immediately updates status and disables Stop");
             var currentCts = typeof(MainWindow).GetField("_work",
                 BindingFlags.NonPublic | BindingFlags.Instance)?
@@ -84,36 +94,36 @@ internal static class UiInteractionSmoke
             Require(currentCts is not null && currentCts.IsCancellationRequested,
                 "The real Stop_Click handler cancels the active scanner token");
 
-            PumpUntil(() => window.ScanButton.IsEnabled &&
-                window.ProgressText.Text == "中断", TimeSpan.FromSeconds(20));
-            Require(!window.JobProgress.IsIndeterminate &&
-                    !window.StopButton.IsEnabled &&
-                    !window.MergeButton.IsEnabled &&
-                    window.GroupsGrid.Items.Count == 0,
+            PumpUntil(() => scanButton.IsEnabled &&
+                progressText.Text == "中断", TimeSpan.FromSeconds(20));
+            Require(!jobProgress.IsIndeterminate &&
+                    !stopButton.IsEnabled &&
+                    !mergeButton.IsEnabled &&
+                    groupsGrid.Items.Count == 0,
                 "Canceled scan clears running UI state and exposes no partial groups");
 
             // A second invocation uses the same synthetic files and must
             // complete normally through the real WPF routed Click handler.
-            window.ScanButton.RaiseEvent(new RoutedEventArgs(
-                ButtonBase.ClickEvent, window.ScanButton));
-            Require(window.StopButton.IsEnabled &&
-                    !window.MergeButton.IsEnabled,
+            scanButton.RaiseEvent(new RoutedEventArgs(
+                ButtonBase.ClickEvent, scanButton));
+            Require(stopButton.IsEnabled &&
+                    !mergeButton.IsEnabled,
                 "Second scan starts safely after a canceled run");
 
             bool intermediateHashUiSeen = false;
-            PumpUntil(() => window.ScanButton.IsEnabled &&
-                window.ProgressText.Text == "スキャン完了",
+            PumpUntil(() => scanButton.IsEnabled &&
+                progressText.Text == "スキャン完了",
                 TimeSpan.FromSeconds(25),
                 () =>
                 {
                     // Informational only, not a timing-flaky hard assertion.
-                    if (window.ProgressText.Text.StartsWith("SHA ", StringComparison.Ordinal))
+                    if (progressText.Text.StartsWith("SHA ", StringComparison.Ordinal))
                         intermediateHashUiSeen = true;
                 });
-            Require(window.JobProgress.Value == 100 &&
-                    !window.JobProgress.IsIndeterminate &&
-                    !window.MergeButton.IsEnabled &&
-                    window.GroupsGrid.Items.Count == 1,
+            Require(jobProgress.Value == 100 &&
+                    !jobProgress.IsIndeterminate &&
+                    !mergeButton.IsEnabled &&
+                    groupsGrid.Items.Count == 1,
                 "Completed scan has one valid duplicate group and 100% WPF progress");
             Require(OracleHash(left) == beforeA &&
                     OracleHash(right) == beforeB &&
@@ -171,6 +181,10 @@ internal static class UiInteractionSmoke
             catch { Console.Error.WriteLine("Test cleanup failed for disposable root"); }
         }
     }
+
+    private static T Named<T>(MainWindow window, string name) where T : class =>
+        window.FindName(name) as T ??
+        throw new InvalidOperationException("WPF XAML control not found: " + name);
 
     private static string OracleHash(string path)
     {

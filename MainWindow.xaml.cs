@@ -45,6 +45,7 @@ public partial class MainWindow : Window
         PngInspectButton.IsEnabled = !busy;
         PngPreviewButton.IsEnabled = !busy;
         PngBatchButton.IsEnabled = !busy;
+        UnifiedBatchButton.IsEnabled = !busy;
         PngAuditButton.IsEnabled = !busy;
         JpegInspectButton.IsEnabled = !busy;
         PngOrphanButton.IsEnabled = !busy;
@@ -394,6 +395,149 @@ public partial class MainWindow : Window
             MessageBox.Show(ex.Message, "PNG候補生成失敗", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally { Busy(false); _work?.Dispose(); _work = null; }
+    }
+
+    // R2.14: One source/output selection for the existing PNG and JPEG
+    // preview-only engines. Their separate journals remain authoritative.
+    // Neither engine is permitted to modify original user media.
+    private async void UnifiedBatch_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        string input;
+        try { input = Safety.ValidateRoot(PathBox.Text); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.Message, "入力フォルダを確認", MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var toolPicker = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "公式libjpeg-turboのjpegtran.exeを選択（PNGのみの場合は従来のPNG専用ボタン）",
+            Filter = "jpegtran.exe|jpegtran.exe",
+            CheckFileExists = true
+        };
+        if (toolPicker.ShowDialog(this) != true) return;
+
+        using var folder = new Forms.FolderBrowserDialog
+        {
+            Description = "PNG/JPG両方の候補と再開記録の保存先（原本とは別のフォルダ階層）",
+            ShowNewFolderButton = true
+        };
+        if (folder.ShowDialog() != Forms.DialogResult.OK) return;
+        string output = folder.SelectedPath, tool = toolPicker.FileName;
+
+        _work = new CancellationTokenSource();
+        CancellationToken token = _work.Token;
+        Busy(true);
+        JobProgress.Value = 0;
+        ProgressText.Text = "PNG/JPGの事前容量調査";
+        try
+        {
+            // This inventory never modifies the source and is deliberately
+            // only a rough capacity forecast, not a safety approval.
+            var preflight = await Task.Run(() =>
+                PersonalMediaBatchPreflight.Inspect(input, output, token), token);
+            token.ThrowIfCancellationRequested();
+            if (preflight.TotalFiles == 0)
+            {
+                MessageBox.Show("一般的なPNG/JPG候補がありませんでした。原本は変更していません。",
+                    "一括候補の事前確認", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            string warning = preflight.OutputMayNeedMoreSpace
+                ? "\n\n候補保存先の空き容量が原本合計より少ないため、途中で容量不足となる可能性があります。"
+                : "";
+            string preview = $"入力: {input}\n保存先: {output}\n" +
+                $"PNG: {preflight.PngFiles:N0}件 / {GroupRow.HumanSize(preflight.PngSourceBytes)}\n" +
+                $"JPG/JPEG: {preflight.JpegFiles:N0}件 / {GroupRow.HumanSize(preflight.JpegSourceBytes)}\n" +
+                $"入力の合計: {GroupRow.HumanSize(preflight.TotalSourceBytes)}\n" +
+                $"候補保存先の空き: {GroupRow.HumanSize(preflight.OutputAvailableBytes)}\n" +
+                $"特殊属性の除外: {preflight.SkippedSpecialFiles:N0}件、調査エラー: {preflight.ScanErrors:N0}件" +
+                warning +
+                "\n\nPNGの後にJPGを実行し、それぞれの進捗記録から再開します。" +
+                "\n候補生成は追加のディスク容量を消費します。" +
+                "\n元ファイルの置換・削除・統合は行いません。" +
+                "\n\n処理を開始しますか？";
+            if (MessageBox.Show(preview, "PNG/JPGまとめて無劣化候補作成",
+                MessageBoxButton.YesNo, MessageBoxImage.Information,
+                MessageBoxResult.No) != MessageBoxResult.Yes) return;
+
+            int updates = 0;
+            var pngProgress = new Progress<PngBatchPreviewEngine.Progress>(p =>
+            {
+                JobProgress.Value = p.Total == 0 ? 50 : 50.0 * p.Done / p.Total;
+                ProgressText.Text = $"PNG {p.Done:N0}/{p.Total:N0}";
+                if (p.Status is "Failed" or "Deferred" || ++updates % 100 == 0)
+                    Log($"PNG {p.Status}: {p.RelativePath} / 候補削減 {GroupRow.HumanSize(p.SavedBytes)}");
+            });
+            var jpegProgress = new Progress<JpegBatchPreviewEngine.Progress>(p =>
+            {
+                JobProgress.Value = p.Total == 0 ? 100 : 50.0 + 50.0 * p.Done / p.Total;
+                ProgressText.Text = $"JPG {p.Done:N0}/{p.Total:N0}";
+                if (p.Status is "Failed" or "Deferred" or "NeedsReview" || ++updates % 100 == 0)
+                    Log($"JPG {p.Status}: {p.RelativePath} / 候補削減 {GroupRow.HumanSize(p.SavingBytes)}");
+            });
+
+            Log($"PNG/JPGまとめて候補作成開始。PNG {preflight.PngFiles:N0}件、JPG {preflight.JpegFiles:N0}件。");
+            ProgressText.Text = "PNG一括候補を生成中";
+            var png = await Task.Run(() =>
+                PngBatchPreviewEngine.Run(input, output, pngProgress, token), token);
+            Log($"PNG: {png.Done:N0}/{png.Total:N0}件、候補 {png.Optimized:N0}件、失敗 {png.Failed:N0}件。" +
+                $" 候補削減見込 {GroupRow.HumanSize(png.SavedBytes)}。");
+            Log("PNG再開記録: " + png.ManifestPath);
+            token.ThrowIfCancellationRequested();
+            if (png.Done < png.Total)
+            {
+                ProgressText.Text = "PNG保留（再開可能）";
+                Log("PNGが容量不足等により保留となったためJPGは開始しません。空き容量を確保して再開してください。");
+                return;
+            }
+
+            JobProgress.Value = 50;
+            ProgressText.Text = "JPG一括候補を生成中";
+            var jpeg = await Task.Run(() =>
+                JpegBatchPreviewEngine.Run(input, output, tool, jpegProgress, token), token);
+            token.ThrowIfCancellationRequested();
+            JobProgress.Value = jpeg.Done == jpeg.Total ? 100 :
+                50.0 + 50.0 * jpeg.Done / Math.Max(1, jpeg.Total);
+            ProgressText.Text = jpeg.Done == jpeg.Total
+                ? "PNG/JPG候補作成終了"
+                : "JPG保留（再開可能）";
+
+            long totalCandidateSaving = checked(png.SavedBytes + jpeg.EstimatedSavingBytes);
+            Log($"JPG: {jpeg.Done:N0}/{jpeg.Total:N0}件、候補 {jpeg.Completed:N0}件、" +
+                $"失敗 {jpeg.Failed:N0}件、要確認 {jpeg.NeedsReview:N0}件。" +
+                $" 候補削減見込 {GroupRow.HumanSize(jpeg.EstimatedSavingBytes)}。");
+            Log("JPG再開記録: " + jpeg.PlanPath);
+            Log($"PNG＋JPG候補の合計論理削減見込: {GroupRow.HumanSize(totalCandidateSaving)}。" +
+                " これは候補ファイルのサイズ差であり、元ファイルは無変更・ディスクの実回復は0Bです。");
+            MessageBox.Show($"PNG候補: {png.Optimized:N0}件、JPG候補: {jpeg.Completed:N0}件\n" +
+                $"サイズ差の見込: {GroupRow.HumanSize(totalCandidateSaving)}\n" +
+                "元ファイルは変更していません。実際の空き容量が増えたわけではありません。\n" +
+                "続きから再開するには同じ入力・候補フォルダ・jpegtran.exeを選んでください。",
+                "一括無劣化候補の結果", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            ProgressText.Text = "中断（再開可能）";
+            Log("PNG/JPGまとめて候補作成を中断しました。各フォーマットの記録から再開できます。");
+        }
+        catch (Exception ex)
+        {
+            ProgressText.Text = "一括処理エラー";
+            Log("PNG/JPGまとめて候補処理のエラー: " + ex);
+            MessageBox.Show(ex.Message + "\n原本は変更していません。保存済みの候補と記録は削除しません。",
+                "一括候補作成の安全停止", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            Busy(false);
+            _work?.Dispose();
+            _work = null;
+        }
     }
 
     private async void PngBatch_Click(object sender, RoutedEventArgs e)

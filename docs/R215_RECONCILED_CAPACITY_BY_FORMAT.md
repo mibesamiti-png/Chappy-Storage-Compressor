@@ -44,3 +44,15 @@ Only a Windows synthetic test suite is used: JPG triple duplicates, PNG pair, MP
 ## Next priority
 
 Profile large scans and candidate throughput on generated datasets before making any performance claims. Investigate progress and reuse of trusted scan output without relaxing identity, byte-exact or named-stream safety checks. Avoid advanced cross-user ACL research unless it becomes relevant to the user's single-account media library.
+
+## Verified Windows CI — 2026-11-14
+
+[R2.15 PR Windows Actions #43581218329](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43581218329) **passed** using directly tracked C# source, with:
+
+- **392/392** synthetic C# safety checks, including **all 13 R2.15-specific assertions**.
+- WPF compilation **0 errors, 2 deliberate CS0162 warnings** for the existing production mutation locks.
+- Windows win-x64 publish **PASS**.
+- R2.8 NTFS allocated-size measurement, R2.9 real child-process termination/recovery, R2.10 independent-file restoration, R2.11 NTFS metadata preflight and R2.12 same-account owner+DACL tests **PASS**.
+- Test synthetic case **JPG triple + PNG pair + MP4 pair**: preview 150 B + dedupe 700 B − overlapping 60 B = **790 B hypothetical**, **0 B actually freed**.
+
+The first CI attempt correctly failed the historical R2.1 static no-mutation contract because CSV creation was located in the mathematical planner. The fix extracted source-independent CSV file creation into `Core/CombinedSavingsFormatCsv.cs`, keeping `CombinedSavingsPlanner.cs` entirely read-only. No historical quality gate was disabled or weakened. This is an architecture refactor and not a claim of real-media safety.

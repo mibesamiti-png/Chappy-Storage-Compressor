@@ -40,6 +40,21 @@ The reported duplicate capacity remains **hypothetical**. Production recovered s
 4. Simplify repeat preview selection without automatically running untrusted jpegtran.exe or reusing unsafe folders.
 5. Keep production mutation gates and advanced ACL/ADS exclusions unchanged until separate end-to-end safety approval.
 
-## Result
+## Verified result — Windows GitHub Actions 2026-11-14
 
-**CI result pending until the R2.17 pull-request Windows workflow runs.** R2.16's verified 426 synthetic safety assertions, R2.8–R2.12 NTFS probes, WPF build and win-x64 publish remain mandatory.
+[Successful CI run #43593782763](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43593782763) on commit d87b1f3bd571c3290681f5ecd51546c172f3c3d1:
+
+- **438/438** combined C# safety assertions passed (R2.16 baseline 426 plus twelve R2.17 checks).
+- Existing R2.8–R2.12 NTFS safety subprocess probes, WPF build, and win-x64 EXE publish all passed.
+- **115,769,344 bytes** of generated inputs; 48 unique-size and 76 same-size NTFS file paths.
+- The 48 unique-size corpus produced 0 deep security checks, 0 hash attempts, and 0 groups on both runs.
+- The 76 same-size corpus produced 76 deep security checks, 73 hash attempts, and exactly 3 independently verified safe groups on both runs.
+
+| Dataset | First elapsed | Repeat elapsed | Windows process logical read transfer |
+|---|---:|---:|---:|
+| Unique-heavy | 1.409 ms | 1.123 ms | ~0 MiB in each sample |
+| Same-size-heavy | 69.203 ms | 69.739 ms | ~79 MiB in each sample |
+
+These are **single hosted-run samples** with an unknown OS cache state after fixture creation/fingerprinting, not reproducible physical disk speed claims or a speedup percentage. Read-transfer counters include process-level logical I/O. The same-size workload correctly receives *no* shortcut that bypasses NTFS/ADS/identity checks. Recovered user capacity is still **0 B** because production source mutation remains disabled.
+
+The diagnostic artifact includes the machine-readable R2.17 JSON alongside prior smoke/NTFS evidence. Future code changes must re-run the same Windows workflow; do not treat the above results as permanent release certification.

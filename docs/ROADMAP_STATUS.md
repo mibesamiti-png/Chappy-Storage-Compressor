@@ -134,6 +134,12 @@ R2.16の測定は重複サイズが少ない入力に偏っていたため、R2.
 
 安全テストは生成バイト列のみを使う。PNG/JPG候補生成のための有効な画像形式での性能評価、ディスクキャッシュを制御した比較、実機WPFの停止確認は今後の課題。[仕様と結果](R217_SAME_SIZE_SCANNER_BENCHMARK.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)。**本番の重複統合・原本置換・統合解除は無効**、実際に回復した空き容量は0B。歴史的なソース実装見積もりは根拠のない再算定を避け**69.4%を据え置く**。
 
+## R2.17 (part 2) — generated valid PNG/JPEG profiling
+
+画像として解釈不能なランダムバイト列から一歩進み、12 PNG / 12 JPEGの合成・有効画像を生成して本番系のPNGバッチ候補生成・再開とJPEGの処理計画・マーカー/全画素読み込みを分離して計測。PNG候補は本体の独立検証に加え、WICデコードした画素の一致と入力ハッシュ不変を検証する。JPEG本番候補生成は外部jpegtran.exeが必要なため未計測、CIで外部実行ファイルを勝手にダウンロード・実行しない。
+
+計測結果は[専用仕様と制限](R217_VALID_IMAGE_BATCH_PROFILE.md)に記録。旧プログラムの安全ゲートを維持したまま、R2.17 Issue #14のJPEG実候補生成、長時間GUI進捗、繰り返し操作簡略化等は引き続き未完了。**source 69.4%は歴史的見積りのまま、実際の容量回復0B**。
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

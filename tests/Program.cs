@@ -1541,6 +1541,7 @@ static class Program
             TestR25ArtifactIsolation(root);
             TestR26LateMutationAndIdentity(root);
             R213MediaReportTests.Run(root, Check, ExpectThrows);
+            R214PersonalBatchPreflightTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

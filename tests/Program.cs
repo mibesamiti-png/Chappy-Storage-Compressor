@@ -1542,6 +1542,7 @@ static class Program
             TestR26LateMutationAndIdentity(root);
             R213MediaReportTests.Run(root, Check, ExpectThrows);
             R214PersonalBatchPreflightTests.Run(root, Check, ExpectThrows);
+            R215ReconciledCapacityTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

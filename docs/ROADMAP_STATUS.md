@@ -152,6 +152,12 @@ PNG＋JPG一括候補の出力先選択後に、保存済みPNG/JPG計画の有�
 
 [仕様・検証限界](R217_SAFE_COMBINED_RESUME.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)。本番原本置換・ハードリンク統合・独立解除は無効。実容量回復0B。ソース実装率69.4%は根拠なしに更新しない。
 
+## R2.17 (part 5) — WPF routed Click smoke (synthetic-only)
+
+別プロジェクトのSTA/WPF UIスモークテストを追加し、実際のXAMLボタンのClickルートを通してスキャン開始→中断要求→終了→再スキャン完了を確認する。ログとJSONは人工NTFSの2×32MiBテストのみを対象とする。実際の物理マウス操作や表示画面・手動ダイアログは未テストのまま区別する。外部jpegtranの実候補生成速度は未計測。原本置換・統合・独立Undoは無効。実容量回復0B。歴史的進捗率69.4%は変更しない。
+
+[手順と制限](R217_WPF_ROUTED_CLICK_SMOKE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

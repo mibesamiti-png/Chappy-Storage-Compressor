@@ -49,6 +49,10 @@ Machine-readable evidence: diagnostics/r217-safe-preview-resume.json. Existing 4
 
 A real WPF desktop UI exercise should select an existing valid output, verify the explicit resume text, click Stop during a long scan, and test the UI remains responsive. Any future attempt to add automatic SHA scan checkpoint resume requires separate safety review (source identity, stale snapshots, and no cross-run trust of old hashes).
 
-## Windows CI
+## Verified Windows CI — 2026-11-14
 
-Pending verification of the first PR run. Do not claim a completed GUI automation or physical disk saving.
+[Successful PR workflow #43602714495](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43602714495): **23/23 workflow steps succeeded**; **476/476 combined C# safety assertions** passed (previous baseline 456 plus 20 R2.17 part-4 checks). Existing R2.8–R2.12 independent NTFS fault/recovery/security probes, tracked WPF build and win-x64 publish also completed successfully.
+
+The structured result `diagnostics/r217-safe-preview-resume.json` reports PASS for empty/new output, PNG-only and combined resume, input/tool mismatch refusals, foreign files at root and inside preview directory, both PNG/JPG torn journals, hardlinked plan refusals, and journal-without-plan refusals. It explicitly records no external executable invocation, no WPF desktop click automation, no user media touched, and zero production source mutation.
+
+This verifies **preflight and regression correctness on generated NTFS inputs**, not graphical click responsiveness on a physical user's desktop. Full GUI tests and JPEG candidate-generation verification remain pending.

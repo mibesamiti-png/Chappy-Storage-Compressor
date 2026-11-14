@@ -148,6 +148,38 @@ jobs:
           "R2.17: generated same-size safety checks passed; speedup NOT asserted"
           Get-Content $path
 
+      - name: Verify R2.17 generated decodable PNG and JPEG batch profile
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-valid-image-profile.json"
+          if (-not (Test-Path $path)) { throw "R2.17 valid image profile missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.generatedValidPngCount -ne 12 -or
+              $r.generatedValidJpegCount -ne 12 -or
+              $r.generatedInputBytes -le 0 -or
+              $r.pngPreviewCandidateCount -le 0 -or
+              $r.pngPreviewCandidateCount -ne $r.pngVerifiedDecodedCandidates -or
+              $r.pngTheoreticalSavedBytes -le 0 -or
+              $r.pngBatchFailureCount -ne 0 -or
+              $r.jpegMarkerWicValidatedCount -ne 12 -or
+              $r.jpegCandidateOptimizationMeasured -ne $false -or
+              $r.jpegExternalExecutableInvoked -ne $false -or
+              $r.jpegEngineMeasuredOnlyForPlanning -ne $true -or
+              $r.progressUpdateCount -lt 12 -or
+              $r.hardwareDiskReadsMeasured -ne $false -or
+              $r.guiWorkflowVerified -ne $false -or
+              $r.timingSpeedupClaimed -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or
+              $r.originalMediaTouched -ne $false) {
+            throw "R2.17 valid image evidence or source safety gate changed"
+          }
+          "R2.17 valid image PNG candidate and JPEG decoding benchmark evidence PASS"
+          Get-Content $path
+
       - name: Measure NTFS allocated bytes and synthetic rollback
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

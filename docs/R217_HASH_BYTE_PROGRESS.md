@@ -41,6 +41,18 @@ The suite writes an aggregate JSON report to diagnostics/r217-hash-byte-progress
 - Huge data sets with many repeated sizes still need controlled cache/disk performance profiling.
 - All production source replacements, hardlink merges and independent undo remain disabled. Actual user freed capacity is **0 B**.
 
-## Windows CI result
+## Windows CI verified — 2026-11-14
 
-Pending first PR workflow; do not assert verification or an exact pass count until confirmed.
+[Windows PR CI #43600973202](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43600973202) completed **success**, including WPF compilation, application win-x64 publish, existing R2.8–R2.12 independent NTFS safety probes, and **456/456 combined C# safety assertions** (previous 448 + 8 new hash/progress/cancel checks). All **22 workflow steps** completed successfully.
+
+Evidence in the downloadable diagnostics artifact at diagnostics/r217-hash-byte-progress.json:
+
+- Two **12,582,912-byte** disposable, independent NTFS paths; one safe SHA/byte-exact duplicate group from two hash attempts.
+- Framework SHA-256 reference matched the app's incremental SHA implementation.
+- **3** direct SHA byte updates and **9** typed scanner progress updates, including real mid-file progress and 100% completion.
+- Deliberate token cancellation during a live hash and via the scanner typed callback both yielded OperationCanceledException; partial results were **not** returned.
+- Both source SHA-256 hashes and distinct NTFS file identities preserved.
+- Actual GUI button-click automation was **not** executed; WPF compiled only. A stopped scan still needs an entirely new run.
+- Production hardlink merging, original replacement, and all real-user disk mutations remain disabled; actual freed capacity is **0 B**.
+
+This confirms the test-controlled cancellation and counter behavior, **not** the latency of a physical user button click on arbitrary hardware.

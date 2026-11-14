@@ -168,6 +168,16 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [WPFイベント検証の条件・限界](docs/R217_WPF_ROUTED_CLICK_SMOKE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第6段階）：公式ソースからビルドしたjpegtranでJPEG候補を実測
+
+- 公式libjpeg-turbo **3.2.1** をフルGitコミットに固定し、Windows CI上でソースから `jpegtran.exe` をビルド。出所不明のEXEや自動ダウンロードされたインストーラーを使わない。
+- 合成JPEG8件（うち4件は人工コメントメタデータ付き）を**実際のJPEG一括無劣化候補エンジン**で変換し、完了件数・候補サイズ・経過時間・再開時の重複なしを検証。
+- 採用候補はWICで元画像と全画素一致、保護対象JPEGマーカーと量子化表一致、全原本SHA-256不変を独立確認する。
+- CIは**SIMD無効**の安全な比較用ビルドであり、最適化済み公式Windows版や実際の写真の圧縮性能を示すものではない。容量の実回復は0B。
+- 原本置換・ハードリンク統合と独立Undoは引き続き本番無効。一般利用者の写真・動画をCIで使わない。
+
+[安全な実測条件と結果の範囲](docs/R217_OFFICIAL_JPEGTRAN_PROFILE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

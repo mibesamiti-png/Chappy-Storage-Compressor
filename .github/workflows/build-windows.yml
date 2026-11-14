@@ -77,6 +77,45 @@ jobs:
           python tools/r26_reference_check.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Build verified upstream libjpeg-turbo 3.2.1 jpegtran (CI synthetic test only)
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "3.2.1"
+          $expected = "7b4993786d856cbccabfc0ed2f923ba000e326cc"
+          $work = Join-Path $env:RUNNER_TEMP "chappy-r217-official-jpegtran"
+          $source = Join-Path $work "libjpeg-turbo"
+          $build = Join-Path $work "build"
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          git clone --quiet --depth 1 --branch $tag https://github.com/libjpeg-turbo/libjpeg-turbo.git $source
+          if ($LASTEXITCODE -ne 0) { throw "Cannot fetch official pinned upstream source" }
+          $actual = (git -C $source rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+            throw "Official jpegtran source is not the pinned full Git commit"
+          }
+          # Build only the lossless jpegtran CLI with SIMD disabled.
+          # Its timings are NOT production-optimized throughput.
+          cmake -S $source -B $build -G "Visual Studio 18 2026" -A x64 -DWITH_SIMD=OFF -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=OFF -DWITH_TESTS=OFF -DWITH_TOOLS=ON
+          if ($LASTEXITCODE -ne 0) { throw "Pinned libjpeg-turbo CMake configure failed" }
+          cmake --build $build --config Release --target jpegtran-static --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Pinned libjpeg-turbo jpegtran build failed" }
+          $built = Join-Path $build "Release/jpegtran-static.exe"
+          if (-not (Test-Path -LiteralPath $built)) {
+            throw "Source-built jpegtran-static.exe missing"
+          }
+          # The production engine requires a jpegtran.exe basename.
+          # Keep this CI-only test executable outside the repository.
+          $tool = Join-Path $work "jpegtran.exe"
+          Copy-Item -LiteralPath $built -Destination $tool -ErrorAction Stop
+          "CHAPPY_R217_PINNED_JPEGTRAN=$tool" >> $env:GITHUB_ENV
+          "CHAPPY_R217_JPEGTRAN_COMMIT=$expected" >> $env:GITHUB_ENV
+          $digest = (Get-FileHash -LiteralPath $tool -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "Verified libjpeg-turbo $tag upstream commit $expected"
+          Write-Host "CI-only jpegtran.exe built locally without SIMD; SHA256 $digest"
+          & $tool -version
+          if ($LASTEXITCODE -ne 0) { throw "Pinned jpegtran version check failed" }
+
       - name: Build checked-in WPF source tree and isolated NTFS tests
         if: steps.source.outputs.mode == 'tree'
         shell: cmd
@@ -178,6 +217,45 @@ jobs:
             throw "R2.17 valid image evidence or source safety gate changed"
           }
           "R2.17 valid image PNG candidate and JPEG decoding benchmark evidence PASS"
+          Get-Content $path
+
+      - name: Verify R2.17 real source-pinned jpegtran candidates and unchanged originals
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-pinned-jpegtran-profile.json"
+          if (-not (Test-Path $path)) { throw "R2.17 actual jpegtran evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.upstreamVersion -ne "3.2.1" -or
+              $r.upstreamCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $r.upstreamSourcePinnedAndCheckedByCi -ne $true -or
+              $r.nativeSimdBuildEnabled -ne $false -or
+              $r.officialBinaryInstallerUsed -ne $false -or
+              $r.syntheticValidJpegCount -ne 8 -or
+              $r.testJpegWithCommentMarkers -ne 4 -or
+              $r.jpegtranActuallyExecuted -ne $true -or
+              $r.jpegEngineActualCandidateGenerationMeasured -ne $true -or
+              $r.generatedCandidateCount -le 0 -or
+              $r.generatedCandidateCount -ne $r.verifiedDecodedCandidateCount -or
+              $r.generatedCandidateCount -ne $r.verifiedProtectedMetadataCandidateCount -or
+              $r.failureCount -ne 0 -or
+              $r.theoreticalCandidateSavingBytes -le 0 -or
+              $r.originalSourcesUnchanged -ne $true -or
+              $r.resumeCreatedNoAdditionalCandidates -ne $true -or
+              $r.candidateGenerationElapsedMs -le 0 -or
+              $r.candidateResumeElapsedMs -le 0 -or
+              $r.physicalDiskReadsControlled -ne $false -or
+              $r.cleanColdWarmCacheControlled -ne $false -or
+              $r.peakWorkingSetAttributedToJpegEngine -ne $false -or
+              $r.physicalWpfMouseInteractionVerified -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or
+              $r.realMediaTouched -ne $false) {
+            throw "Actual pinned jpegtran profile or unchanged-source safety evidence invalid"
+          }
+          "R2.17 real official-source jpegtran candidate and pixel/metadata tests PASS"
           Get-Content $path
 
       - name: Verify R2.17 mid-file SHA byte progress and cancellation

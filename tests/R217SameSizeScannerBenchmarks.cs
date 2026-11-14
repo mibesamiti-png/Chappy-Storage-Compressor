@@ -93,7 +93,7 @@ internal static class R217SameSizeScannerBenchmarks
             // File extensions indicate scan categories only, not valid codecs.
             for (int i = 0; i < 48; i++)
             {
-                string ext = i % 3 switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
+                string ext = (i % 3) switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
                 byte[] bytes = new byte[640 * 1024 + i * 4096];
                 new Random(217000 + i).NextBytes(bytes);
                 File.WriteAllBytes(Path.Combine(unique, $"unique-{i:D3}{ext}"), bytes);

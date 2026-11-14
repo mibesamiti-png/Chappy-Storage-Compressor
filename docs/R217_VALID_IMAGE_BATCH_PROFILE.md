@@ -41,6 +41,27 @@ A high PNG reduction on this fixture is expected because the PNG IDAT is deliber
 - GUI stop/resume and byte-level progress during a single huge file, and simpler repeat dialog UX without silently reusing paths.
 - Controlled end-to-end on-disk release gates before any real-space recovery feature is enabled.
 
-## Windows CI result
+## Verified Windows CI result — 2026-11-14
 
-Pending this change's first Windows workflow run; do not mark completion or infer actual performance numbers until verified.
+[Successful PR workflow #43595638533](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43595638533) on tracked Windows WPF sources and **generated-only** inputs:
+
+- **448/448** combined C# safety assertions successful (previous 438 plus ten R2.17 valid-media checks).
+- Full earlier R2.8–R2.12 synthetic NTFS recovery/security probes, WPF build and win-x64 EXE publish passed.
+- 12 PNG and 12 JPEG files created, totaling **6,258,278 input bytes**; all 24 originals have unchanged independent SHA-256 fingerprints after the test.
+- All 12 generated PNGs and all 12 generated JPEGs decode using WIC; JPEG marker parsing and PNG CRC/chunk tests also passed.
+- The production PNG batch retained **12** candidates, with **12/12** independent WIC pixel comparisons and **0** per-entry failures; the exact theoretical PNG candidate reduction was **2,607,115 bytes**, not a real disk free-space change.
+- A second PNG batch run retained exactly 12 candidates without creating additional previews.
+- No JPEG external executable was run, and actual JPEG candidate optimization remains **untested**.
+
+| Measurement (single hosted CI run) | Value |
+|---|---:|
+| Generate 24 artificial valid images (test setup only) | **882.34 ms** |
+| Combined JPG/PNG preflight | **0.84 ms** |
+| JPEG batch planning only | **0.30 ms** |
+| JPEG marker verification + full WIC decode, 12 files | **37.51 ms** |
+| PNG source WIC decode, 12 files | **20.20 ms** |
+| Production PNG preview batch, first run | **617.60 ms** |
+| Independent WIC pixel check of 12 saved previews | **21.25 ms** |
+| Production PNG batch resume/revalidation | **7.49 ms** |
+
+**Interpretation:** The slowest recorded phase overall was *synthetic fixture generation* (not part of the app's user workflow). Among the timed existing work, **initial PNG candidate generation took the longest**; further profiling is required to attribute time among deflation, validation, hashing and journal I/O. The preflight and JPEG planning times are **not** comparable to full JPEG transcoding. These are uncontrolled cache state, one-host samples; no claimed throughput speedup or user-capacity recovery.

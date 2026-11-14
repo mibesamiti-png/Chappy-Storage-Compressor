@@ -42,3 +42,26 @@ Acceptance:
 Benchmark substantially larger synthetic media files and volume types, verify stable performance for hundreds of same-sized files (the case where the full checks still run), and independently profile disk throughput/peak memory. Consider carefully scoped cache/revalidation of trusted scan results while preserving current NTFS/ADS/security identity gates. Output remains an *estimate*, not recovered bytes.
 
 **No production file replacement, hardlink consolidation, original media deletion or MP4 transcoding** is enabled. Real recovered free space is **0 B**, and the security tests remain in force.
+
+## Verified Windows result — 2026-11-14
+
+[R2.16 Windows CI #43585060197](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43585060197) completed successfully on the actual tracked WPF source and generated NTFS test data. The complete Windows smoke suite reported **426/426 safety checks passed**, and the existing R2.8–R2.12 NTFS subprocess and metadata tests, WPF build and win-x64 publish also passed.
+
+Synthetic benchmark measurements (one hosted Windows runner, no warm-run average):
+
+| Property | Measured |
+|---|---:|
+| Shallow-eligible synthetic JPG/PNG/MP4 paths | **372** |
+| Legacy-style full NTFS security captures | **371** |
+| Two-stage full NTFS security captures | **12** |
+| SHA-256 attempts after two-stage filtering | **9** |
+| True duplicate groups | **3** |
+| Legacy-style capture-only elapsed time | **18.745 ms** |
+| Complete two-stage scanner elapsed time | **7.6544 ms** |
+| Capture-only managed thread allocations | **609,672 B** |
+| Two-stage full scanner managed thread allocations | **302,224 B** |
+| 24 warmed SHA-256 + full-byte compare cycles | **23,808 B managed thread allocations** |
+
+**Interpretation:** Full NTFS capture calls were reduced by **96.8% of shallow file count** on the deliberately unique-size-heavy generated fixture. The two timed samples do **different amounts of work** (capture-only vs full scan with hashing/byte comparisons), so their ratio is **not** a reliable real-world speedup multiplier. The allocation figures are also *different workloads*, not a controlled baseline vs new implementation RAM test. The 24 repeated pooled operations do demonstrate that buffers are being reused in a bounded allocation regression. Never extrapolate these synthetic figures to a general filesystem throughput claim.
+
+The first smoke run surfaced a C# switch-expression precedence mistake in the test fixture, repaired without changing the application safety logic. The first pooled-buffer regression then detected redundant `FileStream` internal buffering. The fix uses `bufferSize: 1` for direct reads into the rented 256 KiB buffers; repeated hashes/comparisons now pass the strict allocation test. **No safety gate was removed or relaxed.**

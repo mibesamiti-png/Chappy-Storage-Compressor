@@ -211,6 +211,37 @@ jobs:
           "R2.17 typed SHA byte progress and mid-file cancellation tests PASS"
           Get-Content $path
 
+      - name: Verify R2.17 combined preview resume preflight remains read-only
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-safe-preview-resume.json"
+          if (-not (Test-Path $path)) { throw "R2.17 resume safety diagnostics missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.newEmptyOutputVerified -ne $true -or
+              $r.pngOnlyResumeVerified -ne $true -or
+              $r.combinedResumeVerified -ne $true -or
+              $r.mismatchedInputRefused -ne $true -or
+              $r.mismatchedJpegtranRefused -ne $true -or
+              $r.unknownRootFileRefused -ne $true -or
+              $r.unknownPreviewFileRefused -ne $true -or
+              $r.jpegTornJournalRefused -ne $true -or
+              $r.pngTornJournalRefused -ne $true -or
+              $r.hardlinkedPlanRefused -ne $true -or
+              $r.missingPlanWithJournalRefused -ne $true -or
+              $r.allUserAndCandidateEvidencePreserved -ne $true -or
+              $r.externalExecutableInvoked -ne $false -or
+              $r.actualWpfClickAutomationVerified -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or
+              $r.realMediaTouched -ne $false) {
+            throw "R2.17 combined resume preflight evidence or safety contract invalid"
+          }
+          "R2.17 fail-closed combined preview resume inspection PASS"
+          Get-Content $path
+
       - name: Measure NTFS allocated bytes and synthetic rollback
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

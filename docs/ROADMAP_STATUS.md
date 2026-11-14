@@ -146,6 +146,12 @@ R2.16の測定は重複サイズが少ない入力に偏っていたため、R2.
 
 [仕様と制限](R217_HASH_BYTE_PROGRESS.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)。本番の原本置換・重複統合・解除は無効。実容量回復0B。歴史的ソース実装率69.4%は証拠なしの改訂をしない。
 
+## R2.17 (part 4) — explicit and guarded combined-preview resume
+
+PNG＋JPG一括候補の出力先選択後に、保存済みPNG/JPG計画の有無と整合性を読み取り専用で調べて新規・一部再開・全再開を区別し、明示確認を挟む。想定外の出力内容・ジャーナル欠損・入力とツールの不一致・NTFSハードリンク等を検出したら開始前に拒否する。作業記録や候補の自動削除・修復は行わない。中断ボタン押下時の状態表示も改善したが、Windows画面上の実クリック自動テストは未実施。
+
+[仕様・検証限界](R217_SAFE_COMBINED_RESUME.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)。本番原本置換・ハードリンク統合・独立解除は無効。実容量回復0B。ソース実装率69.4%は根拠なしに更新しない。
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

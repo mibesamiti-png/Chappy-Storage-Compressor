@@ -463,8 +463,18 @@ public partial class MainWindow : Window
         ProgressText.Text = "PNG/JPGの事前容量調査";
         try
         {
+            // The user must explicitly approve reusing this exact output.
+            // This is an inspection only: it never creates a lock, repairs a
+            // journal, executes jpegtran.exe, or removes existing candidates.
+            ProgressText.Text = "保存先・再開記録の安全診断";
+            var resume = await Task.Run(() =>
+                CombinedBatchResumeInspector.Inspect(input, output, tool, token), token);
+            token.ThrowIfCancellationRequested();
+            Log("候補保存先の判定: " + resume.Description);
+
             // This inventory never modifies the source and is deliberately
             // only a rough capacity forecast, not a safety approval.
+            ProgressText.Text = "PNG/JPGの事前容量調査";
             var preflight = await Task.Run(() =>
                 PersonalMediaBatchPreflight.Inspect(input, output, token), token);
             token.ThrowIfCancellationRequested();
@@ -479,13 +489,16 @@ public partial class MainWindow : Window
                 ? "\n\n候補保存先の空き容量が原本合計より少ないため、途中で容量不足となる可能性があります。"
                 : "";
             string preview = $"入力: {input}\n保存先: {output}\n" +
+                $"実行種別: {resume.Description}\n" +
+                "保存先の作業記録を読取専用で確認しました。未確認ファイルがあれば停止します。\n" +
                 $"PNG: {preflight.PngFiles:N0}件 / {GroupRow.HumanSize(preflight.PngSourceBytes)}\n" +
                 $"JPG/JPEG: {preflight.JpegFiles:N0}件 / {GroupRow.HumanSize(preflight.JpegSourceBytes)}\n" +
                 $"入力の合計: {GroupRow.HumanSize(preflight.TotalSourceBytes)}\n" +
                 $"候補保存先の空き: {GroupRow.HumanSize(preflight.OutputAvailableBytes)}\n" +
                 $"特殊属性の除外: {preflight.SkippedSpecialFiles:N0}件、調査エラー: {preflight.ScanErrors:N0}件" +
                 warning +
-                "\n\nPNGの後にJPGを実行し、それぞれの進捗記録から再開します。" +
+                "\n\nPNGの後にJPGを実行し、既存記録があればその状態から再開します。" +
+                "\n保存先の再利用には、この画面での明示確認が必要です。" +
                 "\n候補生成は追加のディスク容量を消費します。" +
                 "\n元ファイルの置換・削除・統合は行いません。" +
                 "\n\n処理を開始しますか？";
@@ -1199,9 +1212,11 @@ public partial class MainWindow : Window
 
     private void Stop_Click(object sender, RoutedEventArgs e)
     {
-        _work?.Cancel();
+        if (_work is null || _work.IsCancellationRequested) return;
+        _work.Cancel();
         StopButton.IsEnabled = false;
-        Log("中断を要求しました。安全な区切りまで処理して停止します。");
+        ProgressText.Text = "中断要求中…";
+        Log("中断要求を受け付けました。安全な区切りまで処理して停止します。");
     }
 
     private void Recovery_Click(object sender, RoutedEventArgs e)

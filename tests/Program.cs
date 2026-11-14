@@ -1547,6 +1547,7 @@ static class Program
             R217SameSizeScannerBenchmarks.Run(root, Check);
             R217ValidImageBatchProfile.Run(root, Check);
             R217HashByteProgressTests.Run(root, Check);
+            R217CombinedResumePreflightTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

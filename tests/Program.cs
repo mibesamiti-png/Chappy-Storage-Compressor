@@ -1544,6 +1544,7 @@ static class Program
             R214PersonalBatchPreflightTests.Run(root, Check, ExpectThrows);
             R215ReconciledCapacityTests.Run(root, Check, ExpectThrows);
             R216MediaScannerBenchmarks.Run(root, Check);
+            R217SameSizeScannerBenchmarks.Run(root, Check);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

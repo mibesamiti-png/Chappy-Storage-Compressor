@@ -121,6 +121,10 @@ public static class Scanner
         }
 
         int hashed = 0;
+        // R2.17: bound progress messages to about 20 per hash phase. This
+        // keeps long same-size batches observable without flooding the GUI.
+        int hashProgressStep = Math.Max(1, (candidates.Count + 19) / 20);
+        progress?.Report($"SHA-256計算を開始: 0 / {candidates.Count:N0}");
         var sameHash = new Dictionary<(long, string), List<FileSnapshot>>();
         foreach (var f in candidates)
         {
@@ -141,7 +145,7 @@ public static class Scanner
                 or InvalidOperationException or System.ComponentModel.Win32Exception)
             { errors++; }
             hashed++;
-            if (hashed % 100 == 0 || hashed == candidates.Count)
+            if (hashed % hashProgressStep == 0 || hashed == candidates.Count)
                 progress?.Report($"SHA-256計算: {hashed:N0} / {candidates.Count:N0}");
         }
 

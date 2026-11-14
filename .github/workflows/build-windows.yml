@@ -108,6 +108,46 @@ jobs:
           "R2.16: synthetic expensive NTFS captures reduced by $([math]::Round($ratio, 1))% (NO timing speedup guarantee)"
           Get-Content $path
 
+      - name: Verify R2.17 same-size benchmark and safety invariants
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-same-size-scanner.json"
+          if (-not (Test-Path $path)) { throw "R2.17 generated scanner report missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.syntheticSourceBytes -lt 100MB -or
+              $r.cacheStateControlled -ne $false -or
+              $r.timingSpeedupAsserted -ne $false -or
+              $r.processIoReadBytesArePhysicalDiskBytes -ne $false -or
+              $r.peakWorkingSetIsPerScan -ne $false -or
+              $r.guiInteractionVerified -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or
+              $r.realMediaTouched -ne $false) {
+            throw "R2.17 benchmark scope or production safety assertion changed"
+          }
+          $unique = @($r.samples | Where-Object { $_.dataset -eq "unique-heavy" })
+          $same = @($r.samples | Where-Object { $_.dataset -eq "same-size-heavy" })
+          if ($unique.Count -ne 2 -or $same.Count -ne 2) {
+            throw "R2.17 must report initial/repeat runs on both datasets"
+          }
+          foreach ($s in $unique) {
+            if ($s.fileCount -ne 48 -or $s.deepInspections -ne 0 -or
+                $s.hashAttempts -ne 0 -or $s.verifiedGroups -ne 0) {
+              throw "R2.17 unique-size optimization regression"
+            }
+          }
+          foreach ($s in $same) {
+            if ($s.fileCount -ne 76 -or $s.deepInspections -ne 76 -or
+                $s.hashAttempts -ne 73 -or $s.verifiedGroups -ne 3) {
+              throw "R2.17 same-size correctness or metadata gate regression"
+            }
+          }
+          "R2.17: generated same-size safety checks passed; speedup NOT asserted"
+          Get-Content $path
+
       - name: Measure NTFS allocated bytes and synthetic rollback
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

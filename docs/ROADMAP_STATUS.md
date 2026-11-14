@@ -126,6 +126,14 @@ The generated Windows benchmark checks **372** shallow-eligible files (360 uniqu
 
 **Source implementation percentage: historical 69.4% unchanged** pending an evidence-based release functionality assessment. Free disk space physically reclaimed remains **0B**, as original replacement, deduplication and independent undo remain disabled.
 
+## R2.17 (part 1) — same-size-heavy generated benchmark and hash-stage feedback
+
+R2.16の測定は重複サイズが少ない入力に偏っていたため、R2.17の第1段階として、約110MiBの生成データを使う異なる2種類のNTFSスキャン比較を追加。異なるサイズ48件では深い検査0件、同一サイズ76件では深い検査76件・SHA-256試行73件・完全一致3グループを必須とし、既存ハードリンク・ADSの誤検出を拒否する。
+
+各データセットの初回・再実行の時間、プロセスI/O転送量、管理メモリ割当、プロセスメモリ値を機械可読なJSONに保存。ただし初回はコールドキャッシュではなく、プロセス転送量は物理HDD/SSD読み取り量でもない。GUIの長時間スキャン表示は、候補単位のSHA-256進捗を約20回に制限して途中経過を示す。単一巨大ファイル途中のバイト進捗とUI操作試験は未実施。
+
+安全テストは生成バイト列のみを使う。PNG/JPG候補生成のための有効な画像形式での性能評価、ディスクキャッシュを制御した比較、実機WPFの停止確認は今後の課題。[仕様と結果](R217_SAME_SIZE_SCANNER_BENCHMARK.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)。**本番の重複統合・原本置換・統合解除は無効**、実際に回復した空き容量は0B。歴史的なソース実装見積もりは根拠のない再算定を避け**69.4%を据え置く**。
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

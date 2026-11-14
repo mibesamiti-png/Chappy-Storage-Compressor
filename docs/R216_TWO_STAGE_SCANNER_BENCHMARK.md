@@ -18,6 +18,12 @@ The original mutation locks, original data, and prior recovery code are unchange
 
 **Important semantics**: `ScanResult.FileCount` now counts shallow-eligible entries, rather than fully deep-validated files. A file with ADS or a pre-existing hardlink might be shallow-counted but will never enter a duplicate group without passing Stage 2. A file that changes after Stage 1 is rejected from deep candidates rather than hashed. This counter is not a count of fully approved merge candidates.
 
+## Low-allocation content verification
+
+R2.16 also improves the shared `Safety.ComputeSha256` and `Safety.ByteEqual` helpers: instead of allocating a new **1 MiB** buffer for every hash and two **1 MiB** buffers for every byte comparison, they rent **256 KiB** chunks from `ArrayPool<byte>.Shared`, and return every rented buffer with `clearArray: true` in `finally`. The clear-on-return policy is intentional because image/video bytes could be private. This is a memory-allocation optimization, not a change to the hash algorithm, byte equality semantics, source file contents or snapshot policy.
+
+An additional generated-data regression checks 24 repeated SHA-256 + exact-byte comparison cycles, comparing them to a separate SHA-256 reference. It requires **under 4 MB combined managed thread allocations after pool warm-up**, avoiding the former dozens of megabytes of repeated large-array allocations. It does not establish peak process memory under concurrent operations or prove a fixed CPU speedup.
+
 ## Windows synthetic measurements
 
 Synthetic smoke test `tests/R216MediaScannerBenchmarks.cs` creates **372 independent test paths**: 360 unique-length JPG/PNG/MP4 files, 3 identical pairs (JPG, PNG, MP4), one same-length/different-byte pair, one ADS-contaminated pair, one pair of linked names sharing a single NTFS file identity.
@@ -26,7 +32,7 @@ Acceptance:
 - **3** exact duplicate groups are found, without falsely grouping distinct same-size bytes, ADS files, or existing hardlinks.
 - **12** paths require full NTFS capture out of **372** shallow candidates; no unique-size file is hashed.
 - A legacy-style capture-all control performs 370+ expensive metadata captures, enabling objective **call-count reduction** on this synthetic corpus.
-- Cancellation, stage progress, source-file and permissions isolation are checked.
+- Cancellation, stage progress, source-file and permissions isolation are checked. Pool reuse checks supplement the original content-correctness tests.
 - `diagnostics/r216-scanner-benchmark.json` contains the synthetic file count, full NTFS capture count, SHA attempt count, verified group count, elapsed milliseconds and managed allocation bytes for baseline and two-stage runs, with no paths, usernames, SIDs or raw ACL data. Windows CI validates counters.
 
 **No fixed elapsed-time improvement threshold is asserted.** The two timings are rough single-run measurements influenced by filesystem cache, Windows scheduling and synthetic file-size distribution. The fixture is biased toward unique-length small files; it does **not** prove a fixed speedup for large real libraries with many similarly sized media files. `GC.GetAllocatedBytesForCurrentThread` is a thread allocation indicator, not peak process RAM.

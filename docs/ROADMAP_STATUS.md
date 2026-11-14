@@ -140,6 +140,12 @@ R2.16の測定は重複サイズが少ない入力に偏っていたため、R2.
 
 計測結果は[専用仕様と制限](R217_VALID_IMAGE_BATCH_PROFILE.md)に記録。旧プログラムの安全ゲートを維持したまま、R2.17 Issue #14のJPEG実候補生成、長時間GUI進捗、繰り返し操作簡略化等は引き続き未完了。**source 69.4%は歴史的見積りのまま、実際の容量回復0B**。
 
+## R2.17 (part 3) — intra-file hash progress and cancel safety
+
+読み取り専用の重複スキャンに、SHA-256計算時4MiB単位の細かな読み取りバイト進捗通知とWPF画面の進捗表示連携を実装。メタデータ検査までのバーは不定とし、サイズ重複候補のハッシュ段階のみバイトベースの達成率を表示。中断時に不完全なScanResultを返さず、元のファイルとNTFS IDを保全することを合成12MiB×2ファイルでチェックする。WPFの停止ボタン実クリック/画面描画を操作したUIテストは別途必要。また、キャンセル後のスキャン自動再開は未対応（バッチPNG/JPG候補の再開とは別機能）。
+
+[仕様と制限](R217_HASH_BYTE_PROGRESS.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)。本番の原本置換・重複統合・解除は無効。実容量回復0B。歴史的ソース実装率69.4%は証拠なしの改訂をしない。
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

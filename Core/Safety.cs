@@ -105,6 +105,9 @@ public static class Safety
     // R2.16: reuse modest work buffers across large media scans rather than
     // allocating 1 MiB per hash / 2 MiB per byte comparison. Return buffers
     // cleared to avoid retaining source image/video bytes in the shared pool.
+    // FileStream buffering is disabled (bufferSize: 1) because each read
+    // already fills the rented work buffer directly; otherwise each stream
+    // creates another 256 KiB managed buffer per operation.
     private const int CompareBufferBytes = 256 * 1024;
 
     public static string ComputeSha256(string path, CancellationToken ct)
@@ -112,7 +115,7 @@ public static class Safety
         ct.ThrowIfCancellationRequested();
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read,
-            FileShare.Read, CompareBufferBytes, FileOptions.SequentialScan);
+            FileShare.Read, 1, FileOptions.SequentialScan);
         byte[] buffer = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
         try
         {
@@ -132,9 +135,9 @@ public static class Safety
     {
         ct.ThrowIfCancellationRequested();
         using var one = new FileStream(a, FileMode.Open, FileAccess.Read,
-            FileShare.Read, CompareBufferBytes, FileOptions.SequentialScan);
+            FileShare.Read, 1, FileOptions.SequentialScan);
         using var two = new FileStream(b, FileMode.Open, FileAccess.Read,
-            FileShare.Read, CompareBufferBytes, FileOptions.SequentialScan);
+            FileShare.Read, 1, FileOptions.SequentialScan);
         if (one.Length != two.Length) return false;
         byte[] left = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
         byte[]? right = null;

@@ -106,7 +106,7 @@ internal static class R217SameSizeScannerBenchmarks
             for (int i = 0; i < 72; i++)
             {
                 string ext = i < 2 ? ".jpg" : i < 4 ? ".png" : i < 6 ? ".mp4" :
-                    i % 3 switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
+                    (i % 3) switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
                 int seed = 217500 + (i < 6 ? i / 2 : i);
                 byte[] bytes = new byte[SameSizeBytes];
                 new Random(seed).NextBytes(bytes);
@@ -182,8 +182,8 @@ internal static class R217SameSizeScannerBenchmarks
                 check(actual.SetEquals(expected),
                     "R2.17: exact JPG, PNG and MP4 pairs detected, no unsafe groups");
 
-                check(s.Messages.Any(m => m.Contains("SHA-256計算",
-                          StringComparison.Ordinal)) &&
+                check(s.Messages.Count(m => m.StartsWith("SHA-256計算:",
+                          StringComparison.Ordinal)) >= 10 &&
                       s.Messages.Any(m => m.Contains("完了",
                           StringComparison.Ordinal)),
                     "R2.17: same-size scan exposes hash and completion progress");
@@ -198,7 +198,7 @@ internal static class R217SameSizeScannerBenchmarks
                     StringComparison.Ordinal))
                 .GroupBy(IndependentSha256)
                 .Where(g => g.Count() > 1)
-                .Select(g => string.Join("|", g.Select(Path.GetFileName)
+                .Select(g => string.Join("|", g.Select(p => Path.GetFileName(p))
                     .OrderBy(n => n, StringComparer.Ordinal)))
                 .ToHashSet(StringComparer.Ordinal);
             var expectedReference = new HashSet<string>(StringComparer.Ordinal)

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Security.Cryptography;
+using System.Buffers;
 
 namespace ChappyStorageCompressor.Core;
 
@@ -101,40 +102,67 @@ public static class Safety
         catch { return false; }
     }
 
+    // R2.16: reuse modest work buffers across large media scans rather than
+    // allocating 1 MiB per hash / 2 MiB per byte comparison. Return buffers
+    // cleared to avoid retaining source image/video bytes in the shared pool.
+    private const int CompareBufferBytes = 256 * 1024;
+
     public static string ComputeSha256(string path, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan);
-        var buffer = new byte[1024 * 1024];
-        int read;
-        while ((read = file.Read(buffer, 0, buffer.Length)) > 0)
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.Read, CompareBufferBytes, FileOptions.SequentialScan);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
+        try
         {
+            int read;
+            while ((read = file.Read(buffer, 0, CompareBufferBytes)) > 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                hash.AppendData(buffer, 0, read);
+            }
             ct.ThrowIfCancellationRequested();
-            hash.AppendData(buffer, 0, read);
+            return Convert.ToHexString(hash.GetHashAndReset());
         }
-        return Convert.ToHexString(hash.GetHashAndReset());
+        finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
     }
 
     public static bool ByteEqual(string a, string b, CancellationToken ct)
     {
-        using var one = new FileStream(a, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan);
-        using var two = new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan);
+        ct.ThrowIfCancellationRequested();
+        using var one = new FileStream(a, FileMode.Open, FileAccess.Read,
+            FileShare.Read, CompareBufferBytes, FileOptions.SequentialScan);
+        using var two = new FileStream(b, FileMode.Open, FileAccess.Read,
+            FileShare.Read, CompareBufferBytes, FileOptions.SequentialScan);
         if (one.Length != two.Length) return false;
-        byte[] left = new byte[1024 * 1024], right = new byte[1024 * 1024];
-        int n;
-        while ((n = one.Read(left, 0, left.Length)) > 0)
+        byte[] left = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
+        byte[]? right = null;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            int offset = 0;
-            while (offset < n)
+            right = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
+            int n;
+            while ((n = one.Read(left, 0, CompareBufferBytes)) > 0)
             {
-                var got = two.Read(right, offset, n - offset);
-                if (got == 0) return false;
-                offset += got;
+                ct.ThrowIfCancellationRequested();
+                int offset = 0;
+                while (offset < n)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    int got = two.Read(right, offset, n - offset);
+                    if (got == 0) return false;
+                    offset += got;
+                }
+                if (!left.AsSpan(0, n).SequenceEqual(right.AsSpan(0, n)))
+                    return false;
             }
-            if (!left.AsSpan(0, n).SequenceEqual(right.AsSpan(0, n))) return false;
+            return two.ReadByte() < 0;
         }
-        return two.ReadByte() < 0;
+        finally
+        {
+            if (right != null) ArrayPool<byte>.Shared.Return(right, clearArray: true);
+            ArrayPool<byte>.Shared.Return(left, clearArray: true);
+        }
     }
 
     public static string StorePath(string root) => Path.Combine(root, StoreName);

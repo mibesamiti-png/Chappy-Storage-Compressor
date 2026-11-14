@@ -139,6 +139,16 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [測定手順と残る課題](docs/R217_VALID_IMAGE_BATCH_PROFILE.md) / [未完了のIssue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第3段階）：巨大ファイルのSHA計算進捗と中断
+
+- 同じサイズのJPG/PNG/MP4候補をハッシュ計算する際、**4MiBごと**に読み取りバイト数を通知。巨大な1ファイルの途中でもWPFの進捗バーと単体ファイル進捗を更新する。
+- フォルダ列挙・NTFS厳密検査は件数が確定しないため進捗バーを不定状態にし、SHA候補検査開始後は対象バイト量に応じた進捗に切り替える。
+- 中断ボタンは既存のCancellationTokenを利用し、SHA途中でも中断可能。途中結果を確定したり原本を変更したりしない。
+- 12MiBの完全一致MP4風人工ファイル2件で、途中経過・完全一致・途中キャンセル・ハッシュ不変をWindows CIで検証。**WPF画面の実クリック自動テスト、キャンセル後のスキャン自動再開は未実施**。
+- 本番の元ファイル置換、ハードリンク統合・解除は無効。実際に回復した容量は0B。
+
+[実装・検証条件と残るUI実機テスト](docs/R217_HASH_BYTE_PROGRESS.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

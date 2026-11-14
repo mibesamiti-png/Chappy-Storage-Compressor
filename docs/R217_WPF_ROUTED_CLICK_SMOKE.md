@@ -29,6 +29,17 @@ The test provides a bounded failure timeout and is run from RUN_DIAGNOSTICS.bat 
 - The test does not open external executable dialogs, nor does it perform JPEG candidate optimization; the latter remains a separate verified-tool gate.
 - All production hardlink merges, source replacement, independent undo remain disabled. Actual saved disk capacity is **0 B**.
 
-## Windows CI results
+## Verified Windows CI results — 2026-11-14
 
-Pending verified workflow results. Do not mark the WPF Click test completed or claim physical desktop automation until it passes on Windows.
+[PR Windows run #43604847365](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43604847365) **SUCCESS**: all **24 workflow steps**, with WPF application build, win-x64 publish, existing **476/476 independent C# safety assertions**, previous R2.8–R2.12 NTFS synthetic recovery/security probes, and the new UI-specific test suite (**11/11 UI assertions**).
+
+The downloadable diagnostics artifact includes a real WPF XAML routed-event log and machine-readable JSON:
+
+- StartButton (ScanButton) invokes real WPF handler, enables Stop, and shows indeterminate inventory progress.
+- StopButton invokes real WPF handler, immediately shows 中断要求中… and signals cancellation; the event completes to a non-busy state with **0** partial groups.
+- A second real routed ScanButton event completes safely, shows one exact synthetic duplicate group and **100%** WPF progress.
+- The dispatcher **did observe** intermediate SHA progress text on this run. This is an observational sample and is not a guarantee for all machines or files.
+- Synthetic **2 × 32 MiB** generated paths retained original independent SHA-256. The production Merge button remained disabled.
+- Physical mouse clicks, interactive window display and all JPEG candidate optimization were **not** performed; actual disk space recovered remains **0 B**.
+
+Three earlier PR CI attempts failed because of test-project compilation setup (the UI source was accidentally included in the Core-only smoke project, then a namespace/type conflict). After separating test compilation and importing the correct WPF controls, the above green run verifies the corrected state.

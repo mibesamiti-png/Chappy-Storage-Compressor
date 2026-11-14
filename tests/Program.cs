@@ -1546,6 +1546,7 @@ static class Program
             R216MediaScannerBenchmarks.Run(root, Check);
             R217SameSizeScannerBenchmarks.Run(root, Check);
             R217ValidImageBatchProfile.Run(root, Check);
+            R217HashByteProgressTests.Run(root, Check);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

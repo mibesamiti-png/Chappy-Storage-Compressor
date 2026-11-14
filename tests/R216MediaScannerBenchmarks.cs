@@ -93,6 +93,30 @@ internal static class R216MediaScannerBenchmarks
                   progress.Any(p => p.Contains("完了", StringComparison.Ordinal)),
                 "R2.16: transparent scan-stage progress is available");
 
+            // Warm the shared buffer pool once, then verify many hash and
+            // byte-equality operations don't allocate a fresh 1-2 MiB buffer
+            // per input. This is a deterministic allocation-bound regression
+            // on generated files, not a peak process-memory claim.
+            string sameA = Path.Combine(dir, "duplicate-a.jpg");
+            string sameB = Path.Combine(dir, "duplicate-b.jpeg");
+            string mismatch = Path.Combine(dir, "collision-a.jpg");
+            string mismatchOther = Path.Combine(dir, "collision-b.jpg");
+            string expectedHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(sameA)));
+            check(Safety.ComputeSha256(sameA, CancellationToken.None) == expectedHash &&
+                  Safety.ByteEqual(sameA, sameB, CancellationToken.None) &&
+                  !Safety.ByteEqual(mismatch, mismatchOther, CancellationToken.None),
+                "R2.16: pooled hash and byte-compare preserve exact-byte behavior");
+            long pooledStart = GC.GetAllocatedBytesForCurrentThread();
+            for (int n = 0; n < 24; n++)
+            {
+                check(Safety.ComputeSha256(sameA, CancellationToken.None) == expectedHash &&
+                      Safety.ByteEqual(sameA, sameB, CancellationToken.None),
+                    "R2.16: reused buffers preserve SHA-256 and exact bytes");
+            }
+            long pooledAllocation = GC.GetAllocatedBytesForCurrentThread() - pooledStart;
+            check(pooledAllocation < 4_000_000,
+                "R2.16: 24 hash/byte-compare cycles avoid per-call multi-MiB allocations");
+
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
             bool canceledCorrectly = false;
@@ -118,6 +142,9 @@ internal static class R216MediaScannerBenchmarks
                     optimizedElapsedMs = optimizedWatch.Elapsed.TotalMilliseconds,
                     baselineAllocatedBytesThread = baselineAllocated,
                     optimizedAllocatedBytesThread = optimizedAllocated,
+                    repeatedPooledOperationAllocatedBytes = pooledAllocation,
+                    pooledOperationCount = 24,
+                    buffersClearedOnReturn = true,
                     timingImprovementAsserted = false,
                     productionFileMutationEnabled = false,
                     actualFreedBytes = 0,

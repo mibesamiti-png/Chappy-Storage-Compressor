@@ -129,6 +129,16 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [R2.17の検証条件・制限](docs/R217_SAME_SIZE_SCANNER_BENCHMARK.md) / [未完了課題](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第2段階）：デコード可能なPNG・JPEGの一括処理プロファイル
+
+- 人工生成した**本当に開けるPNG 12枚・JPEG 12枚**を用いて、候補作成の負荷を計測するテストを追加。
+- PNGは既存の一括無劣化候補エンジンを直接実行。候補の画素完全一致を独立のWindows画像デコーダーでも検証し、中断・再開記録を再利用。
+- JPEGは有効な画像のマーカー検査・全画素復号・一括処理計画を計測。**外部のjpegtran.exeは実行していないため、JPEG候補生成速度は未測定**。
+- CRC、原本のSHA-256、進捗回数、所要時間を検証し、匿名の合成計測データをCI成果物として保存。
+- 生成PNGは再圧縮しやすい構造を含むため、削減効果を実際の写真に当てはめない。原本の置換や重複統合は引き続き無効で、実際の容量回復は0B。
+
+[測定手順と残る課題](docs/R217_VALID_IMAGE_BATCH_PROFILE.md) / [未完了のIssue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

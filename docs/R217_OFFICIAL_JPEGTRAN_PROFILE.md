@@ -7,7 +7,7 @@ The Windows CI checks out the official upstream repository, tag 3.2.1:
 - Official upstream: https://github.com/libjpeg-turbo/libjpeg-turbo
 - Exact 3.2.1 tag commit: 7b4993786d856cbccabfc0ed2f923ba000e326cc
 - The workflow rejects any checkout whose actual full Git commit differs.
-- The Windows CI compiles **jpegtran-static** locally with CMake and Visual Studio 2022, WITH_SIMD=OFF, ENABLE_SHARED=OFF, ENABLE_STATIC=ON and WITH_TESTS=OFF.
+- The Windows CI compiles **jpegtran-static** locally with CMake and Visual Studio 2026, WITH_SIMD=OFF, ENABLE_SHARED=OFF, ENABLE_STATIC=ON and WITH_TESTS=OFF.
 - The build product is copied, named jpegtran.exe for compatibility, **only into the temporary CI runner work directory**. No downloaded installer/binary or external source tree is committed or distributed.
 - The CI records a SHA-256 digest of the locally built executable and validates the program version.
 - Without the explicitly supplied CI environment variable, ordinary local C# smoke tests **skip** the external-program profile; they do not download or execute unknown tools.

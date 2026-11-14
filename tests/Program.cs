@@ -1545,6 +1545,7 @@ static class Program
             R215ReconciledCapacityTests.Run(root, Check, ExpectThrows);
             R216MediaScannerBenchmarks.Run(root, Check);
             R217SameSizeScannerBenchmarks.Run(root, Check);
+            R217ValidImageBatchProfile.Run(root, Check);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

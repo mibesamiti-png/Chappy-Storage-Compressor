@@ -1570,6 +1570,7 @@ static class Program
             R217JpegCrashTests.Run(root, Check);
             R217JpegParentDeathTests.Run(root, Check);
             R217PreviewStartRaceTests.Run(root, Check);
+            R217IntegratedDedupeUndoTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

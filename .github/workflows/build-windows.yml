@@ -871,6 +871,44 @@ jobs:
           "R2.17 part22 real engine late source/output modification refusal PASS"
           Get-Content $path
 
+      - name: Verify R2.17 genuine Core duplicate-first consolidation and independent Undo integration
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-dedupe-undo-integration.json"
+          if (-not (Test-Path $path)) { throw "Part23 actual Core merge-to-Undo integration evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-dedupe-undo-integration-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.realScannerDuplicateGroups -ne 3 -or
+              $r.validatedAliasCount -ne 4 -or
+              $r.readOnlyPlanAccurate -ne $true -or
+              $r.staleTimestampGroupExcluded -ne $true -or
+              $r.actualCoreDedupeEngineExecuted -ne $true -or
+              $r.actualCoreDedupeLogicalSavingBytes -le 0 -or
+              $r.postMergeScannerAvoidsExistingLinks -ne $true -or
+              $r.duplicateFirstRepresentativePngCandidateOnly -ne $true -or
+              $r.duplicateFirstRepresentativeOfficialJpegCandidateOnly -ne $true -or
+              $r.externalHardlinkUndoRefusedWithoutMutation -ne $true -or
+              $r.tamperedStageRefusedWithDurableEvidence -ne $true -or
+              $r.detachedIndependentAliases -ne 4 -or
+              $r.actualCoreIndependentUndoBytesMetadataAndIdVerified -ne $true -or
+              $r.allOriginalsRestoredAfterUndo -ne $true -or
+              $r.independentWriteDoesNotAffectFormerMaster -ne $true -or
+              $r.undoEvidenceFilesRetained -ne 4 -or
+              $r.productionMergeEnabled -ne $false -or
+              $r.productionIndependentUndoEnabled -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.fullCrashConsistentProductionUndoProven -ne $false -or
+              $r.completedMergeLedgerAvailableToProduction -ne $false -or
+              $r.realMediaTouched -ne $false -or
+              $r.actualUserBytesFreed -ne 0) {
+            throw "Part23 end-to-end duplicate-first merge and independent Undo proof contract failed"
+          }
+          "R2.17 Part23 REAL Core scanner -> dedupe -> one representative preview -> independent Undo PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -954,6 +992,9 @@ jobs:
               $r.part22RoutedForeignOutputAfterFinalUiRecheckRefused -ne $true -or
               $r.part22NoLockPlanOrCandidateCreatedForEitherRace -ne $true -or
               $r.part22UntrustedForeignOutputBytesPreserved -ne $true -or
+              $r.part23ReadOnlyDedupeUndoPlanRoutedClickVerified -ne $true -or
+              $r.part23MergeStillDisabledAfterPreview -ne $true -or
+              $r.part23ScanSourceHashesAndNtfsIdentitiesPreserved -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

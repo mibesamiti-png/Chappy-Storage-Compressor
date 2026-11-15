@@ -1550,6 +1550,7 @@ static class Program
             R217JpegMetadataSimdProfile.Run(root, Check);
             R217RealIccColorTests.Run(root, Check);
             R217ExifOrientationMemoryTests.Run(root, Check);
+            R217JpegtranChildPeakMemoryTests.Run(root, Check);
             R217HashByteProgressTests.Run(root, Check);
             R217CombinedResumePreflightTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");

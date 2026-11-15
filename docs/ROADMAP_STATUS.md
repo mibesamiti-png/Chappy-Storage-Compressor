@@ -164,6 +164,12 @@ PNG＋JPG一括候補の出力先選択後に、保存済みPNG/JPG計画の有�
 
 [試験詳細](R217_OFFICIAL_JPEGTRAN_PROFILE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17 part 7 — synthetic Exif/XMP/ICC metadata integrity and native SIMD
+
+公式libjpeg-turboの同一固定コミットから、SIMD有効・無効版を別ビルドし、Exeの独立SHA-256とNASM固定版を確認する。人工JPEG8件にExif/XMP/ICC/Photoshop APP13/COMの合成マーカーを入れ、実プレビューエンジンをABBA順で各2回測定。採用候補のWIC全画素比較、独立APP/COMバイト比較、保護マーカー比較、元のSHA-256・更新日時不変をCI必須とする。単一CIホストの経過時間は利用者のPCや写真にそのまま適用できず、性能改善保証をしない。安全ロックは維持し、実空き容量回復0B。
+
+[テストの詳細](R217_JPEG_METADATA_SIMD.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

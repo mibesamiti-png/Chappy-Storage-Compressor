@@ -145,11 +145,16 @@ public static class IndependentUndoCrashJournal
                 !Safety.ByteEqual(alias, master, CancellationToken.None))
                 return "ManualReview";
 
+            // Archived failed attempts remain evidence after a later
+            // successful retry; never interpret them as a fresh active Undo.
+            if (phase == "aborted") return "VerifiedAborted";
             bool shared = aliasId.SameFile(masterId);
             if (shared)
             {
                 if (phase is "finished" or "cutover" or "metadata" ||
                     masterId.LinkCount != record.ExpectedLinks)
+                    return "ManualReview";
+                if (phase == "staged" && !File.Exists(record.Stage))
                     return "ManualReview";
                 if (File.Exists(record.Stage))
                 {
@@ -193,7 +198,8 @@ public static class IndependentUndoCrashJournal
                 now.SecurityDescriptor.AsSpan().SequenceEqual(initial.SecurityDescriptor);
             if (phase == "finished")
                 return metadataMatch &&
-                    CompletedMergeLedger.Inspect(root).VerifiedRestored > 0 ?
+                    CompletedMergeLedger.Inspect(root).Entries.Any(e =>
+                        e.OperationId == record.Id && e.State == "VerifiedRestored") ?
                     "VerifiedFinished" : "ManualReview";
             return metadataMatch ? "MetadataNeedsHistoryUpdate" :
                 "CutoverNeedsRecovery";
@@ -336,6 +342,11 @@ public static class IndependentUndoCrashJournal
         string evidenceFolder)
     {
         string root = RequireSynthetic(input);
+        string evidence = Path.GetFullPath(evidenceFolder);
+        if (!Under(root, evidence) ||
+            (Directory.Exists(evidence) &&
+             (File.GetAttributes(evidence) & FileAttributes.ReparsePoint) != 0))
+            throw new InvalidDataException("Undo evidence folder is outside generated root or a link");
         if (Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any())
             throw new InvalidDataException("Pending merge journal blocks synthetic Undo recovery");
         var summary = Inspect(root);
@@ -376,9 +387,9 @@ public static class IndependentUndoCrashJournal
                 File.Delete(record.Stage);
             }
             Transition(root, id, entry.Phase, "aborted");
-            Directory.CreateDirectory(evidenceFolder);
+            Directory.CreateDirectory(evidence);
             IndependentUndoEngine.Restore(root, original, record.Master, record.Hash,
-                record.ExpectedLinks, evidenceFolder,
+                record.ExpectedLinks, evidence,
                 testOnlyCompletedOperationId: id);
             CompletedMergeLedger.MarkRestoredSynthetic(root, id);
             Transition(root, id, "metadata", "finished");

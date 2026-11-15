@@ -95,6 +95,10 @@ public static class PngBatchPreviewEngine
         }
         Directory.CreateDirectory(previews);
         if (IsReparsePath(previews)) throw new InvalidOperationException("候補出力がリンクです。");
+        // A crash may leave a correctly named but unjournaled candidate.
+        // Never rerun and silently add a second candidate beside it.
+        PreviewReferenceGate.RejectUnreferenced(previews,
+            plan.Entries.Select(e => e.PreviewPath), ct);
 
         int total = plan.Entries.Count;
         int done = plan.Entries.Count(e => e.Status is "Completed" or "Skipped");

@@ -25,6 +25,9 @@ public partial class MainWindow : Window
     private Func<string, bool> _confirmCombined;
     private Action<string> _showCombinedFailure;
     private Action<string> _showCombinedResult;
+    // Real user-facing feature is a READ-ONLY plan. This adapter permits
+    // deterministic STA/WPF CI without a physical Windows message box.
+    private Action<string> _showDedupePlan;
     // Optional, per-window, inline progress taps for isolated WPF tests.
     // Production leaves them null. The real preview engines and their journals
     // run unchanged; the observer is invoked only AFTER the engine reports a
@@ -55,6 +58,9 @@ public partial class MainWindow : Window
         _confirmCombined = ConfirmCombinedNative;
         _showCombinedFailure = ShowCombinedFailureNative;
         _showCombinedResult = ShowCombinedResultNative;
+        _showDedupePlan = message => MessageBox.Show(message,
+            "重複優先・独立Undo事前計画（読み取り専用）",
+            MessageBoxButton.OK, MessageBoxImage.Information);
         InitializeComponent();
         GroupsGrid.ItemsSource = _rows;
         Log("起動しました。対象を選び「読み取り専用スキャン」を実行してください。");
@@ -75,7 +81,8 @@ public partial class MainWindow : Window
         _busy = busy;
         BrowseButton.IsEnabled = !busy;
         ScanButton.IsEnabled = !busy;
-        MergeButton.IsEnabled = false; // R1.5: release gate until NTFS runtime verified.
+        MergeButton.IsEnabled = false; // destructive merge remains permanently locked.
+        DedupePlanButton.IsEnabled = !busy && _lastScan is { Groups.Count: > 0 };
         MediaReportButton.IsEnabled = !busy && _lastScan != null;
         DetailsButton.IsEnabled = !busy && GroupsGrid.SelectedItems.Count == 1;
         StopButton.IsEnabled = busy;
@@ -218,6 +225,45 @@ public partial class MainWindow : Window
         var safe = _rows.Where(x => x.Status == "統合可能").ToList();
         SafeCountText.Text = safe.Count.ToString("N0");
         SavingsText.Text = GroupRow.HumanSize(safe.Sum(x => x.Group.Savings));
+    }
+
+    // This is a fully read-only, revalidated plan; deliberately NEVER
+    // calls DedupeEngine.Run or any mutating Undo routine in shipped builds.
+    private async void DedupePlan_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _lastScan is null) return;
+        var scanned = _lastScan;
+        bool allowTime = TimeDifferenceCheck.IsChecked == true;
+        _work = new CancellationTokenSource();
+        var token = _work.Token;
+        Busy(true);
+        ProgressText.Text = "重複・独立Undo計画を再検証中";
+        try
+        {
+            var plan = await Task.Run(() =>
+                DedupeFirstWorkflowPlan.Inspect(scanned, allowTime, token), token);
+            token.ThrowIfCancellationRequested();
+            ProgressText.Text = "統合・Undo計画（未実行）";
+            Log($"読み取り専用の統合→代表候補→Undo計画：安全 {plan.EligibleGroups} グループ、" +
+                $"削減見込 {GroupRow.HumanSize(plan.EstimatedDuplicateBytes)}、実際の回復 0B。");
+            _showDedupePlan(plan.Describe());
+        }
+        catch (OperationCanceledException)
+        {
+            ProgressText.Text = "計画を中断（原本変更なし）";
+            Log("統合・独立Undoの事前検証を中断。ファイルの変更はありません。");
+        }
+        catch (Exception ex)
+        {
+            ProgressText.Text = "統合・Undo計画エラー（未実行）";
+            Log("読み取り専用統合計画エラー: " + ex.Message);
+            _showDedupePlan("計画は安全条件を満たせませんでした。原本は変更しません。\n" + ex.Message);
+        }
+        finally
+        {
+            Busy(false);
+            _work?.Dispose(); _work = null;
+        }
     }
 
     private async void Merge_Click(object sender, RoutedEventArgs e)

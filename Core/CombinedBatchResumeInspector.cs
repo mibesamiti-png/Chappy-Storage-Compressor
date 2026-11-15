@@ -21,15 +21,6 @@ public static class CombinedBatchResumeInspector
     private const long MaxJournalBytes = 128L * 1024 * 1024;
     private const int MaxPreviewEntries = 100_000;
 
-    private static readonly HashSet<string> KnownFiles = new(StringComparer.OrdinalIgnoreCase)
-    {
-        PngPlan, PngJournal, PngLock, JpegPlan, JpegJournal, JpegLock
-    };
-    private static readonly HashSet<string> KnownDirectories = new(StringComparer.OrdinalIgnoreCase)
-    {
-        PngPreviews, JpegPreviews
-    };
-
     // Approval binds to exact bytes of the four trusted plan/journal files,
     // not merely entry counts. Empty string means the file is absent.
     public sealed record Summary(bool HasPngPlan, bool HasJpegPlan,
@@ -60,22 +51,9 @@ public static class CombinedBatchResumeInspector
         bool hasPng = File.Exists(Path.Combine(output, PngPlan));
         bool hasJpeg = File.Exists(Path.Combine(output, JpegPlan));
 
-        // Reject unknown or user-created output content instead of silently
-        // reusing a directory. All known members must have their correct type.
-        int members = 0;
-        foreach (string path in Directory.EnumerateFileSystemEntries(output))
-        {
-            ct.ThrowIfCancellationRequested();
-            if (++members > 100_010)
-                throw new InvalidDataException("保存先の直下に項目が多すぎます。別フォルダを選んでください。");
-            string name = Path.GetFileName(path);
-            var attributes = File.GetAttributes(path);
-            bool directory = (attributes & FileAttributes.Directory) != 0;
-            if ((directory && !KnownDirectories.Contains(name)) ||
-                (!directory && !KnownFiles.Contains(name)))
-                throw new InvalidDataException("候補保存先に未確認のファイル/フォルダがあります: " + name);
-            RejectUnsafePath(path, !directory);
-        }
+        // Exactly the same allowlist and unsafe-file checks as the direct
+        // PNG/JPEG engines. Never silently trust an unknown root entry.
+        PreviewOutputStartGate.AssertKnownRoot(output, ct);
 
         bool pngLog = File.Exists(Path.Combine(output, PngJournal));
         bool jpegLog = File.Exists(Path.Combine(output, JpegJournal));

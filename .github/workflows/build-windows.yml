@@ -408,6 +408,59 @@ jobs:
           "R2.17 real ICC profile, WIC color-management and candidate safety PASS"
           Get-Content $path
 
+      - name: Verify R2.17 Exif rotation and sampled process working-set evidence
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-exif-orientation-memory.json"
+          if (-not (Test-Path $path)) { throw "Exif orientation and memory evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          $b = $r.baseline
+          $s = $r.simd
+          if ($r.verdict -ne "PASS" -or
+              $r.schema -ne "chappy-r217-exif-orientation-and-process-memory-v1" -or
+              $r.sourceCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $r.syntheticJpegCount -ne 4 -or
+              (@($r.exifOrientations) -join ',') -ne "1,3,6,8" -or
+              $r.exifLittleEndianIfd0ActuallyParsed -ne $true -or
+              $r.invalidAndChangedOrientationRejected -ne $true -or
+              $r.allKeptCandidatesRawAndOrientedPixelsMatch -ne $true -or
+              $r.allProtectedJpegMarkersMatch -ne $true -or
+              $r.allOriginalHashesAndTimestampsUnchanged -ne $true -or
+              $r.sourceBuiltNonSimdAndSimdCandidatesBothVerified -ne $true -or
+              $b.Accepted -ne 4 -or
+              $s.Accepted -ne 4 -or
+              $b.EstimatedCandidateSavingBytes -le 0 -or
+              $b.EstimatedCandidateSavingBytes -ne $s.EstimatedCandidateSavingBytes -or
+              $b.EngineMs -le 0 -or $s.EngineMs -le 0 -or
+              $b.AuditMs -le 0 -or $s.AuditMs -le 0 -or
+              $b.WorkingSetSampledMaxBytes -le 0 -or
+              $s.WorkingSetSampledMaxBytes -le 0 -or
+              $b.WorkingSetSampleCount -le 0 -or
+              $s.WorkingSetSampleCount -le 0 -or
+              $b.ProcessLifetimePeakWorkingSetBytes -le 0 -or
+              $s.ProcessLifetimePeakWorkingSetBytes -le 0 -or
+              $r.workingSetSamplingIntervalMs -ne 10 -or
+              $r.sampledWholeTestProcessNotJpegtranChild -ne $true -or
+              $r.processLifetimePeakNotPerOperation -ne $true -or
+              $r.shortMemoryPeaksMayBeMissed -ne $true -or
+              $r.actualJpegtranChildPeakMeasured -ne $false -or
+              $r.coldCacheControlled -ne $false -or
+              $r.physicalDiskReadsMeasured -ne $false -or
+              $r.realPhotosTested -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0 -or $r.realMediaTouched -ne $false) {
+            throw "Exif rotation or memory-sampling evidence contradicts safety gates"
+          }
+          if ($r.nonSrgbWindowsSystemProfileFound -and
+              ($r.nonSrgbWicColorTransformPassed -ne $true -or
+               $r.nonSrgbProfileBytes -lt 132)) {
+            throw "Available Windows alternate RGB ICC profile validation failed"
+          }
+          "R2.17 Exif 1/3/6/8 with tested orientation rendering PASS"
+          Get-Content $path
+
       - name: Verify R2.17 mid-file SHA byte progress and cancellation
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

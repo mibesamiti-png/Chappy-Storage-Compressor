@@ -13,6 +13,10 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _work;
     private bool _busy;
     private string _lastRoot = "";
+    // Session-only suggestions; every batch still requires explicit tool,
+    // output-folder selection and safe resume confirmation.
+    private string? _lastCombinedOutput;
+    private string? _lastCombinedJpegtran;
     private readonly ObservableCollection<GroupRow> _rows = new();
 
     public MainWindow()
@@ -446,6 +450,8 @@ public partial class MainWindow : Window
             Filter = "jpegtran.exe|jpegtran.exe",
             CheckFileExists = true
         };
+        if (File.Exists(_lastCombinedJpegtran))
+            toolPicker.InitialDirectory = Path.GetDirectoryName(_lastCombinedJpegtran);
         if (toolPicker.ShowDialog(this) != true) return;
 
         using var folder = new Forms.FolderBrowserDialog
@@ -453,6 +459,8 @@ public partial class MainWindow : Window
             Description = "PNG/JPG両方の候補と再開記録の保存先（原本とは別のフォルダ階層）",
             ShowNewFolderButton = true
         };
+        if (Directory.Exists(_lastCombinedOutput))
+            folder.SelectedPath = _lastCombinedOutput;
         if (folder.ShowDialog() != Forms.DialogResult.OK) return;
         string output = folder.SelectedPath, tool = toolPicker.FileName;
 
@@ -471,6 +479,10 @@ public partial class MainWindow : Window
                 CombinedBatchResumeInspector.Inspect(input, output, tool, token), token);
             token.ThrowIfCancellationRequested();
             Log("候補保存先の判定: " + resume.Description);
+            // Remember hints only after the exact folder/tool passes the
+            // read-only resume inspection. No automatic reuse or execution.
+            _lastCombinedOutput = output;
+            _lastCombinedJpegtran = tool;
 
             // This inventory never modifies the source and is deliberately
             // only a rough capacity forecast, not a safety approval.
@@ -506,21 +518,33 @@ public partial class MainWindow : Window
                 MessageBoxButton.YesNo, MessageBoxImage.Information,
                 MessageBoxResult.No) != MessageBoxResult.Yes) return;
 
+            var progressModel = new UnifiedPreviewProgress(preflight.PngFiles, preflight.JpegFiles);
+            int activeStage = 0; // 0=PNG, 1=JPG, 2=finished or canceled
             int updates = 0;
-            var pngProgress = new Progress<PngBatchPreviewEngine.Progress>(p =>
-            {
-                JobProgress.Value = p.Total == 0 ? 50 : 50.0 * p.Done / p.Total;
-                ProgressText.Text = $"PNG {p.Done:N0}/{p.Total:N0}";
-                if (p.Status is "Failed" or "Deferred" || ++updates % 100 == 0)
-                    Log($"PNG {p.Status}: {p.RelativePath} / 候補削減 {GroupRow.HumanSize(p.SavedBytes)}");
-            });
-            var jpegProgress = new Progress<JpegBatchPreviewEngine.Progress>(p =>
-            {
-                JobProgress.Value = p.Total == 0 ? 100 : 50.0 + 50.0 * p.Done / p.Total;
-                ProgressText.Text = $"JPG {p.Done:N0}/{p.Total:N0}";
-                if (p.Status is "Failed" or "Deferred" or "NeedsReview" || ++updates % 100 == 0)
-                    Log($"JPG {p.Status}: {p.RelativePath} / 候補削減 {GroupRow.HumanSize(p.SavingBytes)}");
-            });
+            // Throttle at the worker before scheduling Dispatcher callbacks.
+            // This avoids one WPF dispatcher message for every item of a
+            // 100,000-file resume; failed/deferred/review items pass unthrottled.
+            var pngProgress = new RateLimitedProgress<PngBatchPreviewEngine.Progress>(
+                p => Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (!_busy || activeStage != 0 || token.IsCancellationRequested) return;
+                    JobProgress.Value = progressModel.Png(p.Done, p.Total);
+                    ProgressText.Text = $"PNG {p.Done:N0}/{p.Total:N0}";
+                    if (p.Status is "Failed" or "Deferred" || ++updates % 30 == 0)
+                        Log($"PNG {p.Status}: {p.RelativePath} / 候補削減 {GroupRow.HumanSize(p.SavedBytes)}");
+                })),
+                p => p.Status is "Failed" or "Deferred", TimeSpan.FromMilliseconds(125));
+            var jpegProgress = new RateLimitedProgress<JpegBatchPreviewEngine.Progress>(
+                p => Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (!_busy || activeStage != 1 || token.IsCancellationRequested) return;
+                    JobProgress.Value = progressModel.Jpeg(p.Done, p.Total);
+                    ProgressText.Text = $"JPG {p.Done:N0}/{p.Total:N0}";
+                    if (p.Status is "Failed" or "Deferred" or "NeedsReview" || ++updates % 30 == 0)
+                        Log($"JPG {p.Status}: {p.RelativePath} / 候補削減 {GroupRow.HumanSize(p.SavingBytes)}");
+                })),
+                p => p.Status is "Failed" or "Deferred" or "NeedsReview",
+                TimeSpan.FromMilliseconds(125));
 
             Log($"PNG/JPGまとめて候補作成開始。PNG {preflight.PngFiles:N0}件、JPG {preflight.JpegFiles:N0}件。");
             ProgressText.Text = "PNG一括候補を生成中";
@@ -537,13 +561,16 @@ public partial class MainWindow : Window
                 return;
             }
 
-            JobProgress.Value = 50;
+            activeStage = 1;
+            JobProgress.Value = progressModel.PngFinished();
             ProgressText.Text = "JPG一括候補を生成中";
             var jpeg = await Task.Run(() =>
                 JpegBatchPreviewEngine.Run(input, output, tool, jpegProgress, token), token);
             token.ThrowIfCancellationRequested();
-            JobProgress.Value = jpeg.Done == jpeg.Total ? 100 :
-                50.0 + 50.0 * jpeg.Done / Math.Max(1, jpeg.Total);
+            JobProgress.Value = jpeg.Done == jpeg.Total
+                ? progressModel.Finished()
+                : progressModel.Jpeg(jpeg.Done, jpeg.Total);
+            activeStage = 2;
             ProgressText.Text = jpeg.Done == jpeg.Total
                 ? "PNG/JPG候補作成終了"
                 : "JPG保留（再開可能）";

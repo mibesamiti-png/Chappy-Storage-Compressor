@@ -20,11 +20,13 @@ Each original is sent into the production **JpegLosslessPreviewEngine.CreatePrev
 
 This test does not rely solely on WIC or application viewer behavior to infer Exif orientation.
 
-## Non-sRGB Windows ICC profile probe
+## Real non-sRGB ICC profile test (OS or CC0 Display P3)
 
-The test also checks known Windows system RGB ICC profiles with names such as **scRGB Color Space Profile.icm** and **wscRGB.icc**. A candidate must be in the OS color-profile directory, not a reparse point, have a valid ICC header, be *byte-distinct* from the installed sRGB profile, and open in WPF ColorContext.
+First check known Windows system RGB ICC profiles, such as scRGB and wscRGB, only within the OS color directory. A candidate must be a non-reparse regular file, have a valid ICC header, differ in bytes from installed sRGB, and successfully open in WPF ColorContext. On the actual Windows CI host for the first Exif test, **no usable alternative system RGB profile was available**, and this result was recorded as missing rather than falsely claiming verification.
 
-**If an alternative profile is available**, it is copied only into the disposable test folder, embedded in numbered ICC_PROFILE APP2 segments in an additional generated JPEG, preview-optimized by source-pinned jpegtran, reassembled byte-exactly and color-converted with WPF. This optional probe is honestly recorded; **a missing/unsupported alternate profile does not pass as tested non-sRGB support**. No Windows profile bytes are committed or uploaded.
+To enable a deterministic real wide-gamut profile test, a tiny **456-byte DisplayP3Compat-v2-micro.icc** is included as test-only base64 under the original creator's **CC0 public-domain dedication**, not as a Windows proprietary ICC or application asset. Provenance is pinned to [saucecontrol/Compact-ICC-Profiles](https://github.com/saucecontrol/Compact-ICC-Profiles), commit `bdd84663061bc4ae95ca70decff54f581e27f702`, blob `f201c4c2cf633ee4fb7a40f0e69a43ca0649c40b`, with independently confirmed SHA-256 `a917f04df365b7331e614a32ea309975006e851b5a39ecb9ace8f07172e9ef6e`. The checksum and ICC signature/size are enforced before use.
+
+If no OS-provided non-sRGB profile qualifies, the SHA-pinned CC0 Display P3 profile is loaded from test-only bytes. The test embeds the chosen real ICC into a separate generated JPEG, runs the real SIMD source-pinned jpegtran preview, independently reassembles the ICC APP2 fragments, checks Exif and source SHA unchanged, and requires **actual WPF ColorConvertedBitmap-transformed pixels to match** before and after preview. A missing or unusable alternate real profile is now **test failure**, not success. No external ICC executable or binary download happens during CI; this fixture is public-domain test data.
 
 ## Process memory measurement limitations
 

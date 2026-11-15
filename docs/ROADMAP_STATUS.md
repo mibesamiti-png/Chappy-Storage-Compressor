@@ -208,6 +208,10 @@ Part 13's post-Yes inspection compared only plan presence and entry counts. Part
 
 This is *not* physical mouse/dialog automation or a filesystem transaction; it does not hash every preview candidate's content, nor prevent modifications immediately after the recheck. Each format engine must continue to revalidate candidates. [Scope and test details](R217_APPROVAL_CONTENT_SNAPSHOT.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14). **Real capacity recovered 0 B; production original replacement/hardlink merge/Undo remain disabled; historical 69.4% estimate unchanged.** Formal completion needs final PR-head and postmerge main CI.
 
+## R2.17 part 15 — routed WPF combined-preview dialogs and refusal lifecycle
+
+WPF's existing PNG/JPG combined preview handler now obtains every jpegtran choice, output-folder choice and Yes/No through **private per-window native-default dialog adapters**, enabling the real `UnifiedBatchButton` Click path to be tested by deterministic responses in noninteractive Windows CI. The actual inspector and preflight run unchanged; the UI indicates "確認でキャンセル（未実行）" after No. The new STA/WPF suite verifies canceled tool picker, canceled output picker, explicit No after real preflight, canceled token during consent, a foreign output file created after Yes, and a fresh No on retry. No preview engine starts in these refusal scenarios, and source SHA-256s and any foreign file remain intact. The test does **not** physically click native dialogs or display a desktop, and production still uses the real Windows pickers. [Scope and limitations](R217_WPF_COMBINED_CONSENT_SMOKE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14). No production replacement/hardlink merge/Undo, actual user disk recovery 0 B, historical source estimate 69.4% unchanged. Verify final PR and postmerge main CI before declaring the stage complete.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

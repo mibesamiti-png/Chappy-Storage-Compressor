@@ -38,6 +38,34 @@ For each Exif candidate batch, the test records separate production-engine and i
 
 Only disposable generated JPEGs and runner-provided official-source jpegtran tools are used. No personal JPG/PNG/MP4, no output overwriting of originals, no production hardlink merge or independent Undo. No real freed disk space (0 B). The source implementation percentage is kept at its historical 69.4% pending a separately evidenced assessment.
 
-## Result
+## Verified Windows CI — November 15, 2026
 
-Pending Windows GitHub Actions verification. `diagnostics/r217-exif-orientation-memory.json` is mandatory CI evidence.
+[Windows source test run #43698017577](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43698017577) succeeded: **32/32 workflow steps**, including the new early test compilation and **distinct Core/WPF runner log gate**, existing synthetic Windows NTFS fault/security tests, Win-x64 publish, all **510/510 C# safety checks** (previous 502 + 8 new Exif/orientation/memory checks), and WPF routed Scan/Stop.
+
+The machine-readable report in `diagnostics/r217-exif-orientation-memory.json` recorded:
+
+| This single hosted Windows run | Observed |
+| --- | ---: |
+| 512×320 synthetic Exif JPEGs | **4** — orientation 1,3,6,8 |
+| Official pinned non-SIMD retained candidates | **4/4** |
+| Official pinned SIMD retained candidates | **4/4** |
+| Exif value 9 and valid-value tampering 6→1 | **Both correctly rejected** |
+| Original and candidate post-orientation full decoded pixel match | **All four, both tool builds** |
+| Protected JPEG APP1/header metadata and original source hashes/timestamps | **Unchanged** |
+| Estimated smaller-candidate bytes per four-image set | **7,717 B** |
+| Non-SIMD real production engine time | **63.08 ms** |
+| SIMD real production engine time | **66.10 ms** |
+| Additional independent Exif/pixel audit per four-image set | **14.77 ms / 7.68 ms** |
+| Calling test-thread managed allocations | **~9.46 MB** per mode |
+| Sampled whole-test-process maximum working set | **83.4 MB / 81.3 MB** |
+| Number of 10-ms memory samples | **6 / 5** |
+| Windows alternate RGB ICC found | **No** |
+| Public-domain CC0 Display P3 ICC fallback | **Yes, 456 B** |
+| Real Display P3-to-BGRA WPF color transforms match | **Yes** |
+| Production reclaimed disk space | **0 B** |
+
+The CC0 profile was verified against upstream source commit `bdd84663061bc4ae95ca70decff54f581e27f702` and SHA-256 `a917f04df365b7331e614a32ea309975006e851b5a39ecb9ace8f07172e9ef6e`. It is distributed as minimal public-domain test data only and is never used to convert user photos.
+
+**Interpretation:** Both tool variants accepted the same four smaller candidates and preserved Exif display orientation; the first hosted run does not establish one build is faster. The recorded 10-ms samples are **whole parent process working sets** and can miss transient peaks; they **exclude the external jpegtran child process**, are not per-operation maximum memory, and are not benchmarks of production workloads. The actual disk space recovered remains **0 B**.
+
+An earlier CI iteration passed 510 assertions but the added test preflight accidentally caused the Core runner's log to contain WPF output. This was corrected by limiting preflight to the Core compile and adding a mandatory pair of log-identity checks. The final report explicitly requires both suites to run.

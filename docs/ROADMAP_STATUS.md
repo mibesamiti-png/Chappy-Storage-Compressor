@@ -222,6 +222,12 @@ Part 16 verified a complete `UnifiedBatchButton` PNG/JPG run and immediate no-du
 
 This verifies cancellation **between completed candidate items**, not arbitrary in-file interruption or a native Windows physical click. Test hooks are null by default in production. Original-file replacement, hardlink merge and independent Undo remain disabled; actual recovered disk **0 B**; historical 69.4% estimate unchanged. [Details](R217_WPF_MIDBATCH_STOP_RESUME.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14).
 
+## R2.17 part 18 — cancel during PNG compression and after jpegtran process spawn
+
+Part 17 demonstrated deterministic real WPF Stop between fully journaled PNG/JPG candidates. Part 18 adds two **Core-only CHAPPY_TESTING probes**, without production-visible testing APIs: cancel after a real PNG inflated block has been handed to the candidate compression stream and cancel synchronously immediately after an actual official-source `jpegtran.exe` child process is created. The native child is killed/waited before propagating cancellation, and both engines must remove their unfinished candidate, preserve generated source hash/timestamp, and accept a fresh successful candidate-only retry. The JPEG retry is independently pixel/metadata marker validated. Existing Windows CI strict evidence checks both tests, the exact native PID termination and all previous C#/WPF/NTFS gates.
+
+**Scope:** cooperative in-file PNG cancellation and post-native-Start JPEG cancellation, **not** forcibly killing the entire app, in-progress native encoder timing guarantees, physical mouse Stop, or transactional power-loss recovery. No original replacement, hardlink merge or production Undo. Actual user capacity recovered **0 B**; historical 69.4% source estimate unchanged. [Design and observed limits](R217_INNER_CANCEL_NATIVE_CLEANUP.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14).
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

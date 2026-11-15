@@ -912,6 +912,9 @@ jobs:
               $r.part17FinalPngCandidateCount -ne 6 -or
               $r.part17FinalJpegCandidateCount -ne 6 -or
               $r.part17PhysicalMouseStopClickVerified -ne $false -or
+              $r.part21RoutedWpfYesSourceChangeRefused -ne $true -or
+              $r.part21NoPreviewPlanCreatedAfterSourceChange -ne $true -or
+              $r.part21SyntheticSourceHashesUnchanged -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

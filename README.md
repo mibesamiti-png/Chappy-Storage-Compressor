@@ -215,6 +215,15 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [試験内容と制限](docs/R217_NATIVE_CHILD_PEAK_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第11段階）：最優先の一括検証（1回のPRで3テーマ）
+
+- **1,072件の人工メディア風ファイル**でサイズ分布別のスキャンと完全一致の正解比較を2回ずつ実施。
+- **本当に開けるJPEG 6枚・PNG 6枚**を使って本番候補エンジンの生成・独立した全画素照合・双方の作業再開をまとめて検証。
+- 大きな人工JPEG 2枚では、アプリ本体と**本体が直接起動したjpegtran子プロセス**のOS常駐メモリを同時に観測。テスト限定のPID通知は製品ビルドには入らない。
+- 初回・再実行の速度差はキャッシュ等を制御していない参考値であり、性能向上を保証しない。原本置換・統合・Undoは本番無効、実空き容量回復は0B。
+
+[一括検証の仕様](docs/R217_PRIORITY_GROUPED_MATRIX.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

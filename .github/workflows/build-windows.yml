@@ -688,6 +688,10 @@ jobs:
               $r.mismatchedJpegtranRefused -ne $true -or
               $r.unknownRootFileRefused -ne $true -or
               $r.unknownPreviewFileRefused -ne $true -or
+              $r.part19GeneratedLookingPngOrphanRefused -ne $true -or
+              $r.part19GeneratedLookingJpegOrphanRefused -ne $true -or
+              $r.part19DirectFormatQueuesRejectOrphans -ne $true -or
+              $r.part19OrphanEvidencePreserved -ne $true -or
               $r.jpegTornJournalRefused -ne $true -or
               $r.pngTornJournalRefused -ne $true -or
               $r.hardlinkedPlanRefused -ne $true -or
@@ -712,6 +716,40 @@ jobs:
             throw "R2.17 combined resume preflight evidence or safety contract invalid"
           }
           "R2.17 fail-closed combined preview resume inspection PASS"
+          Get-Content $path
+
+      - name: Verify R2.17 abrupt PNG process death orphan refusal and manual-only resume
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-preview-process-crash.json"
+          if (-not (Test-Path $path)) { throw "Real PNG child crash evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-preview-process-crash-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.actualChildProcessAbruptTermination -ne $true -or
+              $r.childReachedRealInflatedWriteCheckpoint -ne $true -or
+              $r.childExitCodeNonzero -ne $true -or
+              $r.leftoverUnjournaledPngCount -ne 1 -or
+              $r.combinedResumeOrphanRefused -ne $true -or
+              $r.directPngResumeOrphanRefused -ne $true -or
+              $r.refusalPreservedOrphanAndPlanBytes -ne $true -or
+              $r.manualTestOnlyClearanceApplied -ne $true -or
+              $r.originalPlanReusedAfterClearance -ne $true -or
+              $r.finalSyntheticPngPreviewSucceeded -ne $true -or
+              $r.sourceSha256AndMtimeUnchanged -ne $true -or
+              $r.automaticOrphanDeletionPerformed -ne $false -or
+              $r.jpegNativeChildCrashOrphanTested -ne $false -or
+              $r.fullWpfAppProcessTerminated -ne $false -or
+              $r.physicalDesktopUiTested -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.actualRecoveredBytes -ne 0) {
+            throw "Abrupt PNG child crash, fail-closed orphan and recovery contract failed"
+          }
+          "R2.17: real child PNG process death preserved orphan evidence and required manual-only recovery PASS"
           Get-Content $path
 
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling

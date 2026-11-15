@@ -54,6 +54,7 @@ internal static class UiInteractionSmoke
             var stopButton = Named<Button>(window, "StopButton");
             var mergeButton = Named<Button>(window, "MergeButton");
             var dedupePlanButton = Named<Button>(window, "DedupePlanButton");
+            var completedLedgerButton = Named<Button>(window, "CompletedLedgerButton");
             var unifiedBatchButton = Named<Button>(window, "UnifiedBatchButton");
             var pngBatchButton = Named<Button>(window, "PngBatchButton");
             var jpegBatchButton = Named<Button>(window, "JpegBatchButton");
@@ -63,6 +64,7 @@ internal static class UiInteractionSmoke
             var pathBox = Named<TextBox>(window, "PathBox");
 
             Require(!mergeButton.IsEnabled && !dedupePlanButton.IsEnabled &&
+                    completedLedgerButton.IsEnabled &&
                     !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
             Require(window.Title.Contains("R2.17", StringComparison.Ordinal) &&
@@ -179,6 +181,30 @@ internal static class UiInteractionSmoke
                 !Directory.EnumerateFiles(originals, "*.chappy-backup-*").Any();
             Require(part23WpfPlanSafe,
                 "R2.17 part 23: actual WPF duplicate-first/Undo plan never links or changes scanned media");
+
+            // Part 24: read-only persisted-history check via genuine XAML
+            // Click; an empty store must not be created just to inspect it.
+            string ledgerBody = "";
+            SetPrivate(window, "_showCompletedLedger",
+                new Action<string>(body => ledgerBody = body));
+            RoutedClick(completedLedgerButton);
+            Require(!completedLedgerButton.IsEnabled && !mergeButton.IsEnabled,
+                "R2.17 part24: actual WPF completed-ledger read-only handler enters busy state");
+            PumpUntil(() => completedLedgerButton.IsEnabled &&
+                progressText.Text == "統合履歴を確認（未変更）",
+                TimeSpan.FromSeconds(25));
+            bool part24WpfReadOnlyLedger = ledgerBody.Contains("検証済み統合: 0件",
+                    StringComparison.Ordinal) &&
+                ledgerBody.Contains("本番統合・本番独立Undoは無効",
+                    StringComparison.Ordinal) &&
+                !Directory.Exists(Safety.StorePath(originals)) &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId) &&
+                !NativeFile.SameFile(left, right) &&
+                !mergeButton.IsEnabled;
+            Require(part24WpfReadOnlyLedger,
+                "R2.17 part24: production WPF ledger inspector shows verified-empty history without any media/store mutations");
 
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with
             // native dialogs replaced by deterministic in-process answers.
@@ -706,6 +732,9 @@ internal static class UiInteractionSmoke
                         OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
                         NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
                         NativeFile.GetIdentity(right).SameFile(beforeRightId),
+                    part24ActualWpfReadOnlyCompletedLedgerChecked = part24WpfReadOnlyLedger,
+                    part24NoStoreCreatedByReadOnlyLedger = !Directory.Exists(Safety.StorePath(originals)),
+                    part24ProductionMergeStillLocked = !mergeButton.IsEnabled,
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

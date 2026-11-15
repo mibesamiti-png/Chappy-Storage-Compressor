@@ -198,6 +198,10 @@ Windows CIの人工JPEG3件×公式ソース固定ビルドの通常版/ネイ�
 
 PNG/JPG一括候補処理で、ファイル件数比に合わない50/50固定の進捗バーを改善。前回の出力先・jpegtran選択場所はアプリセッション中の**ダイアログ候補のみ**とし、元の明示確認と `CombinedBatchResumeInspector` の再開安全診断を省略しない。エンジンが行う100,000件分の進捗通知でWPFへ100,000件をそのまま送らないよう、参考値125msのレート制限を追加し、失敗・Deferred・NeedsReviewは優先配送する。テストでは人工イベント30,005件と数え上げ・0件・不整合値、WPF本体のスキャン開始・停止・再試行中のPNG/JPGボタン制御を確認する。これは**描画速度・コーデック性能の実測改善率ではない**。原本置換・リンク統合・Undoは本番無効、容量の実回復0B、ソース実装率は暫定69.4%のまま。[検証記録](R217_BATCH_UX_THROTTLE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17 part 13 — confirm-time output reinspection (candidate-only)
+
+The PNG/JPG combined preview UI now re-runs the **read-only** output-folder/journal inspection after the user accepts its explicit confirmation dialog and before either preview engine starts. If an unfamiliar file appears, a valid PNG/JPEG plan arrives/disappears, the folder becomes unsafe, or cancellation is requested while the dialog is open, the preview does not start. A synthetic NTFS regression exercises the no-change passes and changed-state refusals without mutating source media; the existing CI JSON gate now requires these results. This **does not create an atomic snapshot**: both engines must still perform their own complete validation, and real physical UI interactions are still unverified. Release requires successful final PR-head and postmerge main CI. [Safety scope](R217_CONFIRMATION_RECHECK.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14). **Actual reclaimed user capacity 0 B**; production replacement, merge and Undo remain disabled. Historical source estimate 69.4% unchanged.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

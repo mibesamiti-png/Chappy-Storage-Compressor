@@ -128,6 +128,26 @@ public static class CombinedBatchResumeInspector
         return new Summary(hasPng, hasJpeg, pngCount, jpegCount);
     }
 
+    /// <summary>
+    /// Re-run the read-only output inspection after the user confirms the
+    /// displayed preflight. A plan appearing/disappearing while the modal dialog
+    /// is open invalidates that consent, even if the new folder state is safe.
+    /// The preview engines must still independently revalidate immediately
+    /// before their own candidate operations; this is NOT an atomic snapshot.
+    /// </summary>
+    public static Summary VerifyAfterConfirmation(string inputRoot, string outputRoot,
+        string jpegtranPath, Summary displayed, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(displayed);
+        ct.ThrowIfCancellationRequested();
+        Summary current = Inspect(inputRoot, outputRoot, jpegtranPath, ct);
+        if (current != displayed)
+            throw new InvalidDataException(
+                "確認画面の表示中に候補保存先の再開状態が変わりました。自動開始せず、もう一度選び直してください。");
+        ct.ThrowIfCancellationRequested();
+        return current;
+    }
+
     private static byte[] ReadLimited(string path, long limit)
     {
         var file = new FileInfo(path);

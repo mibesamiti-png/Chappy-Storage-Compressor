@@ -518,6 +518,16 @@ public partial class MainWindow : Window
                 MessageBoxButton.YesNo, MessageBoxImage.Information,
                 MessageBoxResult.No) != MessageBoxResult.Yes) return;
 
+            // The modal confirmation can remain open while another process
+            // changes the output folder. Recheck before starting any engine;
+            // the individual preview engines still enforce their own gates.
+            token.ThrowIfCancellationRequested();
+            var confirmedResume = await Task.Run(() =>
+                CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, resume, token), token);
+            token.ThrowIfCancellationRequested();
+            Log("開始直前の再開安全診断: " + confirmedResume.Description);
+
             var progressModel = new UnifiedPreviewProgress(preflight.PngFiles, preflight.JpegFiles);
             int activeStage = 0; // 0=PNG, 1=JPG, 2=finished or canceled
             int updates = 0;

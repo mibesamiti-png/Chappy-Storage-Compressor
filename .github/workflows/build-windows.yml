@@ -909,6 +909,42 @@ jobs:
           "R2.17 Part23 REAL Core scanner -> dedupe -> one representative preview -> independent Undo PASS"
           Get-Content $path
 
+      - name: Verify R2.17 durable completed merge ledger real restart and forced-crash safety
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-completed-merge-ledger.json"
+          if (-not (Test-Path $path)) { throw "Part24 completed-ledger evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-completed-ledger-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.actualCoreDedupeEngineWritesLedger -ne $true -or
+              $r.normalRealMergeLogicalSavingBytes -le 0 -or
+              $r.restartedReadOnlyLedgerReverified -ne $true -or
+              $r.externalHardlinkCausedFailClosedManualReview -ne $true -or
+              $r.malformedLedgerPreservedAndRefused -ne $true -or
+              $r.preMergeMetadataReconstructedWithoutOriginalScan -ne $true -or
+              $r.normalIndependentUndoFromPersistentLedger -ne $true -or
+              $r.actualChildProcessKilledAfterBackupDeletion -ne $true -or
+              $r.durablePreparedBeforeCrashObserved -ne $true -or
+              $r.refusedPrematureLedgerPromotion -ne $true -or
+              $r.realCorePendingRecoveryJournalReviewedAndCleared -ne $true -or
+              $r.explicitPreparedToCompletedRevalidationVerified -ne $true -or
+              $r.crashSurvivingLedgerUsedForIndependentUndo -ne $true -or
+              $r.allSyntheticOriginalHashesPreserved -ne $true -or
+              $r.productionReadsLedgerWithoutMutation -ne $true -or
+              $r.productionDedupeEnabled -ne $false -or
+              $r.productionIndependentUndoEnabled -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.powerLossAndArbitraryAclRecoveryProven -ne $false -or
+              $r.actualUserMediaTouched -ne $false -or
+              $r.actualUserBytesRecovered -ne 0) {
+            throw "Part24 completed-merge history / force-kill replay / independent Undo contract failed"
+          }
+          "R2.17 Part24 real Core durable ledger, forced death and independent Undo PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -995,6 +1031,9 @@ jobs:
               $r.part23ReadOnlyDedupeUndoPlanRoutedClickVerified -ne $true -or
               $r.part23MergeStillDisabledAfterPreview -ne $true -or
               $r.part23ScanSourceHashesAndNtfsIdentitiesPreserved -ne $true -or
+              $r.part24ActualWpfReadOnlyCompletedLedgerChecked -ne $true -or
+              $r.part24NoStoreCreatedByReadOnlyLedger -ne $true -or
+              $r.part24ProductionMergeStillLocked -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

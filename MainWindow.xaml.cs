@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private Func<string?, string?> _pickCombinedOutput;
     private Func<string, bool> _confirmCombined;
     private Action<string> _showCombinedFailure;
+    private Action<string> _showCombinedResult;
     private readonly ObservableCollection<GroupRow> _rows = new();
 
     public MainWindow()
@@ -32,6 +33,7 @@ public partial class MainWindow : Window
         _pickCombinedOutput = PickCombinedOutputNative;
         _confirmCombined = ConfirmCombinedNative;
         _showCombinedFailure = ShowCombinedFailureNative;
+        _showCombinedResult = ShowCombinedResultNative;
         InitializeComponent();
         GroupsGrid.ItemsSource = _rows;
         Log("起動しました。対象を選び「読み取り専用スキャン」を実行してください。");
@@ -473,6 +475,10 @@ public partial class MainWindow : Window
         MessageBox.Show(message, "一括候補作成の安全停止",
             MessageBoxButton.OK, MessageBoxImage.Warning);
 
+    private void ShowCombinedResultNative(string message) =>
+        MessageBox.Show(message, "一括無劣化候補の結果",
+            MessageBoxButton.OK, MessageBoxImage.Information);
+
     // R2.14: One source/output selection for the existing PNG and JPEG
     // preview-only engines. Their separate journals remain authoritative.
     // Neither engine is permitted to modify original user media.
@@ -626,11 +632,10 @@ public partial class MainWindow : Window
             Log("JPG再開記録: " + jpeg.PlanPath);
             Log($"PNG＋JPG候補の合計論理削減見込: {GroupRow.HumanSize(totalCandidateSaving)}。" +
                 " これは候補ファイルのサイズ差であり、元ファイルは無変更・ディスクの実回復は0Bです。");
-            MessageBox.Show($"PNG候補: {png.Optimized:N0}件、JPG候補: {jpeg.Completed:N0}件\n" +
+            _showCombinedResult($"PNG候補: {png.Optimized:N0}件、JPG候補: {jpeg.Completed:N0}件\n" +
                 $"サイズ差の見込: {GroupRow.HumanSize(totalCandidateSaving)}\n" +
                 "元ファイルは変更していません。実際の空き容量が増えたわけではありません。\n" +
-                "続きから再開するには同じ入力・候補フォルダ・jpegtran.exeを選んでください。",
-                "一括無劣化候補の結果", MessageBoxButton.OK, MessageBoxImage.Information);
+                "続きから再開するには同じ入力・候補フォルダ・jpegtran.exeを選んでください.");
         }
         catch (OperationCanceledException)
         {

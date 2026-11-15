@@ -309,6 +309,11 @@ internal static class UiInteractionSmoke
             string? officialTool = Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_JPEGTRAN");
             bool liveCombinedRan = false;
             bool liveCombinedResumed = false;
+            bool routedPngStop = false, routedJpegStop = false;
+            bool partialPngPreserved = false, partialJpegPreserved = false;
+            bool stoppedBatchFullyResumed = false, stoppedBatchOriginalsUnchanged = false;
+            int partialPngCandidates = 0, partialJpegCandidates = 0;
+            int finalStoppedPngCandidates = 0, finalStoppedJpegCandidates = 0;
             int liveSourceCount = 0, pngCandidateCount = 0, jpegCandidateCount = 0;
             if (!string.IsNullOrWhiteSpace(officialTool))
             {
@@ -412,8 +417,130 @@ internal static class UiInteractionSmoke
                         jobProgress.Value == 100 && errorCount == 1,
                     "R2.17 part 16: real WPF restart resumes PNG/JPEG without new candidates or journal edits");
                 liveCombinedResumed = true;
+
+                // Part 17 uses a SECOND isolated output root, so the verified
+                // Part 16 complete/resume evidence is never modified by
+                // stop/restart tests. The real first PNG completion triggers
+                // an in-process test tap ON THE WORKER. Dispatcher.Invoke raises
+                // the real routed Stop Click before the next engine entry.
+                // No timers, sleep, filesystem watcher or timing race.
+                string stoppedOutput = Path.Combine(testRoot, "stopped-and-resumed-output");
+                Directory.CreateDirectory(stoppedOutput);
+                SetPrivate(window, "_pickCombinedOutput", new Func<string?, string?>(_ =>
+                {
+                    liveFolderPicks++;
+                    return stoppedOutput;
+                }));
+                int pngStopClicks = 0, jpegStopClicks = 0;
+                SetPrivate(window, "_combinedPngProgressTestTap",
+                    new Action<PngBatchPreviewEngine.Progress>(p =>
+                    {
+                        if (pngStopClicks != 0 || p.Done != 1 || p.Status != "Completed")
+                            return;
+                        window.Dispatcher.Invoke(() =>
+                        {
+                            Require(stopButton.IsEnabled && !mergeButton.IsEnabled,
+                                "R2.17 part 17: real WPF Stop enabled between PNG candidate items");
+                            RoutedClick(stopButton);
+                            pngStopClicks++;
+                        });
+                    }));
+                int earlierResults = liveResults;
+                RoutedClick(unifiedBatchButton);
+                PumpUntil(() => unifiedBatchButton.IsEnabled &&
+                    progressText.Text == "中断（再開可能）", TimeSpan.FromSeconds(120));
+                ClearPrivate(window, "_combinedPngProgressTestTap");
+                string pngPlanPath = Path.Combine(stoppedOutput, ".chappy-png-batch-r16.json");
+                string pngProgressPath = Path.Combine(stoppedOutput, ".chappy-png-batch-r16.progress.jsonl");
+                string jpegPlanPath = Path.Combine(stoppedOutput, ".chappy-jpeg-r19.plan.json");
+                var afterPngStop = CombinedBatchResumeInspector.Inspect(
+                    realInput, stoppedOutput, officialTool);
+                string[] partialPngFiles = Directory.GetFiles(
+                    Path.Combine(stoppedOutput, "chappy-png-previews"), "*.png");
+                partialPngCandidates = partialPngFiles.Length;
+                string singlePngCandidateHash = partialPngFiles.Length == 1 ?
+                    OracleHash(partialPngFiles[0]) : "";
+                Require(pngStopClicks == 1 && afterPngStop.HasPngPlan &&
+                        afterPngStop.PngPlanEntries == 6 && !afterPngStop.HasJpegPlan &&
+                        !File.Exists(jpegPlanPath) && partialPngCandidates == 1 &&
+                        File.Exists(pngPlanPath) && new FileInfo(pngProgressPath).Length > 0 &&
+                        liveResults == earlierResults && !stopButton.IsEnabled &&
+                        !mergeButton.IsEnabled && originalsReal.All(x => OracleHash(x) == originalHashesReal[x]),
+                    "R2.17 part 17: routed Stop after first real PNG candidate saves one resumable plan/journal without starting JPEG");
+                routedPngStop = true;
+
+                // Resume PNG from its journal, then route another genuine Stop
+                // after exactly one real official-jpegtran candidate. PNG
+                // candidate #1 must retain its original exact bytes.
+                SetPrivate(window, "_combinedJpegProgressTestTap",
+                    new Action<JpegBatchPreviewEngine.Progress>(p =>
+                    {
+                        if (jpegStopClicks != 0 || p.Done != 1 || p.Status != "Completed")
+                            return;
+                        window.Dispatcher.Invoke(() =>
+                        {
+                            Require(stopButton.IsEnabled && !mergeButton.IsEnabled,
+                                "R2.17 part 17: real WPF Stop enabled between JPEG candidate items");
+                            RoutedClick(stopButton);
+                            jpegStopClicks++;
+                        });
+                    }));
+                RoutedClick(unifiedBatchButton);
+                PumpUntil(() => unifiedBatchButton.IsEnabled &&
+                    progressText.Text == "中断（再開可能）", TimeSpan.FromSeconds(120));
+                ClearPrivate(window, "_combinedJpegProgressTestTap");
+                var afterJpegStop = CombinedBatchResumeInspector.Inspect(
+                    realInput, stoppedOutput, officialTool);
+                string jpegProgressPath = Path.Combine(stoppedOutput, ".chappy-jpeg-r19.progress.jsonl");
+                string[] partialJpegFiles = Directory.GetFiles(
+                    Path.Combine(stoppedOutput, "chappy-jpeg-r19-previews"), "*.jpg");
+                partialJpegCandidates = partialJpegFiles.Length;
+                string singleJpegCandidateHash = partialJpegFiles.Length == 1 ?
+                    OracleHash(partialJpegFiles[0]) : "";
+                partialPngPreserved = partialPngFiles.Length == 1 &&
+                    File.Exists(partialPngFiles[0]) &&
+                    OracleHash(partialPngFiles[0]) == singlePngCandidateHash;
+                Require(jpegStopClicks == 1 && afterJpegStop.HasPngPlan &&
+                        afterJpegStop.HasJpegPlan &&
+                        afterJpegStop.PngPlanEntries == 6 && afterJpegStop.JpegPlanEntries == 6 &&
+                        partialJpegCandidates == 1 &&
+                        Directory.GetFiles(Path.Combine(stoppedOutput, "chappy-png-previews"), "*.png").Length == 6 &&
+                        new FileInfo(jpegProgressPath).Length > 0 && partialPngPreserved &&
+                        liveResults == earlierResults && !stopButton.IsEnabled &&
+                        !mergeButton.IsEnabled && originalsReal.All(x => OracleHash(x) == originalHashesReal[x]),
+                    "R2.17 part 17: routed Stop after first official JPEG candidate retains all resumed PNG and one JPEG");
+                routedJpegStop = true;
+
+                // Resume a THIRD time, with neither stop tap installed. Both
+                // formats must finish and preserve BOTH earlier candidates.
+                RoutedClick(unifiedBatchButton);
+                PumpUntil(() => liveResults == earlierResults + 1 &&
+                    unifiedBatchButton.IsEnabled &&
+                    progressText.Text == "PNG/JPG候補作成終了", TimeSpan.FromSeconds(120));
+                var finallyResumed = CombinedBatchResumeInspector.Inspect(
+                    realInput, stoppedOutput, officialTool);
+                finalStoppedPngCandidates = Directory.GetFiles(
+                    Path.Combine(stoppedOutput, "chappy-png-previews"), "*.png").Length;
+                finalStoppedJpegCandidates = Directory.GetFiles(
+                    Path.Combine(stoppedOutput, "chappy-jpeg-r19-previews"), "*.jpg").Length;
+                partialJpegPreserved = partialJpegFiles.Length == 1 &&
+                    File.Exists(partialJpegFiles[0]) &&
+                    OracleHash(partialJpegFiles[0]) == singleJpegCandidateHash;
+                stoppedBatchOriginalsUnchanged =
+                    originalsReal.All(x => OracleHash(x) == originalHashesReal[x]);
+                Require(finallyResumed.HasPngPlan && finallyResumed.HasJpegPlan &&
+                        finallyResumed.PngPlanEntries == 6 && finallyResumed.JpegPlanEntries == 6 &&
+                        finalStoppedPngCandidates == 6 && finalStoppedJpegCandidates == 6 &&
+                        partialPngPreserved && partialJpegPreserved &&
+                        stoppedBatchOriginalsUnchanged &&
+                        !stopButton.IsEnabled && !mergeButton.IsEnabled &&
+                        jobProgress.Value == 100 && errorCount == 1 &&
+                        liveToolPicks == 5 && liveFolderPicks == 5 &&
+                        liveConsents == 5,
+                    "R2.17 part 17: two mid-batch routed Stops followed by full PNG/JPEG resume preserve exact candidates and sources");
+                stoppedBatchFullyResumed = true;
             }
-            else Console.WriteLine("R2.17 part 16 official jpegtran WPF success/resume SKIPPED outside pinned Windows CI.");
+            else Console.WriteLine("R2.17 part 16-17 official jpegtran WPF success/stop/resume SKIPPED outside pinned Windows CI.");
 
             Directory.CreateDirectory("diagnostics");
             File.WriteAllText(Path.Combine("diagnostics", "r217-wpf-routed-click.json"),
@@ -449,6 +576,17 @@ internal static class UiInteractionSmoke
                     realWpfBatchSourceFiles = liveSourceCount,
                     realWpfBatchPngCandidates = pngCandidateCount,
                     realWpfBatchJpegCandidates = jpegCandidateCount,
+                    part17RoutedPngMidBatchStopVerified = routedPngStop,
+                    part17RoutedJpegMidBatchStopVerified = routedJpegStop,
+                    part17PartialPngCandidatePreserved = partialPngPreserved,
+                    part17PartialJpegCandidatePreserved = partialJpegPreserved,
+                    part17TwoStopsThenFullResumeVerified = stoppedBatchFullyResumed,
+                    part17StoppedBatchSourceSha256Unchanged = stoppedBatchOriginalsUnchanged,
+                    part17PngStoppedCandidateCount = partialPngCandidates,
+                    part17JpegStoppedCandidateCount = partialJpegCandidates,
+                    part17FinalPngCandidateCount = finalStoppedPngCandidates,
+                    part17FinalJpegCandidateCount = finalStoppedJpegCandidates,
+                    part17PhysicalMouseStopClickVerified = false,
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,
@@ -569,6 +707,14 @@ internal static class UiInteractionSmoke
         WritePngChunk(output, "tEXt", "Comment\0Generated R2.17 WPF batch"u8);
         WritePngChunk(output, "IDAT", compressed.ToArray());
         WritePngChunk(output, "IEND", ReadOnlySpan<byte>.Empty);
+    }
+
+    private static void ClearPrivate(MainWindow window, string name)
+    {
+        var field = typeof(MainWindow).GetField(name,
+            BindingFlags.NonPublic | BindingFlags.Instance) ??
+            throw new InvalidOperationException("Missing private progress tap: " + name);
+        field.SetValue(window, null);
     }
 
     private static void RoutedClick(Button button) =>

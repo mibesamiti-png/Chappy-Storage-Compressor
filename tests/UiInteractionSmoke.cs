@@ -1,13 +1,18 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
+using System.IO.Compression;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using ChappyStorageCompressor;
 using ChappyStorageCompressor.Core;
 
@@ -297,6 +302,119 @@ internal static class UiInteractionSmoke
                     !mergeButton.IsEnabled,
                 "R2.17 part 15: repeat attempt still selects tool/output and explicitly refuses");
 
+            // R2.17 part 16: successfully run BOTH real preview engines through
+            // the original WPF Click event. No test-executable substitution:
+            // Actions supplies its independently pinned official jpegtran.exe.
+            // Outside official-source Windows CI we skip (not pretend tested).
+            string? officialTool = Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_JPEGTRAN");
+            bool liveCombinedRan = false;
+            bool liveCombinedResumed = false;
+            int liveSourceCount = 0, pngCandidateCount = 0, jpegCandidateCount = 0;
+            if (!string.IsNullOrWhiteSpace(officialTool))
+            {
+                Require(File.Exists(officialTool) &&
+                        Environment.GetEnvironmentVariable("CHAPPY_R217_JPEGTRAN_COMMIT") ==
+                            "7b4993786d856cbccabfc0ed2f923ba000e326cc",
+                    "R2.17 part 16: WPF batch uses CI-built officially pinned jpegtran, not synthetic tool");
+
+                string realInput = Path.Combine(testRoot, "generated-real-input");
+                string realOutput = Path.Combine(testRoot, "generated-real-output");
+                Directory.CreateDirectory(realInput);
+                Directory.CreateDirectory(realOutput);
+                for (int i = 0; i < 6; i++)
+                {
+                    WriteGeneratedJpeg(Path.Combine(realInput, $"image-{i:D2}.jpg"),
+                        960, 640, i);
+                    WriteGeneratedUncompressedPng(Path.Combine(realInput, $"image-{i:D2}.png"),
+                        512, 320, i + 10);
+                }
+                string[] originalsReal = Directory.GetFiles(realInput).OrderBy(x => x).ToArray();
+                var originalHashesReal = originalsReal.ToDictionary(x => x, OracleHash);
+                liveSourceCount = originalsReal.Length;
+                Require(liveSourceCount == 12, "R2.17 part 16: six valid WIC JPEG + six valid PNG synthetic sources");
+
+                int liveToolPicks = 0, liveFolderPicks = 0, liveConsents = 0, liveResults = 0;
+                string liveResultBody = "";
+                SetPrivate(window, "_pickCombinedTool", new Func<string?, string?>(_ =>
+                {
+                    liveToolPicks++;
+                    return officialTool;
+                }));
+                SetPrivate(window, "_pickCombinedOutput", new Func<string?, string?>(_ =>
+                {
+                    liveFolderPicks++;
+                    return realOutput;
+                }));
+                SetPrivate(window, "_confirmCombined", new Func<string, bool>(body =>
+                {
+                    liveConsents++;
+                    Require(body.Contains("PNG: 6件", StringComparison.Ordinal) &&
+                            body.Contains("JPG/JPEG: 6件", StringComparison.Ordinal) &&
+                            body.Contains("元ファイルの置換・削除・統合は行いません", StringComparison.Ordinal),
+                        "R2.17 part 16: WPF approval explicitly displays both formats and no original replacement");
+                    return true;
+                }));
+                SetPrivate(window, "_showCombinedResult", new Action<string>(body =>
+                {
+                    liveResults++;
+                    liveResultBody = body;
+                }));
+                pathBox.Text = realInput;
+
+                RoutedClick(unifiedBatchButton);
+                Require(stopButton.IsEnabled && !unifiedBatchButton.IsEnabled &&
+                        !mergeButton.IsEnabled,
+                    "R2.17 part 16: real combined-click becomes busy with Stop enabled");
+                PumpUntil(() => liveResults == 1 && unifiedBatchButton.IsEnabled &&
+                    progressText.Text == "PNG/JPG候補作成終了", TimeSpan.FromSeconds(120));
+                var firstState = CombinedBatchResumeInspector.Inspect(
+                    realInput, realOutput, officialTool);
+                string pngJournalPath = Path.Combine(realOutput, ".chappy-png-batch-r16.progress.jsonl");
+                string jpegJournalPath = Path.Combine(realOutput, ".chappy-jpeg-r19.progress.jsonl");
+                byte[] pngJournalBeforeResume = File.ReadAllBytes(pngJournalPath);
+                byte[] jpegJournalBeforeResume = File.ReadAllBytes(jpegJournalPath);
+                string[] pngCandidates = Directory.GetFiles(
+                    Path.Combine(realOutput, "chappy-png-previews"), "*.png");
+                string[] jpegCandidates = Directory.GetFiles(
+                    Path.Combine(realOutput, "chappy-jpeg-r19-previews"), "*.jpg");
+                pngCandidateCount = pngCandidates.Length;
+                jpegCandidateCount = jpegCandidates.Length;
+                var savedCandidates = pngCandidates.Concat(jpegCandidates).ToDictionary(x => x, OracleHash);
+                Require(firstState.HasPngPlan && firstState.HasJpegPlan &&
+                        firstState.PngPlanEntries == 6 && firstState.JpegPlanEntries == 6 &&
+                        pngCandidateCount >= 4 && jpegCandidateCount >= 3 &&
+                        errorCount == 1 && liveToolPicks == 1 && liveFolderPicks == 1 &&
+                        liveConsents == 1 && liveResultBody.Contains("実際の空き容量が増えたわけではありません", StringComparison.Ordinal) &&
+                        jobProgress.Value == 100 && !stopButton.IsEnabled &&
+                        !mergeButton.IsEnabled &&
+                        originalsReal.All(x => OracleHash(x) == originalHashesReal[x]),
+                    "R2.17 part 16: real pinned JPEG and PNG generated candidates via WPF, 100% UI, source hashes unchanged");
+                liveCombinedRan = true;
+
+                // Rerun the same real Click. Every tool/output/Yes must be
+                // selected again; both engines must reuse the saved candidates.
+                RoutedClick(unifiedBatchButton);
+                PumpUntil(() => liveResults == 2 && unifiedBatchButton.IsEnabled &&
+                    progressText.Text == "PNG/JPG候補作成終了", TimeSpan.FromSeconds(120));
+                var resumedState = CombinedBatchResumeInspector.Inspect(
+                    realInput, realOutput, officialTool);
+                Require(liveToolPicks == 2 && liveFolderPicks == 2 && liveConsents == 2 &&
+                        resumedState == firstState &&
+                        Directory.GetFiles(Path.Combine(realOutput, "chappy-png-previews"), "*.png").Length ==
+                            pngCandidateCount &&
+                        Directory.GetFiles(Path.Combine(realOutput, "chappy-jpeg-r19-previews"), "*.jpg").Length ==
+                            jpegCandidateCount &&
+                        savedCandidates.All(x => File.Exists(x.Key) && OracleHash(x.Key) == x.Value) &&
+                        File.ReadAllBytes(pngJournalPath).AsSpan().SequenceEqual(pngJournalBeforeResume) &&
+                        File.ReadAllBytes(jpegJournalPath).AsSpan().SequenceEqual(jpegJournalBeforeResume) &&
+                        originalsReal.All(x => OracleHash(x) == originalHashesReal[x]) &&
+                        !mergeButton.IsEnabled && !stopButton.IsEnabled &&
+                        jobProgress.Value == 100 && errorCount == 1,
+                    "R2.17 part 16: real WPF restart resumes PNG/JPEG without new candidates or journal edits");
+                liveCombinedResumed = true;
+            }
+            else Console.WriteLine("R2.17 part 16 official jpegtran WPF success/resume SKIPPED outside pinned Windows CI.");
+
             Directory.CreateDirectory("diagnostics");
             File.WriteAllText(Path.Combine("diagnostics", "r217-wpf-routed-click.json"),
                 JsonSerializer.Serialize(new
@@ -326,6 +444,11 @@ internal static class UiInteractionSmoke
                     combinedLateForeignFileRefused = true,
                     combinedRetryRequiresNewConsent = true,
                     syntheticCombinedInputHashesUnchanged = true,
+                    officialJpegtranWpfBatchActuallyExecuted = liveCombinedRan,
+                    officialJpegtranWpfBatchResumeVerified = liveCombinedResumed,
+                    realWpfBatchSourceFiles = liveSourceCount,
+                    realWpfBatchPngCandidates = pngCandidateCount,
+                    realWpfBatchJpegCandidates = jpegCandidateCount,
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,
@@ -358,6 +481,94 @@ internal static class UiInteractionSmoke
             try { Directory.Delete(testRoot, recursive: true); }
             catch { Console.Error.WriteLine("Test cleanup failed for disposable root"); }
         }
+    }
+
+    private static byte[] GeneratedPixels(int width, int height, int variant)
+    {
+        var pixels = new byte[checked(width * height * 4)];
+        var random = new Random(21717000 + variant);
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            int p = (y * width + x) * 4;
+            pixels[p] = variant % 3 == 1 ? (byte)random.Next(256) :
+                (byte)((x / 11 + variant * 7) & 255);
+            pixels[p + 1] = variant % 3 == 1 ? (byte)random.Next(256) :
+                (byte)((y / 9 + variant * 13) & 255);
+            pixels[p + 2] = variant % 3 == 1 ? (byte)random.Next(256) :
+                (byte)(((x + y) / 15 + variant * 19) & 255);
+            pixels[p + 3] = 255;
+        }
+        return pixels;
+    }
+
+    private static void WriteGeneratedJpeg(string path, int width, int height, int variant)
+    {
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32,
+            null, GeneratedPixels(width, height, variant), width * 4);
+        bitmap.Freeze();
+        var encoder = new JpegBitmapEncoder { QualityLevel = 89 };
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var output = File.Create(path);
+        encoder.Save(output);
+    }
+
+    private static void WritePngChunk(Stream output, string type, ReadOnlySpan<byte> bytes)
+    {
+        Span<byte> header = stackalloc byte[8];
+        BinaryPrimitives.WriteUInt32BigEndian(header[..4], (uint)bytes.Length);
+        Encoding.ASCII.GetBytes(type, header[4..]);
+        output.Write(header);
+        output.Write(bytes);
+        uint crc = 0xffffffff;
+        foreach (byte b in header[4..8])
+        {
+            crc ^= b;
+            for (int i = 0; i < 8; i++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+        }
+        foreach (byte b in bytes)
+        {
+            crc ^= b;
+            for (int i = 0; i < 8; i++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+        }
+        Span<byte> digest = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32BigEndian(digest, ~crc);
+        output.Write(digest);
+    }
+
+    private static void WriteGeneratedUncompressedPng(string path, int width,
+        int height, int variant)
+    {
+        byte[] bgra = GeneratedPixels(width, height, variant);
+        byte[] header = new byte[13];
+        BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(0, 4), (uint)width);
+        BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(4, 4), (uint)height);
+        header[8] = 8; header[9] = 6;
+        using var raw = new MemoryStream();
+        for (int y = 0; y < height; y++)
+        {
+            raw.WriteByte(0);
+            for (int x = 0; x < width; x++)
+            {
+                int p = (y * width + x) * 4;
+                raw.WriteByte(bgra[p + 2]);
+                raw.WriteByte(bgra[p + 1]);
+                raw.WriteByte(bgra[p]);
+                raw.WriteByte(bgra[p + 3]);
+            }
+        }
+        using var compressed = new MemoryStream();
+        using (var z = new ZLibStream(compressed, CompressionLevel.NoCompression,
+            leaveOpen: true))
+            raw.WriteTo(z);
+        using var output = File.Create(path);
+        output.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+        WritePngChunk(output, "IHDR", header);
+        WritePngChunk(output, "tEXt", "Comment\0Generated R2.17 WPF batch"u8);
+        WritePngChunk(output, "IDAT", compressed.ToArray());
+        WritePngChunk(output, "IEND", ReadOnlySpan<byte>.Empty);
     }
 
     private static void RoutedClick(Button button) =>

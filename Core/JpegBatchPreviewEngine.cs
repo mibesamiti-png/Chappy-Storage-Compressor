@@ -50,8 +50,10 @@ public static class JpegBatchPreviewEngine
     public sealed record Audit(IReadOnlyList<ReportRow> Rows, long VerifiedSavingBytes, int NeedsReview);
 
     public static Summary Run(string inputRoot, string outputRoot, string jpegtranExe,
-        IProgress<Progress>? progress = null, CancellationToken ct = default
+        IProgress<Progress>? progress = null, CancellationToken ct = default,
+        PersonalMediaBatchPreflight.Summary? approvedInput = null
 #if CHAPPY_TESTING
+        , Action? testOnlyBeforeCandidateSetup = null
         , Action<string>? testOnlyAfterVerifiedCandidateBeforeJournal = null
         , Action<int>? testOnlyNativeProcessId = null
 #endif
@@ -68,8 +70,15 @@ public static class JpegBatchPreviewEngine
         ValidateWorkingPaths(output, previews);
         string planPath = Path.Combine(output, PlanName);
         string journalPath = Path.Combine(output, JournalName);
+        // Independently refuse a newly inserted foreign output or an input
+        // that no longer matches the explicit WPF Yes inventory. This is a
+        // read-only check before creating the exclusive lock.
+        PreviewOutputStartGate.AssertKnownRoot(output, ct);
+        if (approvedInput is not null)
+            PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
         using var exclusive = new FileStream(Path.Combine(output, LockName), FileMode.OpenOrCreate,
             FileAccess.ReadWrite, FileShare.None);
+        PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
         Plan plan;
         if (File.Exists(planPath))
         {
@@ -83,8 +92,17 @@ public static class JpegBatchPreviewEngine
             if (File.Exists(journalPath))
                 throw new InvalidDataException("計画が存在せず進捗ログだけが残っています。手動確認してください。");
             plan = BuildPlan(input, output, tool, ct);
+            PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
             SaveNewPlan(planPath, plan);
         }
+#if CHAPPY_TESTING
+        // Generated-only deterministic mutation after a real plan is saved
+        // and before any output candidate is created.
+        testOnlyBeforeCandidateSetup?.Invoke();
+#endif
+        PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
+        if (approvedInput is not null)
+            PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
         Directory.CreateDirectory(previews);
         CheckNoReparse(previews);
         // Do not trust generated-looking leftovers from a terminated writer.

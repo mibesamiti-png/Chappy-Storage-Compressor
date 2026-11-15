@@ -764,6 +764,11 @@ jobs:
               $r.combinedLateForeignFileRefused -ne $true -or
               $r.combinedRetryRequiresNewConsent -ne $true -or
               $r.syntheticCombinedInputHashesUnchanged -ne $true -or
+              $r.officialJpegtranWpfBatchActuallyExecuted -ne $true -or
+              $r.officialJpegtranWpfBatchResumeVerified -ne $true -or
+              $r.realWpfBatchSourceFiles -ne 12 -or
+              $r.realWpfBatchPngCandidates -lt 4 -or
+              $r.realWpfBatchJpegCandidates -lt 3 -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

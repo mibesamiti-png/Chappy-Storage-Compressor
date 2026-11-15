@@ -255,6 +255,15 @@ internal static class R217CombinedResumePreflightTests
                 "R2.17 part 19: JPEG orphan refusal preserves unknown candidate bytes");
             File.Delete(fakeJpegCandidate);
             Directory.Delete(fakeJpegPreviewDir); // test-owned synthetic directory only.
+            // The direct JPEG queue acquires a lock before its orphan gate.
+            // This disposable direct-run probe introduced a JPEG lock not
+            // present in the earlier manually created plan-only fixture.
+            // Remove ONLY the test-created lock after the queue has returned,
+            // so the later PNG-only missing-plan scenario remains isolated.
+            string testJpegLock = Path.Combine(output, ".chappy-jpeg-r19.lock");
+            check(File.Exists(testJpegLock),
+                "R2.17 part 19: direct JPEG refusal exited and released disposable lock");
+            File.Delete(testJpegLock);
 
             string log = Path.Combine(output, ".chappy-jpeg-r19.progress.jsonl");
             File.WriteAllText(log, "{\"RelativePath\":\"synthetic.jpg\"");

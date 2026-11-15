@@ -137,6 +137,37 @@ public static class IndependentUndoEngine
         // source and store link remain untouched by the replace operation.
         File.Replace(stage, alias, null);
         FileSnapshot detached = Safety.Capture(alias);
+        // ReplaceFileW can preserve metadata of the *replaced* NTFS alias
+        // rather than all metadata of the staged independent file. Reapply
+        // only normal attributes and source times after first confirming
+        // independent identity, all bytes and owner+DACL. This is a
+        // TEST-ONLY positive-path proof, NOT atomic crash-safe restoration.
+        bool distinct = detached.Identity.LinkCount == 1 &&
+            !detached.Identity.SameFile(NativeFile.GetIdentity(master));
+        bool pixelsUnchanged = detached.Length == originalIndependent.Length &&
+            string.Equals(Safety.ComputeSha256(alias, CancellationToken.None),
+                expectedHash, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(Safety.ComputeSha256(master, CancellationToken.None),
+                expectedHash, StringComparison.OrdinalIgnoreCase);
+        bool securityMatches = detached.SecurityDescriptor.AsSpan()
+            .SequenceEqual(originalIndependent.SecurityDescriptor);
+        if (!distinct || !pixelsUnchanged || !securityMatches)
+            throw new InvalidDataException(
+                "Undo cutover refused: independent identity=" + distinct +
+                ", byte integrity=" + pixelsUnchanged +
+                ", owner+DACL=" + securityMatches +
+                "; durable evidence kept for manual review");
+        if (detached.Attributes != originalIndependent.Attributes ||
+            detached.CreationUtc != originalIndependent.CreationUtc ||
+            detached.ModifiedUtc != originalIndependent.ModifiedUtc)
+        {
+            // No change to the still-shared master link: the alias now has
+            // its own proven identity and exact expected bytes.
+            File.SetAttributes(alias, originalIndependent.Attributes);
+            File.SetCreationTimeUtc(alias, originalIndependent.CreationUtc);
+            File.SetLastWriteTimeUtc(alias, originalIndependent.ModifiedUtc);
+            detached = Safety.Capture(alias);
+        }
         if (detached.Identity.LinkCount != 1 ||
             detached.Identity.SameFile(NativeFile.GetIdentity(master)) ||
             detached.Length != originalIndependent.Length ||
@@ -149,7 +180,13 @@ public static class IndependentUndoEngine
             !string.Equals(Safety.ComputeSha256(master, CancellationToken.None),
                 expectedHash, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException(
-                "Undo cutover occurred but full byte/identity/metadata proof failed: retain evidence");
+                "Undo cutover occurred but full byte/identity/metadata proof failed after test-only normalization: " +
+                "ctime=" + (detached.CreationUtc == originalIndependent.CreationUtc) +
+                ", mtime=" + (detached.ModifiedUtc == originalIndependent.ModifiedUtc) +
+                ", attributes=" + (detached.Attributes == originalIndependent.Attributes) +
+                ", owner+DACL=" +
+                detached.SecurityDescriptor.AsSpan().SequenceEqual(originalIndependent.SecurityDescriptor) +
+                "; retain evidence");
         return new Result(alias, record, shared.Identity, detached.Identity, detached.Length);
 #endif
     }

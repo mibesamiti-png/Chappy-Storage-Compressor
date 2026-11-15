@@ -36,6 +36,23 @@ public static class DedupeEngine
                 continue;
             }
 
+#if CHAPPY_TESTING
+            // Each saved completed operation currently authenticates a fixed NTFS
+            // link count. A third alias would invalidate the first durable record
+            // and could leave a partially merged group. Until a group-level
+            // transition ledger exists, refuse all >2-file groups *before* any
+            // hardlink, rename, pending journal or backup is created.
+            // Part23's separate no-ledger synthetic integration is unaffected.
+            if (testOnlyRecordCompletedMerges && group.Files.Count > 2)
+            {
+                done += group.Files.Count - 1;
+                progress?.Report(new EngineProgress(done, total,
+                    "保存履歴付きの3件以上の重複統合は未対応のため変更せずスキップ: " +
+                    group.Representative.Path, estimatedSaved));
+                continue;
+            }
+#endif
+
             var source = group.Representative;
             string storeName = group.Hash + Path.GetExtension(source.Path).ToLowerInvariant();
             string masterPath = Path.Combine(Safety.StorePath(root), storeName);

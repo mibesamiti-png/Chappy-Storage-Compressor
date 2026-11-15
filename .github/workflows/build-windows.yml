@@ -618,6 +618,16 @@ jobs:
               @($i.phases).Count -lt 5 -or
               $i.allOriginalHashesAndTimestampsUnchanged -ne $true -or
               $i.canceledPreviewAborted -ne $true -or
+              $i.part18PngCancelAfterInflatedWrite -ne $true -or
+              $i.part18PngBytesInflatedBeforeCancel -le 0 -or
+              $i.part18PngIncompleteCandidateDiscarded -ne $true -or
+              $i.part18PngFreshRetrySucceeded -ne $true -or
+              $i.part18JpegCancelAfterNativeStart -ne $true -or
+              $i.part18NativeChildPidObserved -ne $true -or
+              $i.part18NativeChildReaped -ne $true -or
+              $i.part18JpegIncompleteCandidateDiscarded -ne $true -or
+              $i.part18JpegFreshRetryPixelsAndMarkersMatch -ne $true -or
+              $i.part18AbruptAppProcessKillVerified -ne $false -or
               $i.rendererOrPhysicalGuiMouseTested -ne $false -or
               $i.cacheAndCpuControlled -ne $false -or
               $i.independentSpeedupClaimed -ne $false -or

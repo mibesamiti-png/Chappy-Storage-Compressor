@@ -184,7 +184,7 @@ ExifのOrientation（1・3・6・8）を人工JPEGに入れ、正式候補エン
 
 ## R2.17 part 10 — OS-tracked native jpegtran child peak resident memory
 
-Windows CIの人工JPEG3件×公式ソース固定ビルドの通常版/ネイティブSIMD版で、6回の `jpegtran.exe` 子プロセス自身の `PeakWorkingSet64` を取得する検証。各子プロセスの `-copy all -optimize` 出力を、本番の読み取り専用プレビューエンジンから得た出力と**バイト完全一致**で照合し、元のSHA-256・更新日時が変更されないことを必須とする。結果の意味は子プロセスのライフタイム最大常駐メモリに限定され、アプリ全体のメモリピークや物理ディスク速度の保証ではない。本番の原本置換・リンク統合を引き続き無効とし、実空き容量回復0B、歴史的実装率69.4%は再評価まで維持。
+Windows CIの人工JPEG3件×公式ソース固定ビルドの通常版/ネイティブSIMD版で、6回の `jpegtran.exe` 子プロセスの生存中に `PeakWorkingSet64` を繰り返し観測する検証。各子プロセスの `-copy all -optimize` 出力を、本番の読み取り専用プレビューエンジンから得た出力と**バイト完全一致**で照合し、元のSHA-256・更新日時が変更されないことを必須とする。結果の意味は子プロセス生存中に観測したOS管理ピーク常駐メモリに限定され（終了直前を完全には捕捉できない可能性あり）、アプリ全体のメモリピークや物理ディスク速度の保証ではない。本番の原本置換・リンク統合を引き続き無効とし、実空き容量回復0B、歴史的実装率69.4%は再評価まで維持。
 
 [テスト範囲](R217_NATIVE_CHILD_PEAK_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 

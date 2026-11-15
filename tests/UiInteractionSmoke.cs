@@ -578,6 +578,47 @@ internal static class UiInteractionSmoke
                 "R2.17 part 21: real WPF Yes rejects newly added input without running any codec or writing a plan");
             File.Delete(addedAfterYes); // only test-created synthetic source
 
+            // Part 22: the original Yes and both UI rechecks have passed.
+            // Inject at the exact dispatch boundary BEFORE the real PNG
+            // engine starts, then prove its independent gate refuses before
+            // any plan or lock file is created. No fake codec is invoked.
+            SetPrivate(window, "_confirmCombined", new Func<string, bool>(_ => true));
+            string postUiSource = Path.Combine(previewInputs, "source-added-after-final-recheck.png");
+            int errorsBeforeLateSource = errorCount;
+            SetPrivate(window, "_combinedBeforePngEngineTestTap", new Action(() =>
+                File.Copy(sourcePng, postUiSource)));
+            RoutedClick(unifiedBatchButton);
+            PumpUntil(() => unifiedBatchButton.IsEnabled &&
+                progressText.Text == "一括処理エラー", TimeSpan.FromSeconds(20));
+            bool part22LateSourceRefused = errorCount == errorsBeforeLateSource + 1 &&
+                File.Exists(postUiSource) && OracleHash(postUiSource) == beforePng &&
+                errorMessage.Contains("入力画像", StringComparison.Ordinal) &&
+                !Directory.EnumerateFileSystemEntries(previewOutput).Any() &&
+                OracleHash(sourcePng) == beforePng && OracleHash(sourceJpeg) == beforeJpeg &&
+                !stopButton.IsEnabled && !mergeButton.IsEnabled;
+            Require(part22LateSourceRefused,
+                "R2.17 part 22: real WPF final-check to engine-entry source race refuses BEFORE any plan/lock");
+            File.Delete(postUiSource);
+
+            string postUiForeign = Path.Combine(previewOutput, "foreign-after-final-recheck.txt");
+            byte[] lateEvidence = { 0xDD, 0xC0, 0x22, 0x45 };
+            int errorsBeforeForeign = errorCount;
+            SetPrivate(window, "_combinedBeforePngEngineTestTap", new Action(() =>
+                File.WriteAllBytes(postUiForeign, lateEvidence)));
+            RoutedClick(unifiedBatchButton);
+            PumpUntil(() => unifiedBatchButton.IsEnabled &&
+                progressText.Text == "一括処理エラー", TimeSpan.FromSeconds(20));
+            bool part22LateOutputRefused = errorCount == errorsBeforeForeign + 1 &&
+                errorMessage.Contains("未確認のファイル", StringComparison.Ordinal) &&
+                File.ReadAllBytes(postUiForeign).SequenceEqual(lateEvidence) &&
+                Directory.EnumerateFileSystemEntries(previewOutput).Count() == 1 &&
+                OracleHash(sourcePng) == beforePng && OracleHash(sourceJpeg) == beforeJpeg &&
+                !stopButton.IsEnabled && !mergeButton.IsEnabled;
+            Require(part22LateOutputRefused,
+                "R2.17 part 22: real WPF final-check to engine-entry foreign output race refuses WITHOUT artifact creation");
+            File.Delete(postUiForeign);
+            SetPrivate(window, "_combinedBeforePngEngineTestTap", (Action?)null);
+
             Directory.CreateDirectory("diagnostics");
             File.WriteAllText(Path.Combine("diagnostics", "r217-wpf-routed-click.json"),
                 JsonSerializer.Serialize(new
@@ -627,6 +668,10 @@ internal static class UiInteractionSmoke
                     part21NoPreviewPlanCreatedAfterSourceChange = true,
                     part21SyntheticSourceHashesUnchanged = OracleHash(sourcePng) == beforePng &&
                         OracleHash(sourceJpeg) == beforeJpeg,
+                    part22RoutedSourceAddedAfterFinalUiRecheckRefused = part22LateSourceRefused,
+                    part22RoutedForeignOutputAfterFinalUiRecheckRefused = part22LateOutputRefused,
+                    part22NoLockPlanOrCandidateCreatedForEitherRace = true,
+                    part22UntrustedForeignOutputBytesPreserved = true,
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

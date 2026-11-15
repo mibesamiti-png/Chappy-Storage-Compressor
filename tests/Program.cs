@@ -1569,6 +1569,7 @@ static class Program
             R217PreviewCrashTests.Run(root, part19Input, Check);
             R217JpegCrashTests.Run(root, Check);
             R217JpegParentDeathTests.Run(root, Check);
+            R217PreviewStartRaceTests.Run(root, Check);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

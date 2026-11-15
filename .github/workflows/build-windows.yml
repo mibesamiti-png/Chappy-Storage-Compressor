@@ -836,6 +836,41 @@ jobs:
           "R2.17 part21 managed parent death / native lifecycle / safe JPEG retry PASS"
           Get-Content $path
 
+      - name: Verify R2.17 last-moment PNG JPEG engine source and output race gates
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-preview-start-race.json"
+          if (-not (Test-Path $path)) { throw "Part22 preview start-race evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-preview-start-race-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.pngForeignRootBeforeLockRefusedWithoutWriting -ne $true -or
+              $r.jpegForeignRootBeforeLockRefusedWithoutWriting -ne $true -or
+              $r.pngForeignAfterPlanBeforeCandidateRefused -ne $true -or
+              $r.pngCombinedReadOnlyAlsoRefused -ne $true -or
+              $r.pngRecoveredFromSamePlanAfterExplicitTestOnlyClearance -ne $true -or
+              $r.pngSourceChangedAfterPlanRefused -ne $true -or
+              $r.pngSourceRestoredAndSavedPlanResumed -ne $true -or
+              $r.jpegForeignAfterPlanBeforeCandidateRefused -ne $true -or
+              $r.jpegCombinedReadOnlyAlsoRefused -ne $true -or
+              $r.jpegRecoveredFromSamePlanWithOfficialPixelsAndMarkers -ne $true -or
+              $r.jpegSourceChangedAfterPlanRefused -ne $true -or
+              $r.jpegSourceRestoredAndSavedPlanResumed -ne $true -or
+              $r.allOriginalSha256AndMtimeUnchanged -ne $true -or
+              $r.noAutomaticForeignFileDeletion -ne $true -or
+              $r.noFilesystemAtomicSnapshotClaimed -ne $true -or
+              $r.fullProductionWpfAppCrashVerified -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.actualFreedBytes -ne 0) {
+            throw "Part22 source/output start race and explicit plan-reuse recovery gate failed"
+          }
+          "R2.17 part22 real engine late source/output modification refusal PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -915,6 +950,10 @@ jobs:
               $r.part21RoutedWpfYesSourceChangeRefused -ne $true -or
               $r.part21NoPreviewPlanCreatedAfterSourceChange -ne $true -or
               $r.part21SyntheticSourceHashesUnchanged -ne $true -or
+              $r.part22RoutedSourceAddedAfterFinalUiRecheckRefused -ne $true -or
+              $r.part22RoutedForeignOutputAfterFinalUiRecheckRefused -ne $true -or
+              $r.part22NoLockPlanOrCandidateCreatedForEitherRace -ne $true -or
+              $r.part22UntrustedForeignOutputBytesPreserved -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

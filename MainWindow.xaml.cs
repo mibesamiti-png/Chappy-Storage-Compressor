@@ -31,6 +31,10 @@ public partial class MainWindow : Window
     // completed item, allowing deterministic routed Stop between entries.
     private Action<PngBatchPreviewEngine.Progress>? _combinedPngProgressTestTap;
     private Action<JpegBatchPreviewEngine.Progress>? _combinedJpegProgressTestTap;
+    // Deterministic CI-only race injection in the narrow gap after the final
+    // UI read-only checks and immediately before the PNG worker starts.
+    // Remains null in production and changes no default behavior.
+    private Action? _combinedBeforePngEngineTestTap;
 
     private sealed class InlineProgressTap<T>(IProgress<T> downstream,
         Action<T>? observer) : IProgress<T>
@@ -625,11 +629,12 @@ public partial class MainWindow : Window
 
             Log($"PNG/JPGまとめて候補作成開始。PNG {preflight.PngFiles:N0}件、JPG {preflight.JpegFiles:N0}件。");
             ProgressText.Text = "PNG一括候補を生成中";
+            _combinedBeforePngEngineTestTap?.Invoke();
             var pngTap = _combinedPngProgressTestTap;
             var png = await Task.Run(() =>
                 PngBatchPreviewEngine.Run(input, output,
                     pngTap is null ? pngProgress : new InlineProgressTap<PngBatchPreviewEngine.Progress>(
-                        pngProgress, pngTap), token), token);
+                        pngProgress, pngTap), token, approvedInput: preflight), token);
             Log($"PNG: {png.Done:N0}/{png.Total:N0}件、候補 {png.Optimized:N0}件、失敗 {png.Failed:N0}件。" +
                 $" 候補削減見込 {GroupRow.HumanSize(png.SavedBytes)}。");
             Log("PNG再開記録: " + png.ManifestPath);
@@ -648,7 +653,7 @@ public partial class MainWindow : Window
             var jpeg = await Task.Run(() =>
                 JpegBatchPreviewEngine.Run(input, output, tool,
                     jpegTap is null ? jpegProgress : new InlineProgressTap<JpegBatchPreviewEngine.Progress>(
-                        jpegProgress, jpegTap), token), token);
+                        jpegProgress, jpegTap), token, approvedInput: preflight), token);
             token.ThrowIfCancellationRequested();
             JobProgress.Value = jpeg.Done == jpeg.Total
                 ? progressModel.Finished()

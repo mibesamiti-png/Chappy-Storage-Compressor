@@ -228,6 +228,12 @@ Part 17 demonstrated deterministic real WPF Stop between fully journaled PNG/JPG
 
 **Scope:** cooperative in-file PNG cancellation and post-native-Start JPEG cancellation, **not** forcibly killing the entire app, in-progress native encoder timing guarantees, physical mouse Stop, or transactional power-loss recovery. No original replacement, hardlink merge or production Undo. Actual user capacity recovered **0 B**; historical 69.4% source estimate unchanged. [Design and observed limits](R217_INNER_CANCEL_NATIVE_CLEANUP.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14).
 
+## R2.17 part 19 — actual subprocess death during PNG candidate construction and orphan refusal
+
+A disposable **Core smoke-test child process** runs the real PNG batch engine on synthetic NTFS data, persists its plan, begins streaming an uncompressed valid PNG into a candidate, records a test-only inflated-block checkpoint, then terminates itself abruptly using `Process.Kill` without normal `finally` cleanup. The parent verifies the exit, durable plan, one unjournaled incomplete candidate, original SHA-256/mtime, then verifies that **both** the combined preflight and the direct PNG resume refuse the orphan and preserve its bytes and plan. Only the test explicitly removes its own known orphan, then resumes the original saved plan to a verified candidate. A shared `PreviewReferenceGate` also causes direct PNG and JPG engines to refuse **syntactically valid but unreferenced candidate names**, preventing silent reuse or duplicate generation. Tests for both extensions preserve all unknown bytes. No production auto-delete or original media write is permitted. [Part 19 test design](R217_PREVIEW_PROCESS_CRASH_ORPHANS.md).
+
+**Limitations:** This proves an abruptly killed **standalone Core test worker**, not the production WPF process, and not termination of an active native jpegtran child. It does not prove disk power-loss ordering or atomic snapshots. All files are generated in a unique disposable NTFS root. Original replacement/hardlink merging/Undo stay disabled; real user recovered capacity **0 B**, historical 69.4% estimate unchanged. Final PR-head Windows CI and independent postmerge main CI remain separate gates.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

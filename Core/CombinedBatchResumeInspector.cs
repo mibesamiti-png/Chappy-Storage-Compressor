@@ -95,13 +95,15 @@ public static class CombinedBatchResumeInspector
             ".chappy-jpeg-preview-", ".jpg", ct);
 
         int pngCount = 0, jpegCount = 0;
+        PngBatchPreviewEngine.Plan? png = null;
+        JpegBatchPreviewEngine.Plan? jpeg = null;
         string pngPlanSha = "", pngJournalSha = "";
         string jpegPlanSha = "", jpegJournalSha = "";
         if (hasPng)
         {
             byte[] planBytes = ReadLimited(Path.Combine(output, PngPlan), MaxPlanBytes);
             pngPlanSha = Sha256(planBytes);
-            var png = JsonSerializer.Deserialize<PngBatchPreviewEngine.Plan>(planBytes)
+            png = JsonSerializer.Deserialize<PngBatchPreviewEngine.Plan>(planBytes)
                 ?? throw new InvalidDataException("PNGの作業計画がnullです。");
             PngBatchPreviewEngine.ValidatePlan(png, input, output,
                 Path.Combine(output, PngPreviews));
@@ -120,7 +122,7 @@ public static class CombinedBatchResumeInspector
         {
             byte[] planBytes = ReadLimited(Path.Combine(output, JpegPlan), MaxPlanBytes);
             jpegPlanSha = Sha256(planBytes);
-            var jpeg = JsonSerializer.Deserialize<JpegBatchPreviewEngine.Plan>(planBytes)
+            jpeg = JsonSerializer.Deserialize<JpegBatchPreviewEngine.Plan>(planBytes)
                 ?? throw new InvalidDataException("JPGの作業計画がnullです。");
             JpegBatchPreviewEngine.ValidatePlan(jpeg, input, output, tool);
             if (jpegLog)
@@ -132,6 +134,16 @@ public static class CombinedBatchResumeInspector
             }
             jpegCount = jpeg.Entries.Count;
         }
+        // Syntactically valid GUID names alone do not prove that a file
+        // belongs to a validated plan; reject unreferenced crash remnants.
+        if (pngDir)
+            PreviewReferenceGate.RejectUnreferenced(
+                Path.Combine(output, PngPreviews),
+                png?.Entries.Select(e => e.PreviewPath) ?? Enumerable.Empty<string?>(), ct);
+        if (jpegDir)
+            PreviewReferenceGate.RejectUnreferenced(
+                Path.Combine(output, JpegPreviews),
+                jpeg?.Entries.Select(e => e.CandidatePath) ?? Enumerable.Empty<string?>(), ct);
         ct.ThrowIfCancellationRequested();
         // Never create the output folder, lock, state file, or journal here.
         // A later engine Run must re-validate after the user's confirmation.

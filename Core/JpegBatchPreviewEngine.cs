@@ -82,6 +82,9 @@ public static class JpegBatchPreviewEngine
         }
         Directory.CreateDirectory(previews);
         CheckNoReparse(previews);
+        // Do not trust generated-looking leftovers from a terminated writer.
+        PreviewReferenceGate.RejectUnreferenced(previews,
+            plan.Entries.Select(e => e.CandidatePath), ct);
         int total = plan.Entries.Count;
         foreach (var entry in plan.Entries)
         {

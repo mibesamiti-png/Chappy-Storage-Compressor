@@ -47,7 +47,11 @@ public static class PngBatchPreviewEngine
 
     /// <summary>Start a new batch, or resume a saved batch from the same output folder.</summary>
     public static Summary Run(string inputRoot, string outputRoot,
-        IProgress<Progress>? progress = null, CancellationToken ct = default)
+        IProgress<Progress>? progress = null, CancellationToken ct = default
+#if CHAPPY_TESTING
+        , Action<long>? testOnlyAfterInflatedWrite = null
+#endif
+        )
     {
         string input = CanonicalDirectory(inputRoot);
         string output = CanonicalDirectory(outputRoot);
@@ -91,6 +95,10 @@ public static class PngBatchPreviewEngine
         }
         Directory.CreateDirectory(previews);
         if (IsReparsePath(previews)) throw new InvalidOperationException("候補出力がリンクです。");
+        // A crash may leave a correctly named but unjournaled candidate.
+        // Never rerun and silently add a second candidate beside it.
+        PreviewReferenceGate.RejectUnreferenced(previews,
+            plan.Entries.Select(e => e.PreviewPath), ct);
 
         int total = plan.Entries.Count;
         int done = plan.Entries.Count(e => e.Status is "Completed" or "Skipped");
@@ -154,7 +162,11 @@ public static class PngBatchPreviewEngine
                 }
                 else
                 {
-                    var optimized = PngLosslessOptimizer.CreatePreview(absolute, previews, ct);
+                    var optimized = PngLosslessOptimizer.CreatePreview(absolute, previews, ct
+#if CHAPPY_TESTING
+                        , testOnlyAfterInflatedWrite
+#endif
+                    );
                     entry.Status = optimized.PreviewPath is not null ? "Completed" :
                         optimized.Explanation.Contains("空き容量が不足", StringComparison.Ordinal) ?
                         "Deferred" : "Skipped";

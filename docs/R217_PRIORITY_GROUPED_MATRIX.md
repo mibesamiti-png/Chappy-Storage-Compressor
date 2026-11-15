@@ -25,4 +25,47 @@ The priority round can close only if the complete final PR Windows CI and **post
 
 ## Verified results
 
-To be populated with actual CI evidence after the final code and documentation commit pass. Until then do not make measured speedup or RAM-reduction claims.
+A successful full Windows PR CI [#43718264014](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43718264014) passed **34/34 workflow steps** (the newly added grouped JSON gate included) with **534/534 synthetic C# safety assertions** (previously 516, now +18), distinct Core/WPF test runners, pinned official-source non-SIMD/SIMD jpegtran builds, real NTFS security/fault regression gates, routed WPF Scan/Stop UI smoke, and win-x64 publish.
+
+### Generated scanner profile
+
+Machine-readable output: `diagnostics/r217-priority-bulk-scan.json`. **1,072 generated files, 7,336,448 bytes of source data**, split into 1,024 individually unique byte lengths and 48 equal-length media-like random files:
+
+| Dataset | Files | First scan | Repeated scan | Strict NTFS captures | SHA attempts | Verified groups |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Unique-length | 1,024 | **16.58 ms** | **16.48 ms** | **0** | **0** | **0** |
+| All equal-length | 48 | **15.61 ms** | **15.23 ms** | **48** | **48** | **4** |
+
+Exactly four independent byte-identical pairs (SHA-256 and framework byte-comparison oracle) were found, no false positives, and source hashes/timestamps stayed unchanged. Calling test thread allocated about **806KB** for a 1,024-file unique-length scan and **288KB** for each 48-file same-size scan. The 1,024 items are small; do not compare their durations directly to a small count of large files as an algorithmic speedup. Real media volume benchmarking and physical HDD/SSD reads remain pending.
+
+### Real generated JPEG and PNG preview/resume
+
+Machine-readable output: `diagnostics/r217-priority-images-memory.json`. Six generated valid JPEG and six deliberately *uncompressed* valid PNG files were processed by their **real application batch engines**. All six JPEGs and all six PNGs produced smaller accepted candidates; 6/6 in each format independently passed all decoded WPF pixels and protected JPEG marker equality, with source hash/time unchanged.
+
+| Real application batch phase | Wall time on this Windows CI host |
+| --- | ---: |
+| Generate 12 valid images | **200.79 ms** |
+| PNG first batch (6 valid PNG) | **210.98 ms** |
+| JPEG first batch (6 valid JPEG) | **308.41 ms** |
+| PNG journal resume, no new candidate | **4.77 ms** |
+| JPEG journal resume, no new candidate | **5.28 ms** |
+
+Synthetic **PNG candidates smaller by 2,662,925 bytes**; JPEG candidates smaller by **101,921 bytes**; total *hypothetical candidate size difference* **2,764,846 bytes** on this deliberately compressible fixture. The short resume times mainly reflect **reusing previously generated candidates**, not a benchmark for generating fresh previews. They do not demonstrate an encoder speed increase or normal photo compression ratios.
+
+### Actual application process + exact native child observed together
+
+Two additional **2,560×1,600 generated JPEGs** were run through `JpegLosslessPreviewEngine.CreatePreview` with a TEST-BUILD-ONLY child-PID observer (absent from the shipped production app). For each, the independent test successfully observed **two** polling instants when both the parent process and its exact child were alive. The largest **observed parent-current working set + child OS-maintained peak working-set counter** was:
+
+| Generated JPEG case | Real engine time | Parent+native observed counter sum | Child observed peak |
+| --- | ---: | ---: | ---: |
+| Structured image | **56.69 ms** | **140,062,720 B** (~133.6 MiB) | **15,728,640 B** |
+| Alternate structured image | **47.65 ms** | **125,513,728 B** (~119.7 MiB) | **15,728,640 B** |
+
+**Critical limits:** These parent+child numbers do not represent synchronized instantaneously resident memory (the native child field is a historical peak as of sampling); just **two live joint observations** per case cannot rule out a higher short-lived peak. They also include *all allocations from the test host process* and are **not** a representative Chappy production WPF instance's peak. No RAM decrease or speedup can be inferred from these numbers. Missing child observations explicitly fail the gate rather than passing by guessing.
+
+### Release and safety
+
+The original 12 generated media sources, all extra large JPEG sources, and all bulk scanner original files remained unchanged. Canceled operations yielded no partial accepted groups; no user photos/videos were read, original replacement, hardlink consolidation, and production independent Undo remained disabled. **Actual recovered user disk capacity 0 B**.
+
+The first PR workflow [#43718125550](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43718125550) failed early on two C# `switch`-expression operator precedence errors in the new synthetic fixture generator. Both were corrected; the next run above passed all safety gates. Subsequent documentation and merge require a final PR and postmerge main CI success before this stage is declared formally complete.
+

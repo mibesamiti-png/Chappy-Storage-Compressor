@@ -697,6 +697,12 @@ jobs:
               $r.part19GeneratedLookingJpegOrphanRefused -ne $true -or
               $r.part19DirectFormatQueuesRejectOrphans -ne $true -or
               $r.part19OrphanEvidencePreserved -ne $true -or
+              $r.part21InputInventoryStableAndConsentBound -ne $true -or
+              $r.part21VolatileFreeSpaceDoesNotInvalidateConsent -ne $true -or
+              $r.part21AddedSourceAfterYesRefused -ne $true -or
+              $r.part21SameCountRenamedSourceRefused -ne $true -or
+              $r.part21SameSizeModifiedTimestampRefused -ne $true -or
+              $r.part21OriginalSourceStateRestored -ne $true -or
               $r.jpegTornJournalRefused -ne $true -or
               $r.pngTornJournalRefused -ne $true -or
               $r.hardlinkedPlanRefused -ne $true -or
@@ -792,6 +798,42 @@ jobs:
             throw "Part20 actual JPEG worker death / orphan refusal / resumed candidate gate failed"
           }
           "R2.17 part20 real JPEG candidate orphan refusal and explicit recovery PASS"
+          Get-Content $path
+
+      - name: Verify R2.17 managed JPEG parent crash while native jpegtran is alive
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-native-parent-death.json"
+          if (-not (Test-Path $path)) { throw "Part21 managed-parent death evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-native-parent-death-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.sourcePinnedCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $r.generatedOnly -ne $true -or
+              $r.actualManagedParentDeathWhileNativeWasObservedAlive -ne $true -or
+              $r.nativePidAndStartTimeRecorded -ne $true -or
+              $r.nativeExitedWithoutEmergencyKill -ne $true -or
+              $r.oneOrZeroNativePreviewFilesAfterCrash -ne $true -or
+              $r.unjournaledNativeLeftoverCount -lt 0 -or
+              $r.unjournaledNativeLeftoverCount -gt 1 -or
+              $r.unjournaledNativeLeftoverBytes -lt 0 -or
+              $r.orphanRefusalVerifiedWhenPresent -ne $true -or
+              $r.candidateAndPlanPreservedOnRefusal -ne $true -or
+              $r.noJournalBeforeExplicitRecovery -ne $true -or
+              $r.normalRetryPixelAndMarkerEquivalent -ne $true -or
+              $r.secondResumeIdempotent -ne $true -or
+              $r.sourceHashAndMtimeUnchanged -ne $true -or
+              $r.actualNativeEncodingProgressAtKillNotProven -ne $true -or
+              $r.physicallyKilledProductionWpfApp -ne $false -or
+              $r.autoDeleteUnknownOrphan -ne $false -or
+              $r.realMediaTouched -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.actualFreedBytes -ne 0) {
+            throw "Part21 managed parent death with native child safety contract failed"
+          }
+          "R2.17 part21 managed parent death / native lifecycle / safe JPEG retry PASS"
           Get-Content $path
 
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling

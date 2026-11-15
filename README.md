@@ -224,6 +224,16 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [一括検証の仕様](docs/R217_PRIORITY_GROUPED_MATRIX.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第12段階）：一括候補の進捗・再開UIを改善
+
+- PNGとJPGに固定で50%ずつ割り当てていた進捗表示を、**事前調査のファイル件数に応じた比率**へ変更。処理対象数が偏っていても、読みやすい見込み進捗を表示。
+- 連続した通知を**約125msごとに制限**し、WPFの不要な描画イベントを削減。エラー・容量不足・要確認は間引かず通知する。人工通知30,005件の負荷試験を追加（実アプリ高速化の保証ではない）。
+- 直前に使用した候補保存先・jpegtranフォルダは**アプリ起動中だけ**選択ダイアログへ提案。毎回ファイル/保存先の明示選択、作業記録の読取専用安全検査と実行確認が必要。
+- 実際のWPF Scan/Stopルートを使うUIテストで、作業中のPNG/JPG操作ボタン無効化・中断後の復帰・統合ボタンの安全ロックを確認。
+- **原本置換・重複統合は本番無効、実空き容量回復0B。**
+
+[詳細な安全条件・UI負荷試験](docs/R217_BATCH_UX_THROTTLE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

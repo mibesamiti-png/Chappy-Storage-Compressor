@@ -346,7 +346,7 @@ internal static class R217RealIccColorTests
             var chunks = ExtractPrototypeParts(profile);
             check(ThrowsInvalid(() => Reassemble(
                       [chunks[0], chunks[0], .. chunks.Skip(2)])) &&
-                  ThrowsInvalid(() => Reassemble(chunks.Take(chunks.Count - 1).ToArray())),
+                  ThrowsInvalid(() => Reassemble(chunks.Take(chunks.Length - 1).ToArray())),
                 "R2.17: independent ICC oracle rejects duplicate and missing fragments");
 
             for (int i = 0; i < Count; i++)
@@ -378,8 +378,8 @@ internal static class R217RealIccColorTests
                 Measure(root, input, baseline, "baseline", 2, profile, sourceColor,
                     outputColor, originals, timestamps)
             ];
-            check(tests.All(x => x.Accepted == Count && x.CandidateBytes > 0 &&
-                  x.CandidateBytes < x.SourceBytes),
+            check(tests.All(x => x.Accepted == Count && x.PreviewBytes > 0 &&
+                  x.PreviewBytes < x.SourceBytes),
                 "R2.17: both pinned jpegtran variants keep all real ICC color-managed previews");
             check(tests.All(x => x.ProductionEngineMs > 0 &&
                   x.IndependentAuditMs > 0 &&
@@ -390,7 +390,7 @@ internal static class R217RealIccColorTests
             check(tests[0].ExecutableSha256 == tests[3].ExecutableSha256 &&
                   tests[1].ExecutableSha256 == tests[2].ExecutableSha256 &&
                   tests[0].ExecutableSha256 != tests[1].ExecutableSha256 &&
-                  tests.Select(x => x.CandidateBytes).Distinct().Count() == 1,
+                  tests.Select(x => x.PreviewBytes).Distinct().Count() == 1,
                 "R2.17: source-built SIMD and baseline fingerprints differ but preview totals agree");
             check(originals.All(x => Sha(Path.Combine(input, x.Key)) == x.Value &&
                   File.GetLastWriteTimeUtc(Path.Combine(input, x.Key)).Ticks ==

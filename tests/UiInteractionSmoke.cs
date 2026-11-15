@@ -53,6 +53,7 @@ internal static class UiInteractionSmoke
             var scanButton = Named<Button>(window, "ScanButton");
             var stopButton = Named<Button>(window, "StopButton");
             var mergeButton = Named<Button>(window, "MergeButton");
+            var dedupePlanButton = Named<Button>(window, "DedupePlanButton");
             var unifiedBatchButton = Named<Button>(window, "UnifiedBatchButton");
             var pngBatchButton = Named<Button>(window, "PngBatchButton");
             var jpegBatchButton = Named<Button>(window, "JpegBatchButton");
@@ -61,7 +62,7 @@ internal static class UiInteractionSmoke
             var groupsGrid = Named<DataGrid>(window, "GroupsGrid");
             var pathBox = Named<TextBox>(window, "PathBox");
 
-            Require(!mergeButton.IsEnabled &&
+            Require(!mergeButton.IsEnabled && !dedupePlanButton.IsEnabled &&
                     !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
             Require(window.Title.Contains("R2.17", StringComparison.Ordinal) &&
@@ -141,7 +142,7 @@ internal static class UiInteractionSmoke
                 });
             Require(jobProgress.Value == 100 &&
                     !jobProgress.IsIndeterminate &&
-                    !mergeButton.IsEnabled &&
+                    !mergeButton.IsEnabled && dedupePlanButton.IsEnabled &&
                     groupsGrid.Items.Count == 1,
                 "Completed scan has one valid duplicate group and 100% WPF progress");
             Require(unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
@@ -151,6 +152,33 @@ internal static class UiInteractionSmoke
                     OracleHash(right) == beforeB &&
                     Directory.EnumerateFiles(originals).Count() == 2,
                 "Routed WPF clicks left two independent synthetic source files unchanged");
+
+            // Part 23: this NEW enabled button is a genuine read-only,
+            // revalidated dedupe-first / independent Undo plan. The destructive
+            // MergeButton must remain disabled even after the dry run.
+            string planBody = "";
+            SetPrivate(window, "_showDedupePlan",
+                new Action<string>(message => planBody = message));
+            FileIdentity beforeLeftId = NativeFile.GetIdentity(left);
+            FileIdentity beforeRightId = NativeFile.GetIdentity(right);
+            RoutedClick(dedupePlanButton);
+            Require(stopButton.IsEnabled && !dedupePlanButton.IsEnabled &&
+                    !mergeButton.IsEnabled,
+                "R2.17 part 23: real WPF plan button runs read-only revalidation in busy state");
+            PumpUntil(() => dedupePlanButton.IsEnabled &&
+                progressText.Text == "統合・Undo計画（未実行）", TimeSpan.FromSeconds(35));
+            bool part23WpfPlanSafe = planBody.Contains("統合可能グループ: 1", StringComparison.Ordinal) &&
+                planBody.Contains("独立Undo", StringComparison.Ordinal) &&
+                planBody.Contains("実際に削減した容量: 0 B", StringComparison.Ordinal) &&
+                !mergeButton.IsEnabled && !stopButton.IsEnabled &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId) &&
+                !NativeFile.SameFile(left, right) &&
+                !Directory.Exists(Safety.StorePath(originals)) &&
+                !Directory.EnumerateFiles(originals, "*.chappy-backup-*").Any();
+            Require(part23WpfPlanSafe,
+                "R2.17 part 23: actual WPF duplicate-first/Undo plan never links or changes scanned media");
 
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with
             // native dialogs replaced by deterministic in-process answers.
@@ -672,6 +700,12 @@ internal static class UiInteractionSmoke
                     part22RoutedForeignOutputAfterFinalUiRecheckRefused = part22LateOutputRefused,
                     part22NoLockPlanOrCandidateCreatedForEitherRace = true,
                     part22UntrustedForeignOutputBytesPreserved = true,
+                    part23ReadOnlyDedupeUndoPlanRoutedClickVerified = part23WpfPlanSafe,
+                    part23MergeStillDisabledAfterPreview = !mergeButton.IsEnabled,
+                    part23ScanSourceHashesAndNtfsIdentitiesPreserved =
+                        OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                        NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                        NativeFile.GetIdentity(right).SameFile(beforeRightId),
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

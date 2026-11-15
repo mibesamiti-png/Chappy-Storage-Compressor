@@ -134,7 +134,7 @@ internal static class R217ExifOrientationMemoryTests
             {
                 if (result is not null) throw new InvalidDataException("Duplicate EXIF APP1");
                 ReadOnlySpan<byte> tiff = jpeg.AsSpan(start + 6, size - 6);
-                if (tiff.Length < 26 || !tiff[..4].SequenceEqual([0x49, 0x49, 0x2a, 0x00]))
+                if (tiff.Length < 26 || !tiff[..4].SequenceEqual("II*\0"u8))
                     throw new InvalidDataException("Only valid little-endian test TIFF is accepted");
                 int ifd = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(tiff[4..8]));
                 if (ifd < 8 || ifd + 2 > tiff.Length)

@@ -732,6 +732,8 @@ jobs:
               $r.childReachedRealInflatedWriteCheckpoint -ne $true -or
               $r.childExitCodeNonzero -ne $true -or
               $r.leftoverUnjournaledPngCount -ne 1 -or
+              $r.leftoverPngBytesOnDisk -lt 0 -or
+              $r.managedBufferMayBeLostOnAbruptKill -ne $true -or
               $r.combinedResumeOrphanRefused -ne $true -or
               $r.directPngResumeOrphanRefused -ne $true -or
               $r.refusalPreservedOrphanAndPlanBytes -ne $true -or

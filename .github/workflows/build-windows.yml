@@ -628,6 +628,11 @@ jobs:
               $i.part18JpegIncompleteCandidateDiscarded -ne $true -or
               $i.part18JpegFreshRetryPixelsAndMarkersMatch -ne $true -or
               $i.part18AbruptAppProcessKillVerified -ne $false -or
+              $i.part20OfficialNativeJpegtranChildPidObserved -ne $true -or
+              $i.part20OfficialNativeJpegtranForceKillIssued -ne $true -or
+              $i.part20NativeNonzeroExitRefusedAndOrphanCleaned -ne $true -or
+              $i.part20AfterNativeKillRetryPixelsAndMarkersMatch -ne $true -or
+              $i.part20SourceHashAndMtimeUnchanged -ne $true -or
               $i.rendererOrPhysicalGuiMouseTested -ne $false -or
               $i.cacheAndCpuControlled -ne $false -or
               $i.independentSpeedupClaimed -ne $false -or
@@ -752,6 +757,41 @@ jobs:
             throw "Abrupt PNG child crash, fail-closed orphan and recovery contract failed"
           }
           "R2.17: real child PNG process death preserved orphan evidence and required manual-only recovery PASS"
+          Get-Content $path
+
+      - name: Verify R2.17 official JPEG output orphan after actual process death and manual-only resume
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-jpeg-crash-recovery.json"
+          if (-not (Test-Path $path)) { throw "Part20 native JPEG process crash/recovery evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-jpeg-crash-recovery-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.officialSourceCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $r.syntheticOnly -ne $true -or
+              $r.actualManagedJpegWorkerTerminated -ne $true -or
+              $r.officialNativeJpegtranCompletedBeforeWorkerCrash -ne $true -or
+              $r.unjournaledRealJpegCandidateCount -ne 1 -or
+              $r.unjournaledRealJpegCandidateBytes -le 0 -or
+              $r.combinedJpegResumeRefused -ne $true -or
+              $r.directJpegResumeRefused -ne $true -or
+              $r.refusalEvidenceByteExact -ne $true -or
+              $r.testOnlyManualClearanceBeforeResume -ne $true -or
+              $r.savedJpegPlanReused -ne $true -or
+              $r.recoveredRealJpegPreviewAndJournal -ne $true -or
+              $r.secondJpegResumeIdempotent -ne $true -or
+              $r.sourceHashAndMtimePreserved -ne $true -or
+              $r.killedNativeJpegtranDuringActiveEncoding -ne $false -or
+              $r.productionWpfAppKilled -ne $false -or
+              $r.automaticOrphanDeletion -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.actualRecoveredBytes -ne 0) {
+            throw "Part20 actual JPEG worker death / orphan refusal / resumed candidate gate failed"
+          }
+          "R2.17 part20 real JPEG candidate orphan refusal and explicit recovery PASS"
           Get-Content $path
 
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling

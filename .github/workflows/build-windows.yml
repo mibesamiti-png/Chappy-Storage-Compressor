@@ -769,6 +769,17 @@ jobs:
               $r.realWpfBatchSourceFiles -ne 12 -or
               $r.realWpfBatchPngCandidates -lt 4 -or
               $r.realWpfBatchJpegCandidates -lt 3 -or
+              $r.part17RoutedPngMidBatchStopVerified -ne $true -or
+              $r.part17RoutedJpegMidBatchStopVerified -ne $true -or
+              $r.part17PartialPngCandidatePreserved -ne $true -or
+              $r.part17PartialJpegCandidatePreserved -ne $true -or
+              $r.part17TwoStopsThenFullResumeVerified -ne $true -or
+              $r.part17StoppedBatchSourceSha256Unchanged -ne $true -or
+              $r.part17PngStoppedCandidateCount -ne 1 -or
+              $r.part17JpegStoppedCandidateCount -ne 1 -or
+              $r.part17FinalPngCandidateCount -ne 6 -or
+              $r.part17FinalJpegCandidateCount -ne 6 -or
+              $r.part17PhysicalMouseStopClickVerified -ne $false -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

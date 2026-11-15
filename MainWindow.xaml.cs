@@ -25,6 +25,23 @@ public partial class MainWindow : Window
     private Func<string, bool> _confirmCombined;
     private Action<string> _showCombinedFailure;
     private Action<string> _showCombinedResult;
+    // Optional, per-window, inline progress taps for isolated WPF tests.
+    // Production leaves them null. The real preview engines and their journals
+    // run unchanged; the observer is invoked only AFTER the engine reports a
+    // completed item, allowing deterministic routed Stop between entries.
+    private Action<PngBatchPreviewEngine.Progress>? _combinedPngProgressTestTap;
+    private Action<JpegBatchPreviewEngine.Progress>? _combinedJpegProgressTestTap;
+
+    private sealed class InlineProgressTap<T>(IProgress<T> downstream,
+        Action<T>? observer) : IProgress<T>
+    {
+        public void Report(T value)
+        {
+            downstream.Report(value);
+            observer?.Invoke(value);
+        }
+    }
+
     private readonly ObservableCollection<GroupRow> _rows = new();
 
     public MainWindow()
@@ -598,8 +615,11 @@ public partial class MainWindow : Window
 
             Log($"PNG/JPGまとめて候補作成開始。PNG {preflight.PngFiles:N0}件、JPG {preflight.JpegFiles:N0}件。");
             ProgressText.Text = "PNG一括候補を生成中";
+            var pngTap = _combinedPngProgressTestTap;
             var png = await Task.Run(() =>
-                PngBatchPreviewEngine.Run(input, output, pngProgress, token), token);
+                PngBatchPreviewEngine.Run(input, output,
+                    pngTap is null ? pngProgress : new InlineProgressTap<PngBatchPreviewEngine.Progress>(
+                        pngProgress, pngTap), token), token);
             Log($"PNG: {png.Done:N0}/{png.Total:N0}件、候補 {png.Optimized:N0}件、失敗 {png.Failed:N0}件。" +
                 $" 候補削減見込 {GroupRow.HumanSize(png.SavedBytes)}。");
             Log("PNG再開記録: " + png.ManifestPath);
@@ -614,8 +634,11 @@ public partial class MainWindow : Window
             activeStage = 1;
             JobProgress.Value = progressModel.PngFinished();
             ProgressText.Text = "JPG一括候補を生成中";
+            var jpegTap = _combinedJpegProgressTestTap;
             var jpeg = await Task.Run(() =>
-                JpegBatchPreviewEngine.Run(input, output, tool, jpegProgress, token), token);
+                JpegBatchPreviewEngine.Run(input, output, tool,
+                    jpegTap is null ? jpegProgress : new InlineProgressTap<JpegBatchPreviewEngine.Progress>(
+                        jpegProgress, jpegTap), token), token);
             token.ThrowIfCancellationRequested();
             JobProgress.Value = jpeg.Done == jpeg.Total
                 ? progressModel.Finished()

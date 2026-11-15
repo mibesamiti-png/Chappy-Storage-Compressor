@@ -18,6 +18,7 @@ public static class CompletedMergeLedger
     // binary security descriptor solely for synthetic Undo verification.
     private sealed class Record
     {
+        public Record() { } // JsonSerializer needs an accessible parameterless constructor.
         public int Schema { get; set; }
         public string Id { get; set; } = "";
         public string Alias { get; set; } = "";
@@ -50,11 +51,11 @@ public static class CompletedMergeLedger
             x.State == "VerifiedCompleted").Sum(x => x.OriginalBytes);
         public bool CanRunProductionUndo => false;
         public string Describe() =>
-            "【重複統合の保存済み履歴：読み取り専用】\\n" +
-            $"検証済み統合: {VerifiedCompleted}件 / 独立化済み: {VerifiedRestored}件\\n" +
-            $"完了確認待ち: {PreparedNeedsConfirmation}件 / 要手動確認: {NeedsReview}件\\n" +
-            $"統合による論理削減見込の記録: {GroupRow.HumanSize(CompletedLogicalBytes)}\\n" +
-            "※ 未記録の統合を推測せず、不明な履歴を削除・修復しません。\\n" +
+            "【重複統合の保存済み履歴：読み取り専用】\n" +
+            $"検証済み統合: {VerifiedCompleted}件 / 独立化済み: {VerifiedRestored}件\n" +
+            $"完了確認待ち: {PreparedNeedsConfirmation}件 / 要手動確認: {NeedsReview}件\n" +
+            $"統合による論理削減見込の記録: {GroupRow.HumanSize(CompletedLogicalBytes)}\n" +
+            "※ 未記録の統合を推測せず、不明な履歴を削除・修復しません。\n" +
             "※ 本番統合・本番独立Undoは無効。安全な履歴でも自動的にファイルを変更しません。";
     }
 
@@ -68,6 +69,22 @@ public static class CompletedMergeLedger
 
     private static string FileFor(string root, string id, string phase) =>
         Path.Combine(PathFor(root), id + "." + phase + ".json");
+
+    private static bool SafeSubpath(string root, string path)
+    {
+        if (!Under(root, path)) return false;
+        string current = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        while (!current.Equals(Path.TrimEndingDirectorySeparator(root),
+            StringComparison.OrdinalIgnoreCase))
+        {
+            if (!Directory.Exists(current) ||
+                (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                return false;
+            current = Path.GetDirectoryName(current) ??
+                throw new InvalidDataException("Ledger path parent traversal failed");
+        }
+        return true;
+    }
 
     private static bool ValidRecord(Record x, string root, string file, string id)
     {
@@ -84,8 +101,8 @@ public static class CompletedMergeLedger
                 x.SecurityDescriptor.Length is < 20 or > 65536 ||
                 !Path.IsPathFullyQualified(x.Alias) || !Path.IsPathFullyQualified(x.Master) ||
                 !Path.IsPathFullyQualified(x.Backup) ||
-                !Under(root, x.Alias) || Under(Safety.StorePath(root), x.Alias) ||
-                !Under(Safety.StorePath(root), x.Master) ||
+                !SafeSubpath(root, x.Alias) || Under(Safety.StorePath(root), x.Alias) ||
+                !SafeSubpath(root, x.Master) || !Under(Safety.StorePath(root), x.Master) ||
                 !Path.GetFullPath(x.Backup).Equals(
                     Path.GetFullPath(x.Alias + ".chappy-backup-" + id),
                     StringComparison.OrdinalIgnoreCase) ||

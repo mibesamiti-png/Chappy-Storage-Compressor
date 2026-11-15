@@ -228,6 +228,34 @@ internal static class R217CombinedResumePreflightTests
                 "R2.17: foreign candidate-directory content is preserved after refusal");
             File.Delete(foreignPreview); // disposable synthetic file only.
 
+            // A correctly named candidate can still be an unjournaled orphan
+            // (crashed encoder), and must not be silently trusted.
+            string fakePngCandidate = Path.Combine(output, "chappy-png-previews",
+                "synthetic.chappy-preview-" + Guid.NewGuid().ToString("N") + ".png");
+            byte[] orphanBytes = { 0x89, 0x50, 0x4E, 0x47, 0x00, 0x11 };
+            File.WriteAllBytes(fakePngCandidate, orphanBytes);
+            expectThrows(() => CombinedBatchResumeInspector.Inspect(input, output, tool),
+                "R2.17 part 19: reject correctly named but unreferenced PNG candidate");
+            expectThrows(() => PngBatchPreviewEngine.Run(input, output),
+                "R2.17 part 19: direct PNG preview engine must refuse unreferenced candidate");
+            check(File.ReadAllBytes(fakePngCandidate).SequenceEqual(orphanBytes),
+                "R2.17 part 19: PNG orphan refusal preserves unknown candidate bytes");
+            File.Delete(fakePngCandidate); // generated test-owned artifact only.
+
+            string fakeJpegPreviewDir = Path.Combine(output, "chappy-jpeg-r19-previews");
+            Directory.CreateDirectory(fakeJpegPreviewDir);
+            string fakeJpegCandidate = Path.Combine(fakeJpegPreviewDir,
+                "synthetic.chappy-jpeg-preview-" + Guid.NewGuid().ToString("N") + ".jpg");
+            File.WriteAllBytes(fakeJpegCandidate, orphanBytes);
+            expectThrows(() => CombinedBatchResumeInspector.Inspect(input, output, tool),
+                "R2.17 part 19: reject correctly named but unreferenced JPEG candidate");
+            expectThrows(() => JpegBatchPreviewEngine.Run(input, output, tool),
+                "R2.17 part 19: direct JPEG preview engine refuses orphan before dummy tool execution");
+            check(File.ReadAllBytes(fakeJpegCandidate).SequenceEqual(orphanBytes),
+                "R2.17 part 19: JPEG orphan refusal preserves unknown candidate bytes");
+            File.Delete(fakeJpegCandidate);
+            Directory.Delete(fakeJpegPreviewDir); // test-owned synthetic directory only.
+
             string log = Path.Combine(output, ".chappy-jpeg-r19.progress.jsonl");
             File.WriteAllText(log, "{\"RelativePath\":\"synthetic.jpg\"");
             expectThrows(() => CombinedBatchResumeInspector.Inspect(input, output, tool),
@@ -275,6 +303,10 @@ internal static class R217CombinedResumePreflightTests
                     mismatchedJpegtranRefused = true,
                     unknownRootFileRefused = true,
                     unknownPreviewFileRefused = true,
+                    part19GeneratedLookingPngOrphanRefused = true,
+                    part19GeneratedLookingJpegOrphanRefused = true,
+                    part19DirectFormatQueuesRejectOrphans = true,
+                    part19OrphanEvidencePreserved = true,
                     jpegTornJournalRefused = true,
                     pngTornJournalRefused = true,
                     hardlinkedPlanRefused = true,

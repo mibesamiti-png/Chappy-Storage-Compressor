@@ -47,9 +47,11 @@ public static class PngBatchPreviewEngine
 
     /// <summary>Start a new batch, or resume a saved batch from the same output folder.</summary>
     public static Summary Run(string inputRoot, string outputRoot,
-        IProgress<Progress>? progress = null, CancellationToken ct = default
+        IProgress<Progress>? progress = null, CancellationToken ct = default,
+        PersonalMediaBatchPreflight.Summary? approvedInput = null
 #if CHAPPY_TESTING
         , Action<long>? testOnlyAfterInflatedWrite = null
+        , Action? testOnlyBeforeCandidateSetup = null
 #endif
         )
     {
@@ -70,10 +72,18 @@ public static class PngBatchPreviewEngine
             if (File.Exists(privateFile) && IsReparsePath(privateFile))
                 throw new InvalidOperationException("作業記録がリンク経由です。安全のため停止します。");
 
+        // Root admission and user-approved source data must still be valid
+        // *inside* the actual engine, even if a process mutated the folders
+        // after the WPF confirmation recheck. No output is written here.
+        PreviewOutputStartGate.AssertKnownRoot(output, ct);
+        if (approvedInput is not null)
+            PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
+
         // Cross-process exclusive lock for this output root. A stale lock file
         // is harmless: only the open file handle controls exclusivity.
         using var batchLock = new FileStream(Path.Combine(output, ".chappy-png-batch-r16.lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
 
         if (!File.Exists(manifest) && File.Exists(progressFile))
             throw new InvalidDataException("計画がないのに進捗ログがあります。出力先を確認してください。");
@@ -90,9 +100,21 @@ public static class PngBatchPreviewEngine
         else
         {
             plan = NewPlan(input, output, ct);
+            // Another process may change output during the input planning scan.
+            // Avoid saving even the manifest while foreign content is present.
+            PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
             // Journal must exist before the first output candidate is created.
             SavePlan(manifest, plan);
         }
+#if CHAPPY_TESTING
+        // Deliberately inject a foreign output or source change after the
+        // plan exists but before opening the first candidate. This hook is
+        // not compiled into the production WPF application.
+        testOnlyBeforeCandidateSetup?.Invoke();
+#endif
+        PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
+        if (approvedInput is not null)
+            PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
         Directory.CreateDirectory(previews);
         if (IsReparsePath(previews)) throw new InvalidOperationException("候補出力がリンクです。");
         // A crash may leave a correctly named but unjournaled candidate.

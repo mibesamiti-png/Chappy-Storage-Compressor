@@ -1385,8 +1385,10 @@ static class Program
             "R2.6: swap rejection preserves original and both backup copies");
     }
 
-    public static int Main()
+    public static int Main(string[] args)
     {
+        if (R217PreviewCrashTests.IsCrashChild(args))
+            return R217PreviewCrashTests.RunCrashChild(args);
         if (!OperatingSystem.IsWindows())
         {
             Console.Error.WriteLine("Windows NTFS only");
@@ -1556,6 +1558,11 @@ static class Program
             R217PreviewUiEfficiencyTests.Run(root, Check);
             R217HashByteProgressTests.Run(root, Check);
             R217CombinedResumePreflightTests.Run(root, Check, ExpectThrows);
+            string part19Input = Path.Combine(root, "r217-part19-generated-input");
+            Directory.CreateDirectory(part19Input);
+            CreateR16Png(part19Input, "source.png", 512, 320, 6, 8,
+                adam7: false, multiIdat: false);
+            R217PreviewCrashTests.Run(root, part19Input, Check);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

@@ -453,6 +453,60 @@ internal static class R217PriorityImageAndMemoryTests
             check(jpegRetrySafe,
                 "R2.17 part 18: JPEG fresh retry after child kill produces one pixel/marker-validated candidate");
 
+            // Part 20: actually kill the official jpegtran native CHILD,
+            // without canceling the managed token or the parent test process.
+            // The JPEG engine must reject its abnormal exit and remove any
+            // partial candidate; only then may a normal retry succeed.
+            string nativeKillSource = Path.Combine(input, "large-memory-0.jpg");
+            string nativeKillOutput = Path.Combine(root, "part20-native-process-forced-kill");
+            Directory.CreateDirectory(nativeKillOutput);
+            string nativeKillOriginalHash = Hash(nativeKillSource);
+            long nativeKillOriginalTicks = File.GetLastWriteTimeUtc(nativeKillSource).Ticks;
+            int nativeKillPid = 0;
+            bool nativeKillIssued = false, nativeAbnormalExitRefused = false;
+            try
+            {
+                JpegLosslessPreviewEngine.CreatePreview(nativeKillSource,
+                    nativeKillOutput, tool, CancellationToken.None,
+                    testOnlyNativeProcessId: pid =>
+                    {
+                        nativeKillPid = pid;
+                        using var native = Process.GetProcessById(pid);
+                        if (!native.HasExited)
+                        {
+                            native.Kill(entireProcessTree: true);
+                            native.WaitForExit();
+                            nativeKillIssued = native.HasExited;
+                        }
+                    });
+            }
+            catch (InvalidDataException e) when (e.Message.Contains("jpegtran.exeが異常終了",
+                StringComparison.Ordinal))
+            {
+                nativeAbnormalExitRefused = true;
+            }
+            bool nativeKillNoPartial = nativeKillPid > 0 && nativeKillIssued &&
+                nativeAbnormalExitRefused &&
+                !Directory.EnumerateFileSystemEntries(nativeKillOutput).Any() &&
+                Hash(nativeKillSource) == nativeKillOriginalHash &&
+                File.GetLastWriteTimeUtc(nativeKillSource).Ticks == nativeKillOriginalTicks;
+            check(nativeKillNoPartial,
+                "R2.17 part 20: actual pinned jpegtran child forcibly killed; nonzero exit rejected, partial discarded and original unchanged");
+            var nativeRetry = JpegLosslessPreviewEngine.CreatePreview(
+                nativeKillSource, nativeKillOutput, tool);
+            bool nativeRetryVerified = nativeRetry.Candidate is not null &&
+                File.Exists(nativeRetry.Candidate) &&
+                nativeRetry.CandidateBytes < nativeRetry.SourceBytes &&
+                Directory.EnumerateFiles(nativeKillOutput).Count() == 1 &&
+                JpegMarkerAudit.Inspect(nativeKillSource) ==
+                    JpegMarkerAudit.Inspect(nativeRetry.Candidate) &&
+                JpegLosslessPreviewEngine.EquivalentDecodedPixels(
+                    nativeKillSource, nativeRetry.Candidate) &&
+                Hash(nativeKillSource) == nativeKillOriginalHash &&
+                File.GetLastWriteTimeUtc(nativeKillSource).Ticks == nativeKillOriginalTicks;
+            check(nativeRetryVerified,
+                "R2.17 part 20: official JPEG retry after forced native child termination has identical markers and RGB pixels");
+
             check(sourceHashes.All(x => Hash(x.Key) == x.Value &&
                   File.GetLastWriteTimeUtc(x.Key).Ticks == sourceTicks[x.Key]),
                 "R2.17 image priority: originals SHA-256 and update timestamps unchanged");
@@ -489,6 +543,12 @@ internal static class R217PriorityImageAndMemoryTests
                     part18JpegIncompleteCandidateDiscarded = jpegPartialDiscarded,
                     part18JpegFreshRetryPixelsAndMarkersMatch = jpegRetrySafe,
                     part18AbruptAppProcessKillVerified = false,
+                    part20OfficialNativeJpegtranChildPidObserved = nativeKillPid > 0,
+                    part20OfficialNativeJpegtranForceKillIssued = nativeKillIssued,
+                    part20NativeNonzeroExitRefusedAndOrphanCleaned = nativeKillNoPartial,
+                    part20AfterNativeKillRetryPixelsAndMarkersMatch = nativeRetryVerified,
+                    part20SourceHashAndMtimeUnchanged = Hash(nativeKillSource) == nativeKillOriginalHash &&
+                        File.GetLastWriteTimeUtc(nativeKillSource).Ticks == nativeKillOriginalTicks,
                     rendererOrPhysicalGuiMouseTested = false,
                     cacheAndCpuControlled = false,
                     independentSpeedupClaimed = false,

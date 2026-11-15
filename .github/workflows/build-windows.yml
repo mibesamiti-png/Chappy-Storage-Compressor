@@ -686,6 +686,12 @@ jobs:
               $r.postConfirmationForeignFileRefused -ne $true -or
               $r.newPlanAfterConsentRefused -ne $true -or
               $r.removedPlanAfterConsentRefused -ne $true -or
+              $r.pngPlanByteChangeAfterConsentRefused -ne $true -or
+              $r.jpegPlanByteChangeAfterConsentRefused -ne $true -or
+              $r.pngJournalByteChangeAfterConsentRefused -ne $true -or
+              $r.jpegJournalByteChangeAfterConsentRefused -ne $true -or
+              $r.canceledConsentRecheckRefused -ne $true -or
+              $r.restoredByteIdenticalApprovalRecheckPassed -ne $true -or
               $r.allUserAndCandidateEvidencePreserved -ne $true -or
               $r.externalExecutableInvoked -ne $false -or
               $r.actualWpfClickAutomationVerified -ne $false -or

@@ -3,7 +3,11 @@ namespace ChappyStorageCompressor.Core;
 public static class DedupeEngine
 {
     public static long Run(string root, IEnumerable<DuplicateGroup> groups, bool allowTimestampDifference,
-        IProgress<EngineProgress>? progress, CancellationToken ct)
+        IProgress<EngineProgress>? progress, CancellationToken ct
+#if CHAPPY_TESTING
+        , bool testOnlyRecordCompletedMerges = false
+#endif
+        )
     {
 #if !CHAPPY_TESTING
         // The R1.5 shipped executable is explicitly read-only for deduplication
@@ -127,9 +131,20 @@ public static class DedupeEngine
                             !Safety.SameRenamedSnapshot(duplicate, backup))
                             throw new IOException("退避ファイルの最終照合に失敗。削除しません");
                         FaultInjection.Hit("pre-backup-delete");
+#if CHAPPY_TESTING
+                        // Durable original metadata BEFORE irreversible backup
+                        // deletion. Test-only opt-in; normal product code NEVER
+                        // enables completed-merge ledger mutation.
+                        if (testOnlyRecordCompletedMerges)
+                            CompletedMergeLedger.PrepareSynthetic(root, pending, duplicate);
+#endif
                         // Delete only the now-verified, independent duplicate.
                         File.Delete(backup);
                         FaultInjection.Hit("backup-deleted");
+#if CHAPPY_TESTING
+                        if (testOnlyRecordCompletedMerges)
+                            CompletedMergeLedger.CommitSynthetic(root, id);
+#endif
                         backupCreated = false;
                         successfulInGroup++;
                         estimatedSaved += duplicate.Length;

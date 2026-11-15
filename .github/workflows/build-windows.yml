@@ -116,6 +116,69 @@ jobs:
           & $tool -version
           if ($LASTEXITCODE -ne 0) { throw "Pinned jpegtran version check failed" }
 
+      - name: Build official-source jpegtran with verified native x64 SIMD (synthetic CI only)
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expected = "7b4993786d856cbccabfc0ed2f923ba000e326cc"
+          $work = Join-Path $env:RUNNER_TEMP "chappy-r217-official-jpegtran"
+          $source = Join-Path $work "libjpeg-turbo"
+          $build = Join-Path $work "build-simd"
+          $actual = (git -C $source rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $expected) {
+            throw "SIMD build source is not exact verified upstream commit"
+          }
+          # NASM is a CI-only assembler, not an image optimizer/executable
+          # distributed with Chappy. Chocolatey package 2.16.3 uses the official
+          # NASM 2.16.03 x64 installer and an embedded SHA-256 checksum
+          # 657E1252676CFB26A008835C20A760F731C8E0414469A4ED0F83F0FB059CDD35.
+          # Refuse a different installed version.
+          choco install nasm --version=2.16.3 --yes --no-progress --limit-output
+          if ($LASTEXITCODE -ne 0) { throw "Pinned NASM assembler setup failed" }
+          $nasm = @(
+            "C:\Program Files\NASM\nasm.exe",
+            "C:\Program Files (x86)\NASM\nasm.exe",
+            "C:\ProgramData\chocolatey\bin\nasm.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $nasm) {
+            $cmd = Get-Command nasm -ErrorAction SilentlyContinue
+            if ($cmd) { $nasm = $cmd.Source }
+          }
+          if (-not $nasm) { throw "Pinned NASM executable missing after setup" }
+          $reported = (& $nasm -v) -join " "
+          if ($LASTEXITCODE -ne 0 -or $reported -notmatch "2\.16\.03") {
+            throw "Expected official NASM version 2.16.03, got $reported"
+          }
+          Write-Host "Pinned NASM assembler: $reported"
+          cmake -S $source -B $build -G "Visual Studio 18 2026" -A x64 -DWITH_SIMD=ON -DREQUIRE_SIMD=ON -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=OFF -DWITH_TESTS=OFF -DWITH_TOOLS=ON "-DCMAKE_ASM_NASM_COMPILER=$nasm"
+          if ($LASTEXITCODE -ne 0) { throw "Official-source SIMD CMake configuration failed" }
+          $cache = Get-Content -Raw (Join-Path $build "CMakeCache.txt")
+          if ($cache -notmatch "(?m)^WITH_SIMD:BOOL=ON$" -or
+              $cache -notmatch "(?m)^REQUIRE_SIMD:BOOL=ON$") {
+            throw "Native SIMD is not enabled and required in the official build"
+          }
+          cmake --build $build --config Release --target jpegtran-static --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Pinned official-source SIMD build failed" }
+          $built = Join-Path $build "Release/jpegtran-static.exe"
+          if (-not (Test-Path -LiteralPath $built)) {
+            throw "Native-SIMD source-built jpegtran executable missing"
+          }
+          $toolDir = Join-Path $work "simd"
+          New-Item -ItemType Directory -Path $toolDir -Force | Out-Null
+          $tool = Join-Path $toolDir "jpegtran.exe"
+          Copy-Item -LiteralPath $built -Destination $tool -ErrorAction Stop
+          $baseline = Join-Path $work "jpegtran.exe"
+          if ((Get-FileHash $baseline -Algorithm SHA256).Hash -eq
+              (Get-FileHash $tool -Algorithm SHA256).Hash) {
+            throw "SIMD and non-SIMD binary fingerprints unexpectedly identical"
+          }
+          & $tool -version
+          if ($LASTEXITCODE -ne 0) { throw "SIMD jpegtran version check failed" }
+          "CHAPPY_R217_SIMD_JPEGTRAN=$tool" >> $env:GITHUB_ENV
+          "CHAPPY_R217_SIMD_VERIFIED=true" >> $env:GITHUB_ENV
+          Write-Host "SIMD libjpeg-turbo pinned source $expected, binary SHA-256 $((Get-FileHash $tool -Algorithm SHA256).Hash)"
+
       - name: Build checked-in WPF source tree and isolated NTFS tests
         if: steps.source.outputs.mode == 'tree'
         shell: cmd
@@ -256,6 +319,44 @@ jobs:
             throw "Actual pinned jpegtran profile or unchanged-source safety evidence invalid"
           }
           "R2.17 real official-source jpegtran candidate and pixel/metadata tests PASS"
+          Get-Content $path
+
+      - name: Verify R2.17 JPEG Exif XMP ICC and SIMD comparison (synthetic only)
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-jpeg-metadata-simd.json"
+          if (-not (Test-Path $path)) { throw "R2.17 metadata SIMD evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.version -ne "3.2.1" -or
+              $r.officialCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $r.sourceCommitVerifiedInCi -ne $true -or
+              $r.nasmVersion -ne "2.16.03" -or
+              $r.twoDifferentLocallyBuiltToolHashes -ne $true -or
+              $r.baselineSimdDisabled -ne $true -or
+              $r.optimizedSimdRequiredInBuild -ne $true -or
+              $r.generatedSyntheticJpegCount -ne 8 -or
+              $r.hasSyntheticExifXmpIccApp13ComVariants -ne $true -or
+              $r.appAndIndependentMarkerAuditsPassed -ne $true -or
+              $r.independentAllPixelComparisonsPassed -ne $true -or
+              $r.allSourcesSha256AndTimestampsPreserved -ne $true -or
+              $r.testOrder -ne "baseline1-simd1-simd2-baseline2" -or
+              @($r.performanceRuns).Count -ne 4 -or
+              @($r.performanceRuns | Where-Object { $_.AcceptedCandidates -ne 8 -or $_.EstimatedSavingBytes -le 0 }).Count -ne 0 -or
+              $r.baselineMedianWallMs -le 0 -or
+              $r.simdMedianWallMs -le 0 -or
+              $r.measuredSpeedupAsserted -ne $false -or
+              $r.hostThermalsControlled -ne $false -or
+              $r.coldCacheControlled -ne $false -or
+              $r.physicalDiskReadsMeasured -ne $false -or
+              $r.realPhotosTested -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.realRecoveredBytes -ne 0) {
+            throw "R2.17 metadata and SIMD evidence is incomplete or unsafe"
+          }
+          "R2.17 native SIMD and protected JPEG metadata PASS (no speed claim)"
           Get-Content $path
 
       - name: Verify R2.17 mid-file SHA byte progress and cancellation

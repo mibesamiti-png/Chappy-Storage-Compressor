@@ -356,6 +356,13 @@ public static class CompletedMergeLedger
     public static FileSnapshot LoadOriginalForSyntheticUndo(string rawRoot, string id)
     {
         string root = RequireSynthetic(rawRoot);
+        // A previous Undo process could have died while the alias still
+        // shares the original NTFS ID. The completed *merge* ledger alone
+        // cannot authorize a second Undo while that attempt is unresolved.
+        if (IndependentUndoCrashJournal.Inspect(root).Entries.Any(e =>
+                e.OperationId == id &&
+                e.Phase is not ("aborted" or "finished")))
+            throw new InvalidDataException("Interrupted Undo evidence must be independently reviewed before a new Undo");
         if (Inspect(root).Entries.Count(e => e.OperationId == id &&
                 e.State == "VerifiedCompleted") != 1)
             throw new InvalidDataException("No verified completed ledger available for independent Undo");

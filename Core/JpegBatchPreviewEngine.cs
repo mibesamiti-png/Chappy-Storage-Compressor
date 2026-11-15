@@ -53,6 +53,7 @@ public static class JpegBatchPreviewEngine
         IProgress<Progress>? progress = null, CancellationToken ct = default
 #if CHAPPY_TESTING
         , Action<string>? testOnlyAfterVerifiedCandidateBeforeJournal = null
+        , Action<int>? testOnlyNativeProcessId = null
 #endif
         )
     {
@@ -123,7 +124,11 @@ public static class JpegBatchPreviewEngine
                     // Bind this candidate to the pre-optimization source bytes,
                     // rather than trusting a hash computed only after jpegtran finishes.
                     string sourceBefore = Safety.ComputeSha256(original, ct);
-                    var result = JpegLosslessPreviewEngine.CreatePreview(original, previews, tool, ct);
+                    var result = JpegLosslessPreviewEngine.CreatePreview(original, previews, tool, ct
+#if CHAPPY_TESTING
+                        , testOnlyNativeProcessId
+#endif
+                    );
                     if (result.Candidate is not null)
                     {
 #if CHAPPY_TESTING

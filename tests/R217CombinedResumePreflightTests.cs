@@ -31,6 +31,61 @@ internal static class R217CombinedResumePreflightTests
             File.WriteAllBytes(jpg, new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 });
             string pngHash = Hash(png), jpgHash = Hash(jpg);
 
+            // Part 21: the displayed source list is consent-bound, too.
+            // These are metadata-only inspections: never read PNG/JPEG pixels
+            // or create any output artifact during a rejected recheck.
+            var sourceDisplayed = PersonalMediaBatchPreflight.Inspect(input, output);
+            check(sourceDisplayed.PngFiles == 1 && sourceDisplayed.JpegFiles == 1 &&
+                  sourceDisplayed.InventorySha256.Length == 64 &&
+                  PersonalMediaBatchPreflight.VerifyAfterConfirmation(
+                      input, output, sourceDisplayed).InventorySha256 ==
+                      sourceDisplayed.InventorySha256,
+                "R2.17 part 21: source inventory fingerprint is stable for unchanged inputs");
+            var volatileSpaceOnly = sourceDisplayed with { OutputAvailableBytes = 0 };
+            check(PersonalMediaBatchPreflight.VerifyAfterConfirmation(
+                    input, output, volatileSpaceOnly).InventorySha256 ==
+                    sourceDisplayed.InventorySha256,
+                "R2.17 part 21: source approval does not require equal free disk space");
+
+            string addedPng = Path.Combine(input, "late-confirmation.png");
+            File.Copy(png, addedPng);
+            bool addedRefused = false;
+            try { PersonalMediaBatchPreflight.VerifyAfterConfirmation(
+                input, output, sourceDisplayed); }
+            catch (InvalidDataException) { addedRefused = true; }
+            check(addedRefused && File.Exists(addedPng) &&
+                  !Directory.EnumerateFileSystemEntries(output).Any(),
+                "R2.17 part 21: newly added same-sized PNG after Yes rejects without creating output");
+            File.Delete(addedPng); // test-only cleanup
+
+            string renamedPng = Path.Combine(input, "renamed-same-size.png");
+            File.Move(png, renamedPng);
+            bool renamedRefused = false;
+            try { PersonalMediaBatchPreflight.VerifyAfterConfirmation(
+                input, output, sourceDisplayed); }
+            catch (InvalidDataException) { renamedRefused = true; }
+            finally { File.Move(renamedPng, png); }
+            check(renamedRefused && Hash(png) == pngHash,
+                "R2.17 part 21: same-count same-size file rename changes consent-bound inventory");
+
+            DateTime originalTime = File.GetLastWriteTimeUtc(png);
+            bool timestampRefused = false;
+            try
+            {
+                File.SetLastWriteTimeUtc(png, originalTime.AddSeconds(3));
+                PersonalMediaBatchPreflight.VerifyAfterConfirmation(
+                    input, output, sourceDisplayed);
+            }
+            catch (InvalidDataException) { timestampRefused = true; }
+            finally { File.SetLastWriteTimeUtc(png, originalTime); }
+            check(timestampRefused && Hash(png) == pngHash &&
+                  File.GetLastWriteTimeUtc(png).Ticks == originalTime.Ticks &&
+                  Hash(jpg) == jpgHash &&
+                  PersonalMediaBatchPreflight.VerifyAfterConfirmation(
+                      input, output, sourceDisplayed).InventorySha256 ==
+                      sourceDisplayed.InventorySha256,
+                "R2.17 part 21: same-name same-size timestamp change rejects, original state restores exactly");
+
             var fresh = CombinedBatchResumeInspector.Inspect(input, output, tool);
             check(!fresh.IsResume && !fresh.HasPngPlan && !fresh.HasJpegPlan &&
                   fresh.PngPlanEntries == 0 && fresh.JpegPlanEntries == 0 &&
@@ -316,6 +371,14 @@ internal static class R217CombinedResumePreflightTests
                     part19GeneratedLookingJpegOrphanRefused = true,
                     part19DirectFormatQueuesRejectOrphans = true,
                     part19OrphanEvidencePreserved = true,
+                    part21InputInventoryStableAndConsentBound = true,
+                    part21VolatileFreeSpaceDoesNotInvalidateConsent = true,
+                    part21AddedSourceAfterYesRefused = addedRefused,
+                    part21SameCountRenamedSourceRefused = renamedRefused,
+                    part21SameSizeModifiedTimestampRefused = timestampRefused,
+                    part21OriginalSourceStateRestored = Hash(png) == pngHash &&
+                        Hash(jpg) == jpgHash &&
+                        File.GetLastWriteTimeUtc(png).Ticks == originalTime.Ticks,
                     jpegTornJournalRefused = true,
                     pngTornJournalRefused = true,
                     hardlinkedPlanRefused = true,

@@ -585,6 +585,16 @@ public partial class MainWindow : Window
             token.ThrowIfCancellationRequested();
             Log("開始直前の再開安全診断: " + confirmedResume.Description);
 
+            // Consent also covers the actual source inventory displayed
+            // before Yes. The output free-space sample may naturally drift.
+            // Preview engines still verify content, NTFS safety and hashes.
+            var confirmedInput = await Task.Run(() =>
+                PersonalMediaBatchPreflight.VerifyAfterConfirmation(
+                    input, output, preflight, token), token);
+            token.ThrowIfCancellationRequested();
+            Log("開始直前の入力画像再確認: PNG " + confirmedInput.PngFiles +
+                "件、JPG " + confirmedInput.JpegFiles + "件、入力一覧に変更なし");
+
             var progressModel = new UnifiedPreviewProgress(preflight.PngFiles, preflight.JpegFiles);
             int activeStage = 0; // 0=PNG, 1=JPG, 2=finished or canceled
             int updates = 0;

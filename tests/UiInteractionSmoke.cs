@@ -542,6 +542,42 @@ internal static class UiInteractionSmoke
             }
             else Console.WriteLine("R2.17 part 16-17 official jpegtran WPF success/stop/resume SKIPPED outside pinned Windows CI.");
 
+            // Part 21: real WPF Yes path with only the displayed SOURCE
+            // inventory changing while the native-default dialog adapter
+            // responds. This must fail before creating any PNG/JPG plan or
+            // executing the deliberately fake jpegtran.exe.
+            pathBox.Text = previewInputs;
+            SetPrivate(window, "_pickCombinedTool",
+                new Func<string?, string?>(_ => syntheticTool));
+            SetPrivate(window, "_pickCombinedOutput",
+                new Func<string?, string?>(_ => previewOutput));
+            string addedAfterYes = Path.Combine(previewInputs, "added-after-yes.png");
+            int priorErrors = errorCount;
+            bool yesInjectedNewSource = false;
+            SetPrivate(window, "_confirmCombined", new Func<string, bool>(_ =>
+            {
+                Require(!File.Exists(addedAfterYes),
+                    "R2.17 part 21: source-injection fixture starts absent");
+                File.Copy(sourcePng, addedAfterYes);
+                yesInjectedNewSource = true;
+                return true;
+            }));
+            RoutedClick(unifiedBatchButton);
+            PumpUntil(() => unifiedBatchButton.IsEnabled &&
+                progressText.Text == "一括処理エラー", TimeSpan.FromSeconds(20));
+            bool sourceConsentRefused = yesInjectedNewSource &&
+                errorCount == priorErrors + 1 &&
+                errorMessage.Contains("入力画像", StringComparison.Ordinal) &&
+                OracleHash(sourcePng) == beforePng &&
+                OracleHash(sourceJpeg) == beforeJpeg &&
+                File.Exists(addedAfterYes) &&
+                OracleHash(addedAfterYes) == beforePng &&
+                !Directory.EnumerateFileSystemEntries(previewOutput).Any() &&
+                !stopButton.IsEnabled && !mergeButton.IsEnabled;
+            Require(sourceConsentRefused,
+                "R2.17 part 21: real WPF Yes rejects newly added input without running any codec or writing a plan");
+            File.Delete(addedAfterYes); // only test-created synthetic source
+
             Directory.CreateDirectory("diagnostics");
             File.WriteAllText(Path.Combine("diagnostics", "r217-wpf-routed-click.json"),
                 JsonSerializer.Serialize(new
@@ -587,6 +623,10 @@ internal static class UiInteractionSmoke
                     part17FinalPngCandidateCount = finalStoppedPngCandidates,
                     part17FinalJpegCandidateCount = finalStoppedJpegCandidates,
                     part17PhysicalMouseStopClickVerified = false,
+                    part21RoutedWpfYesSourceChangeRefused = sourceConsentRefused,
+                    part21NoPreviewPlanCreatedAfterSourceChange = true,
+                    part21SyntheticSourceHashesUnchanged = OracleHash(sourcePng) == beforePng &&
+                        OracleHash(sourceJpeg) == beforeJpeg,
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

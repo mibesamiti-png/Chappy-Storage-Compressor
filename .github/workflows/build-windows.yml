@@ -494,6 +494,52 @@ jobs:
           "R2.17 Exif 1/3/6/8 with tested orientation rendering PASS"
           Get-Content $path
 
+      - name: Verify R2.17 true native jpegtran child peak memory and exact app byte parity
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-jpegtran-child-memory.json"
+          if (-not (Test-Path $path)) { throw "R2.17 native child memory diagnostics missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          $samples = @($r.samplePerToolAndFixture)
+          if ($r.verdict -ne "PASS" -or
+              $r.schema -ne "chappy-r217-actual-jpegtran-child-process-peak-v1" -or
+              $r.officialSourceCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $r.nativeExecutableMeasuredDirectly -ne $true -or
+              $r.osProvidedPerChildPeakWorkingSet64 -ne $true -or
+              $r.osProvidedPerChildPeakVirtualMemorySize64 -ne $true -or
+              $r.separateDirectToolAndRealApplicationPreviewBothExecuted -ne $true -or
+              $r.byteIdenticalOutputsAndWicPixelChecks -ne $true -or
+              $r.originalSha256AndTimestampsPreserved -ne $true -or
+              $r.generatedSyntheticJpegCount -ne 3 -or
+              $r.measuredNativeChildProcessCount -ne 6 -or
+              $r.fileCountPerTool -ne 3 -or
+              $samples.Count -ne 6 -or
+              @($samples | Where-Object {
+                $_.ChildExitCode -ne 0 -or
+                $_.ChildPeakWorkingSetBytes -le 0 -or
+                $_.ChildPeakVirtualMemoryBytes -le 0 -or
+                $_.ChildPeakPagedMemoryBytes -lt 0 -or
+                $_.NativeJpegtranElapsedMs -le 0 -or
+                $_.EstimatedCandidateSavingBytes -le 0 -or
+                $_.PreviewBytes -ge $_.SourceBytes -or
+                $_.IndependentPreviewByteIdentical -ne $true -or
+                $_.OriginalHashAndTimestampPreserved -ne $true -or
+                $_.JpegtranExecutableSha256 -notmatch "^[0-9A-F]{64}$"
+              }).Count -ne 0 -or
+              @($samples | Where-Object { $_.Mode -eq "baseline" }).Count -ne 3 -or
+              @($samples | Where-Object { $_.Mode -eq "simd" }).Count -ne 3 -or
+              $r.actualFreedDiskBytes -ne 0 -or
+              $r.crossMachineSpeedOrMemoryAdvantageGuaranteed -ne $false -or
+              $r.coldCacheOrCpuSchedulingControlled -ne $false -or
+              $r.realUserMediaTested -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false) {
+            throw "R2.17 child process peak memory or unchanged-source safety contract failed"
+          }
+          "R2.17 kernel-tracked native jpegtran child peaks and app output parity PASS"
+          Get-Content $path
+
       - name: Verify R2.17 mid-file SHA byte progress and cancellation
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

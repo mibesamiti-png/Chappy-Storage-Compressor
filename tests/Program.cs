@@ -1389,6 +1389,8 @@ static class Program
     {
         if (R217PreviewCrashTests.IsCrashChild(args))
             return R217PreviewCrashTests.RunCrashChild(args);
+        if (R217JpegCrashTests.IsCrashChild(args))
+            return R217JpegCrashTests.RunCrashChild(args);
         if (!OperatingSystem.IsWindows())
         {
             Console.Error.WriteLine("Windows NTFS only");
@@ -1563,6 +1565,7 @@ static class Program
             CreateR16Png(part19Input, "source.png", 512, 320, 6, 8,
                 adam7: false, multiIdat: false);
             R217PreviewCrashTests.Run(root, part19Input, Check);
+            R217JpegCrashTests.Run(root, Check);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

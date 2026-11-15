@@ -565,7 +565,7 @@ internal static class R217ExifOrientationMemoryTests
                 }, new JsonSerializerOptions { WriteIndented = true }));
             Console.WriteLine($"R2.17 Exif orientation 1/3/6/8 synthetic previews PASS: " +
                 $"baseline {b.EngineMs:F1}ms, SIMD {s.EngineMs:F1}ms; " +
-                $"alternate system ICC: {(alternative.Found ? "verified" : "unavailable")}");
+                $"alternate RGB ICC: {(alternative.FromWindows ? "Windows profile verified" : "SHA-pinned CC0 Display P3 verified")}");
         }
         finally
         {

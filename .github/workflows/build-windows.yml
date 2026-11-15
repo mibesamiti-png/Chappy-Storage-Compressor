@@ -757,6 +757,14 @@ jobs:
               $r.completedUiDuplicateGroups -ne 1 -or
               $r.completedUiProgressPercent -ne 100 -or
               $r.sourceOracleSha256Unchanged -ne $true -or
+              $r.combinedToolPickerCancelRefused -ne $true -or
+              $r.combinedOutputPickerCancelRefused -ne $true -or
+              $r.combinedNoConsentRefused -ne $true -or
+              $r.combinedCancellationDuringConsentRefused -ne $true -or
+              $r.combinedLateForeignFileRefused -ne $true -or
+              $r.combinedRetryRequiresNewConsent -ne $true -or
+              $r.syntheticCombinedInputHashesUnchanged -ne $true -or
+              $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or
               $r.jpegLosslessCandidateMeasured -ne $false -or

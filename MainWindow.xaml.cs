@@ -629,7 +629,7 @@ public partial class MainWindow : Window
             var png = await Task.Run(() =>
                 PngBatchPreviewEngine.Run(input, output,
                     pngTap is null ? pngProgress : new InlineProgressTap<PngBatchPreviewEngine.Progress>(
-                        pngProgress, pngTap), token), token);
+                        pngProgress, pngTap), token, approvedInput: preflight), token);
             Log($"PNG: {png.Done:N0}/{png.Total:N0}件、候補 {png.Optimized:N0}件、失敗 {png.Failed:N0}件。" +
                 $" 候補削減見込 {GroupRow.HumanSize(png.SavedBytes)}。");
             Log("PNG再開記録: " + png.ManifestPath);
@@ -648,7 +648,7 @@ public partial class MainWindow : Window
             var jpeg = await Task.Run(() =>
                 JpegBatchPreviewEngine.Run(input, output, tool,
                     jpegTap is null ? jpegProgress : new InlineProgressTap<JpegBatchPreviewEngine.Progress>(
-                        jpegProgress, jpegTap), token), token);
+                        jpegProgress, jpegTap), token, approvedInput: preflight), token);
             token.ThrowIfCancellationRequested();
             JobProgress.Value = jpeg.Done == jpeg.Total
                 ? progressModel.Finished()

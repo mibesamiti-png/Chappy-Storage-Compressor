@@ -77,6 +77,15 @@ jobs:
           python tools/r26_reference_check.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Preflight compile C# tests before external tool builds
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          dotnet build tests/ChappyStorageCompressor.SmokeTests.csproj -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { throw "Core safety test compilation failed" }
+          dotnet build tests/ChappyStorageCompressor.UiSmokeTests.csproj -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { throw "WPF UI test compilation failed" }
+
       - name: Build verified upstream libjpeg-turbo 3.2.1 jpegtran (CI synthetic test only)
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

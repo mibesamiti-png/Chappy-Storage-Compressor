@@ -81,10 +81,11 @@ jobs:
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
         run: |
+          # Only pre-build the Core test project. These two legacy test
+          # projects share tests/obj and pre-building the UI runner second
+          # can cause the Core runner to execute the wrong apphost.
           dotnet build tests/ChappyStorageCompressor.SmokeTests.csproj -c Release --nologo
           if ($LASTEXITCODE -ne 0) { throw "Core safety test compilation failed" }
-          dotnet build tests/ChappyStorageCompressor.UiSmokeTests.csproj -c Release --nologo
-          if ($LASTEXITCODE -ne 0) { throw "WPF UI test compilation failed" }
 
       - name: Build verified upstream libjpeg-turbo 3.2.1 jpegtran (CI synthetic test only)
         if: steps.source.outputs.mode == 'tree'
@@ -192,6 +193,25 @@ jobs:
         if: steps.source.outputs.mode == 'tree'
         shell: cmd
         run: call RUN_DIAGNOSTICS.bat
+
+      - name: Require distinct Core and WPF test runners really executed
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $corePath = "diagnostics/smoke-tests.log"
+          $uiPath = "diagnostics/wpf-routed-click.log"
+          if (-not (Test-Path $corePath) -or -not (Test-Path $uiPath)) {
+            throw "One or both distinct test runner logs missing"
+          }
+          $core = Get-Content -Raw $corePath
+          $ui = Get-Content -Raw $uiPath
+          if ($core -notmatch 'All [0-9]+ safety checks passed\.' -or
+              $core -notmatch 'R2.17: actual Exif' -or
+              $ui -notmatch 'R2.17 WPF ROUTED CLICK PASS' -or
+              $core -match 'R2.17 WPF ROUTED CLICK PASS') {
+            throw "Core/WPF runner output swapped or one safety suite skipped"
+          }
+          "Core and WPF independently ran their intended test entrypoints"
 
       - name: Verify R2.16 synthetic scanner benchmark and NTFS deep-check reduction
         if: steps.source.outputs.mode == 'tree'

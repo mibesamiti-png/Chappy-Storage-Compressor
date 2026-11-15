@@ -29,4 +29,21 @@ All test sources and direct/app candidates live under uniquely generated disposa
 
 ## Verified CI result
 
-Pending final Windows CI output and machine-readable diagnostic review. Do not present any numerical peak until the test and its independent workflow gate pass.
+The first successfully verified Windows PR workflow [#43700433762](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43700433762) passed **33/33 steps**, including official source-built non-SIMD/SIMD jpegtran, real WPF application build, existing NTFS crash/security probes, routed WPF UI click checks, Win-x64 publish, and **516/516 C# safety assertions** (previous 510 + 6 new checks).
+
+The verified `diagnostics/r217-jpegtran-child-memory.json` recorded six direct native-child samples:
+
+| Generated fixture, 2560×1600 | No-SIMD: highest observed child working-set peak | Native SIMD: highest observed child working-set peak | Input bytes → preview bytes |
+| --- | ---: | ---: | ---: |
+| Repeated gradient/stripe (0) | **15,704,064 B** | **15,728,640 B** | 158,110 → 101,280 |
+| Seeded noisy pixels (1) | **15,781,888 B** | **15,728,640 B** | 3,409,203 → 3,174,788 |
+| Synthetic regular pattern (2) | **15,704,064 B** | **15,732,736 B** | 160,913 → 117,769 |
+| Total candidate-size difference across 3 fixtures | | | **334,389 B**, approximately **8.97%** |
+
+The per-child native process execution elapsed times for these samples were **38.15, 171.77, 33.52 ms** (non-SIMD) and **31.41, 132.83, 34.63 ms** (SIMD); per-run observations varied. Every direct native output was independently identical in bytes and SHA-256 to the application engine output, with source SHA-256 and timestamps unchanged. The OS peak counters had **3–15 live samples per child**.
+
+**Interpretation:** The figures are *observed Windows peak resident working-set counters from the native jpegtran children*, not parent .NET memory. The roughly 4.35-GB native process peak **virtual address-space** counter is an address-space metric, not 4.35 GB of physical RAM. None of these small artificial fixtures establish worst-case 48MP peak memory, guaranteed low RAM use, or a reliable performance difference between builds. The very last instant before each child exited may not have been sampled.
+
+Actual user's disk space freed is **0 B**; no original replacement, media deletion or hardlink consolidation occurred.
+
+The earliest test [CI #43700101877](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43700101877) failed because .NET cannot read `Process.PeakWorkingSet64` after the child has already exited. The implementation was changed to read OS-maintained peak counters **while the child is alive**, and the diagnostic contract explicitly acknowledges that the final lifetime maximum may be missed if it changes after the last successful live poll.

@@ -11,12 +11,12 @@ using ChappyStorageCompressor.Core;
 internal static class R217JpegtranChildPeakMemoryTests
 {
     private const string PinnedCommit = "7b4993786d856cbccabfc0ed2f923ba000e326cc";
-    private const int Width = 1280, Height = 720, Count = 3;
+    private const int Width = 2560, Height = 1600, Count = 3;
     private sealed record ChildSample(
         string Mode, int Fixture, long SourceBytes, long PreviewBytes,
         long EstimatedCandidateSavingBytes, double NativeJpegtranElapsedMs,
         long ChildPeakWorkingSetBytes, long ChildPeakVirtualMemoryBytes,
-        long ChildPeakPagedMemoryBytes, int ChildExitCode,
+        long ChildPeakPagedMemoryBytes, int LivePeakSampleCount, int ChildExitCode,
         string JpegtranExecutableSha256, bool IndependentPreviewByteIdentical,
         bool OriginalHashAndTimestampPreserved);
 
@@ -72,7 +72,8 @@ internal static class R217JpegtranChildPeakMemoryTests
         string directCandidate = Path.Combine(rawOutput, "native-jpegtran-output.jpg");
         var start = Stopwatch.StartNew();
         int exitCode;
-        long peakWorkingSet, peakVirtual, peakPaged;
+        int livePeakSamples = 0;
+        long peakWorkingSet = 0, peakVirtual = 0, peakPaged = 0;
         var psi = new ProcessStartInfo
         {
             FileName = tool,
@@ -92,20 +93,38 @@ internal static class R217JpegtranChildPeakMemoryTests
         {
             try
             {
-                // Kernel tracks process-lifetime peaks even if it finishes
-                // before a high-frequency user-space sampler could observe it.
-                if (!child.WaitForExit(60_000))
+                // Process.PeakWorkingSet64 throws after child.HasExited on
+                // Windows/.NET. Read OS-maintained peak counters WHILE ALIVE.
+                // This is the largest *observed* OS peak, not guaranteed full
+                // lifetime peak if the process exits after the last sample.
+                while (true)
                 {
-                    child.Kill(entireProcessTree: true);
-                    child.WaitForExit();
-                    throw new TimeoutException("CI-only jpegtran timed out");
+                    if (child.HasExited) break;
+                    try
+                    {
+                        child.Refresh();
+                        if (!child.HasExited)
+                        {
+                            long w = child.PeakWorkingSet64;
+                            long v = child.PeakVirtualMemorySize64;
+                            long p = child.PeakPagedMemorySize64;
+                            peakWorkingSet = Math.Max(peakWorkingSet, w);
+                            peakVirtual = Math.Max(peakVirtual, v);
+                            peakPaged = Math.Max(peakPaged, p);
+                            livePeakSamples++;
+                        }
+                    }
+                    catch (InvalidOperationException) when (child.HasExited)
+                    {
+                        break;
+                    }
+                    if (child.WaitForExit(2)) break;
+                    if (start.Elapsed > TimeSpan.FromSeconds(60))
+                        throw new TimeoutException("CI-only jpegtran exceeded 60s");
                 }
+                child.WaitForExit();
                 start.Stop();
-                child.Refresh();
                 exitCode = child.ExitCode;
-                peakWorkingSet = child.PeakWorkingSet64;
-                peakVirtual = child.PeakVirtualMemorySize64;
-                peakPaged = child.PeakPagedMemorySize64;
             }
             finally
             {
@@ -116,6 +135,8 @@ internal static class R217JpegtranChildPeakMemoryTests
                 }
             }
         }
+        if (livePeakSamples == 0)
+            throw new InvalidDataException("No live child OS peak counter samples; refuse to guess");
         if (exitCode != 0 || peakWorkingSet <= 0 || peakVirtual <= 0 ||
             peakPaged < 0 || !File.Exists(directCandidate))
             throw new InvalidDataException("Native child memory or exit evidence missing");
@@ -144,7 +165,7 @@ internal static class R217JpegtranChildPeakMemoryTests
             throw new InvalidDataException("Generated source JPEG mutated during native child test");
         return new ChildSample(mode, fixture, originalSize, directSize,
             originalSize - directSize, start.Elapsed.TotalMilliseconds,
-            peakWorkingSet, peakVirtual, peakPaged, exitCode, Hash(tool),
+            peakWorkingSet, peakVirtual, peakPaged, livePeakSamples, exitCode, Hash(tool),
             same, unchanged);
     }
 
@@ -153,7 +174,7 @@ internal static class R217JpegtranChildPeakMemoryTests
         string? baseline = Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_JPEGTRAN");
         if (string.IsNullOrWhiteSpace(baseline))
         {
-            Console.WriteLine("R2.17 true JPEG child peak memory SKIPPED: no pinned CI tool");
+            Console.WriteLine("R2.17 observed JPEG child OS peak memory SKIPPED: no pinned CI tool");
             return;
         }
         string? simd = Environment.GetEnvironmentVariable("CHAPPY_R217_SIMD_JPEGTRAN");
@@ -193,6 +214,7 @@ internal static class R217JpegtranChildPeakMemoryTests
                   samples.All(x => x.ChildExitCode == 0 &&
                       x.ChildPeakWorkingSetBytes > 0 &&
                       x.ChildPeakVirtualMemoryBytes > 0 &&
+                      x.LivePeakSampleCount > 0 &&
                       x.NativeJpegtranElapsedMs > 0 &&
                       x.EstimatedCandidateSavingBytes > 0),
                 "R2.17: 6 official jpegtran child exits with OS process-lifetime peak memory");
@@ -222,6 +244,9 @@ internal static class R217JpegtranChildPeakMemoryTests
                     nativeExecutableMeasuredDirectly = true,
                     osProvidedPerChildPeakWorkingSet64 = true,
                     osProvidedPerChildPeakVirtualMemorySize64 = true,
+                    childPeakCountersReadOnlyWhileAlive = true,
+                    observedPeakNotGuaranteedFullLifetimePeak = true,
+                    liveCounterPollingWaitMs = 2,
                     separateDirectToolAndRealApplicationPreviewBothExecuted = true,
                     byteIdenticalOutputsAndWicPixelChecks = true,
                     originalSha256AndTimestampsPreserved = true,
@@ -230,7 +255,7 @@ internal static class R217JpegtranChildPeakMemoryTests
                     samplePerToolAndFixture = samples,
                     fileCountPerTool = Count,
                     actualFreedDiskBytes = 0,
-                    memoryMetricMeaning = "Windows peak resident working set per jpegtran child process lifetime; not private bytes/total application peak",
+                    memoryMetricMeaning = "Highest observed Windows child-process PeakWorkingSet64 while child is alive; not guaranteed last-instant lifetime peak, private bytes or total app peak",
                     crossMachineSpeedOrMemoryAdvantageGuaranteed = false,
                     coldCacheOrCpuSchedulingControlled = false,
                     realUserMediaTested = false,
@@ -238,7 +263,7 @@ internal static class R217JpegtranChildPeakMemoryTests
                     productionHardlinkMergeEnabled = false,
                     verdict = "PASS"
                 }, new JsonSerializerOptions { WriteIndented = true }));
-            Console.WriteLine($"R2.17 native child peak memory PASS: {samples.Count} measured jpegtran processes, " +
+            Console.WriteLine($"R2.17 observed native child peak memory PASS: {samples.Count} measured jpegtran processes, " +
                 $"baseline max {samples.Where(x => x.Mode == "baseline").Max(x => x.ChildPeakWorkingSetBytes)} B, " +
                 $"SIMD max {samples.Where(x => x.Mode == "simd").Max(x => x.ChildPeakWorkingSetBytes)} B; synthetic only");
         }

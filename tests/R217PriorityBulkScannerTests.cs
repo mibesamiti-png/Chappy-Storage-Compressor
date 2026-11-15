@@ -55,7 +55,7 @@ internal static class R217PriorityBulkScannerTests
             {
                 string sub = Path.Combine(unique, $"folder-{i / 256}");
                 Directory.CreateDirectory(sub);
-                string ext = i % 3 switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
+                string ext = (i % 3) switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
                 string path = Path.Combine(sub, $"synthetic-{i:D4}{ext}");
                 byte[] data = new byte[512 + i * 7];
                 new Random(217400 + i).NextBytes(data);
@@ -68,7 +68,7 @@ internal static class R217PriorityBulkScannerTests
             for (int i = 0; i < SameSizeCount; i++)
             {
                 int pairSeed = i < 8 ? i / 2 : i;
-                string ext = (i / 2) % 3 switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
+                string ext = ((i / 2) % 3) switch { 0 => ".jpg", 1 => ".png", _ => ".mp4" };
                 string path = Path.Combine(collisions, $"collision-{i:D2}{ext}");
                 byte[] bytes = new byte[RepeatedBytes];
                 new Random(218000 + pairSeed).NextBytes(bytes);

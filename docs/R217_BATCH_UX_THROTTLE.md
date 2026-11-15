@@ -30,4 +30,10 @@ All test data is generated. The source-backed journal, input SHA-256, resume saf
 
 ## Verified Windows CI
 
-Pending the final branch and merged-main Windows runs.
+The initial full Windows PR CI [#43720732174](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43720732174) passed **35/35 workflow steps** (the new strict synthetic notification report gate included), **547/547 C# synthetic safety checks** (+13 versus part 11), separate WPF routed Scan/Stop tests, official-source pinned baseline/SIMD JPEG tools, existing synthetic NTFS fault/security probes and win-x64 publish.
+
+The actual machine-readable `diagnostics/r217-ui-progress-efficiency.json` contained **30,005 generated notifications** and **7 passed through** the 1-day artificially fixed interval, with all priority PNG failed/deferred and JPEG needs-review/failed/deferred signals preserved. This is a correctness and dispatcher-work-reduction *potential* proof, **not** a measurement of production UI lag or whole-app throughput with the actual 125-ms production throttle.
+
+The independent real-WPF XAML test's `diagnostics/r217-wpf-routed-click.json` verified that combined/PNG/JPG preview buttons were disabled during Scan, reenabled after actual Stop/cancel and after a second successful scan, with Merge disabled throughout; that test used genuine WPF event routing but **no visible/physical mouse interaction**.
+
+**Remaining gates:** do not claim formal completion until final PR commit and postmerge main CI both pass. Automated real native folder-picker confirmation and screen visual acceptance remain untested. User media remains untouched; production original replacement/hardlink merge disabled; actual reclaimed disk capacity 0 B.

@@ -73,12 +73,15 @@ public static class JpegBatchPreviewEngine
         // Independently refuse a newly inserted foreign output or an input
         // that no longer matches the explicit WPF Yes inventory. This is a
         // read-only check before creating the exclusive lock.
-        PreviewOutputStartGate.AssertKnownRoot(output, ct);
         if (approvedInput is not null)
+        {
+            PreviewOutputStartGate.AssertKnownRoot(output, ct);
             PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
+        }
         using var exclusive = new FileStream(Path.Combine(output, LockName), FileMode.OpenOrCreate,
             FileAccess.ReadWrite, FileShare.None);
-        PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
+        if (approvedInput is not null)
+            PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
         Plan plan;
         if (File.Exists(planPath))
         {

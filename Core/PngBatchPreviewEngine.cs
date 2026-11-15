@@ -104,8 +104,11 @@ public static class PngBatchPreviewEngine
         {
             plan = NewPlan(input, output, ct);
             // Another process may change output during the input planning scan.
-            // Avoid saving even the manifest while foreign content is present.
-            PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
+            // Avoid saving even the manifest while foreign content is present
+            // in an explicitly approved combined run. Legacy standalone PNG
+            // journal-repair backups / exported CSV remain supported.
+            if (approvedInput is not null)
+                PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
             // Journal must exist before the first output candidate is created.
             SavePlan(manifest, plan);
         }
@@ -115,7 +118,8 @@ public static class PngBatchPreviewEngine
         // not compiled into the production WPF application.
         testOnlyBeforeCandidateSetup?.Invoke();
 #endif
-        PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
+        if (approvedInput is not null)
+            PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
         if (approvedInput is not null)
             PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
         Directory.CreateDirectory(previews);

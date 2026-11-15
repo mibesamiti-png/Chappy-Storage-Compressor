@@ -208,10 +208,10 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 ## R2.17（第10段階）：jpegtran子プロセスのピークメモリ測定
 
-- 前段階の.NET親プロセスの計測とは別に、**Windowsの `Process.PeakWorkingSet64` でネイティブ `jpegtran.exe` 子プロセス自身の最大常駐メモリを測定**するテストを追加。
-- 3種類の人工JPEG×通常版／SIMD版の計6プロセスを実行。独立した出力とアプリ本体の `JpegLosslessPreviewEngine.CreatePreview` の候補をバイト・SHA256・全画素・メタデータで照合。
+- 前段階の.NET親プロセスの計測とは別に、**Windowsの `Process.PeakWorkingSet64` で動作中のネイティブ `jpegtran.exe` 子プロセス自身の**OSピーク値を観測****するテストを追加。
+- 3種類の2560×1600人工JPEG×通常版／SIMD版の計6プロセスを実行。独立した出力とアプリ本体の `JpegLosslessPreviewEngine.CreatePreview` の候補をバイト・SHA256・全画素・メタデータで照合。
 - 元データは人工生成のみ。原本のSHA-256・更新日時を保護し、実画像・原本置換・ハードリンク統合は本番無効。容量の実回復は0B。
-- ピークは**子プロセス単独の常駐メモリ**であり、Chappyアプリ全体の最大使用量や一般的なSIMD優位性の保証ではない。
+- 値は**生存中に観測できた子プロセス単独のOSピーク常駐メモリ**であり、終了直前の取りこぼしもあり得るため、Chappyアプリ全体の最大使用量や一般的なSIMD優位性の保証ではない。
 
 [試験内容と制限](docs/R217_NATIVE_CHILD_PEAK_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 

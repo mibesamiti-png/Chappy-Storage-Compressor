@@ -95,13 +95,15 @@ public static class CombinedBatchResumeInspector
             ".chappy-jpeg-preview-", ".jpg", ct);
 
         int pngCount = 0, jpegCount = 0;
+        PngBatchPreviewEngine.Plan? png = null;
+        JpegBatchPreviewEngine.Plan? jpeg = null;
         string pngPlanSha = "", pngJournalSha = "";
         string jpegPlanSha = "", jpegJournalSha = "";
         if (hasPng)
         {
             byte[] planBytes = ReadLimited(Path.Combine(output, PngPlan), MaxPlanBytes);
             pngPlanSha = Sha256(planBytes);
-            var png = JsonSerializer.Deserialize<PngBatchPreviewEngine.Plan>(planBytes)
+            png = JsonSerializer.Deserialize<PngBatchPreviewEngine.Plan>(planBytes)
                 ?? throw new InvalidDataException("PNGの作業計画がnullです。");
             PngBatchPreviewEngine.ValidatePlan(png, input, output,
                 Path.Combine(output, PngPreviews));
@@ -120,7 +122,7 @@ public static class CombinedBatchResumeInspector
         {
             byte[] planBytes = ReadLimited(Path.Combine(output, JpegPlan), MaxPlanBytes);
             jpegPlanSha = Sha256(planBytes);
-            var jpeg = JsonSerializer.Deserialize<JpegBatchPreviewEngine.Plan>(planBytes)
+            jpeg = JsonSerializer.Deserialize<JpegBatchPreviewEngine.Plan>(planBytes)
                 ?? throw new InvalidDataException("JPGの作業計画がnullです。");
             JpegBatchPreviewEngine.ValidatePlan(jpeg, input, output, tool);
             if (jpegLog)
@@ -131,6 +133,28 @@ public static class CombinedBatchResumeInspector
                 JpegBatchPreviewEngine.ValidatePlan(jpeg, input, output, tool);
             }
             jpegCount = jpeg.Entries.Count;
+        }
+        // A crash can leave a syntactically correct .chappy-preview-GUID.png
+        // even though no durable journal references it. Reject ALL such
+        // unreferenced outputs: do not silently treat the folder as safe and
+        // never guess whether the file is user-owned or delete it.
+        if (pngDir)
+        {
+            var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (png != null)
+                foreach (var e in png.Entries)
+                    if (!string.IsNullOrWhiteSpace(e.PreviewPath))
+                        referenced.Add(Path.GetFullPath(e.PreviewPath));
+            RejectUnreferencedCandidates(Path.Combine(output, PngPreviews), referenced, ct);
+        }
+        if (jpegDir)
+        {
+            var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (jpeg != null)
+                foreach (var e in jpeg.Entries)
+                    if (!string.IsNullOrWhiteSpace(e.CandidatePath))
+                        referenced.Add(Path.GetFullPath(e.CandidatePath));
+            RejectUnreferencedCandidates(Path.Combine(output, JpegPreviews), referenced, ct);
         }
         ct.ThrowIfCancellationRequested();
         // Never create the output folder, lock, state file, or journal here.
@@ -245,6 +269,19 @@ public static class CombinedBatchResumeInspector
         JpegBatchPreviewEngine.CheckNoReparse(path);
         if (isFile && NativeFile.GetIdentity(path).LinkCount != 1)
             throw new InvalidDataException("作業ファイルが既存ハードリンクです。再開できません。");
+    }
+
+    private static void RejectUnreferencedCandidates(string dir,
+        HashSet<string> referenced, CancellationToken ct)
+    {
+        foreach (string path in Directory.EnumerateFiles(dir))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!referenced.Contains(Path.GetFullPath(path)))
+                throw new InvalidDataException(
+                    "再開記録に参照のない候補が残っています。自動削除や自動再開はせず、手動で確認してください: " +
+                    Path.GetFileName(path));
+        }
     }
 
     private static void ValidatePreviewDirectory(string dir, string tag,

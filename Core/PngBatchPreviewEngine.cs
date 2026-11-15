@@ -47,7 +47,11 @@ public static class PngBatchPreviewEngine
 
     /// <summary>Start a new batch, or resume a saved batch from the same output folder.</summary>
     public static Summary Run(string inputRoot, string outputRoot,
-        IProgress<Progress>? progress = null, CancellationToken ct = default)
+        IProgress<Progress>? progress = null, CancellationToken ct = default
+#if CHAPPY_TESTING
+        , Action<long>? testOnlyAfterInflatedWrite = null
+#endif
+        )
     {
         string input = CanonicalDirectory(inputRoot);
         string output = CanonicalDirectory(outputRoot);
@@ -154,7 +158,11 @@ public static class PngBatchPreviewEngine
                 }
                 else
                 {
-                    var optimized = PngLosslessOptimizer.CreatePreview(absolute, previews, ct);
+                    var optimized = PngLosslessOptimizer.CreatePreview(absolute, previews, ct
+#if CHAPPY_TESTING
+                        , testOnlyAfterInflatedWrite
+#endif
+                    );
                     entry.Status = optimized.PreviewPath is not null ? "Completed" :
                         optimized.Explanation.Contains("空き容量が不足", StringComparison.Ordinal) ?
                         "Deferred" : "Skipped";

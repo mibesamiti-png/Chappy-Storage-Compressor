@@ -91,7 +91,7 @@ internal static class R217PriorityImageAndMemoryTests
         BinaryPrimitives.WriteUInt32BigEndian(digest, ~crc);
         output.Write(digest);
     }
-    private static void WriteUncompressedPng(string path, int width, int height, int variant)
+    internal static void WriteUncompressedPng(string path, int width, int height, int variant)
     {
         byte[] bgra = CreatePixels(width, height, variant);
         byte[] header = new byte[13];

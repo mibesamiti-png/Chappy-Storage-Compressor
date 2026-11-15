@@ -188,6 +188,12 @@ Windows CIの人工JPEG3件×公式ソース固定ビルドの通常版/ネイ�
 
 [テスト範囲](R217_NATIVE_CHILD_PEAK_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17 part 11 — prioritized batch matrix, one release PR
+
+優先順位が高い3テーマを一括テスト基盤で検証。①人工ファイル1,024件のサイズ一意スキャン＋48件の同サイズ衝突（独立SHA/バイト正解比較）、②WPFで復号可能なJPEG 6枚と非圧縮PNG 6枚の実プレビュー生成・再開・全画素検証、③2560×1600の人工JPEG 2枚で本番エンジンから起動されたjpegtranのPIDをテストビルド限定で取得し、親アプリとネイティブ子プロセスのOSワーキングセットを同時観測。時間・ピークは比較用参考値であり、コールドキャッシュ、物理ディスクI/O、完全同時ピークや性能向上を主張しない。**原本置換・統合は本番無効、実容量回復0B、ソース概算69.4%を据え置く。**
+
+[設計・制限・CI結果](R217_PRIORITY_GROUPED_MATRIX.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

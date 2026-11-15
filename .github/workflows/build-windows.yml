@@ -544,6 +544,94 @@ jobs:
           "R2.17 kernel-tracked native jpegtran child peaks and app output parity PASS"
           Get-Content $path
 
+      - name: Verify R2.17 grouped priority matrix (1072 scan + real PNG/JPEG batch + joint memory)
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $scanPath = "diagnostics/r217-priority-bulk-scan.json"
+          $imagePath = "diagnostics/r217-priority-images-memory.json"
+          if (-not (Test-Path $scanPath) -or -not (Test-Path $imagePath)) {
+            throw "R2.17 grouped priority matrix evidence missing"
+          }
+          $s = Get-Content -Raw $scanPath | ConvertFrom-Json
+          $i = Get-Content -Raw $imagePath | ConvertFrom-Json
+          $runs = @($s.samples)
+          $memory = @($i.combinedSamples)
+          if ($s.verdict -ne "PASS" -or
+              $s.schema -ne "chappy-r217-priority-matrix-scan-v1" -or
+              $s.uniqueSourceCount -ne 1024 -or
+              $s.collisionSourceCount -ne 48 -or
+              $s.totalSyntheticFiles -ne 1072 -or
+              $s.generatedSourceBytes -le 6000000 -or
+              $s.independentReferenceDuplicatePairs -ne 4 -or
+              $s.exactDuplicatePairsAllMatch -ne $true -or
+              $s.allOriginalHashesAndTimestampsPreserved -ne $true -or
+              $s.cancellationRefusedPartialResult -ne $true -or
+              $runs.Count -ne 4 -or
+              @($runs | Where-Object {
+                $_.ElapsedMs -le 0 -or $_.CallingThreadManagedBytes -lt 0 -or
+                $_.WorkingSetAfterBytes -le 0 -or
+                ($_.Dataset -eq "unique-sizes" -and
+                 ($_.FileCount -ne 1024 -or $_.DeepInspectedFiles -ne 0 -or
+                  $_.HashAttemptedFiles -ne 0 -or $_.VerifiedGroups -ne 0)) -or
+                ($_.Dataset -eq "same-size" -and
+                 ($_.FileCount -ne 48 -or $_.DeepInspectedFiles -ne 48 -or
+                  $_.HashAttemptedFiles -ne 48 -or $_.VerifiedGroups -ne 4))
+              }).Count -ne 0 -or
+              @($runs | Where-Object { $_.Dataset -eq "unique-sizes" }).Count -ne 2 -or
+              @($runs | Where-Object { $_.Dataset -eq "same-size" }).Count -ne 2 -or
+              $s.coldCacheControlled -ne $false -or
+              $s.physicalDiskIoMeasured -ne $false -or
+              $s.deliberateSpeedupClaimed -ne $false -or
+              $s.productionOriginalReplacementEnabled -ne $false -or
+              $s.productionHardlinkMergeEnabled -ne $false -or
+              $s.realMediaTouched -ne $false -or
+              $s.actualRecoveredBytes -ne 0) {
+            throw "Bulk scanner matrix failed or claimed unsupported performance"
+          }
+          if ($i.verdict -ne "PASS" -or
+              $i.schema -ne "chappy-r217-priority-matrix-images-memory-v1" -or
+              $i.officialSourceCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $i.validWicJpegSources -ne 6 -or
+              $i.validUncompressedPngSources -ne 6 -or
+              $i.actualPngOptimizedCandidates -lt 4 -or
+              $i.actualJpegOptimizedCandidates -lt 3 -or
+              $i.actualPngOptimizedCandidates -ne $i.independentlyCheckedPngCandidates -or
+              $i.actualJpegOptimizedCandidates -ne $i.independentlyCheckedJpegCandidates -or
+              $i.pngPreviewEstimatedSavingBytes -le 0 -or
+              $i.jpegPreviewEstimatedSavingBytes -le 0 -or
+              $i.bothBatchesResumedWithoutNewCandidates -ne $true -or
+              $i.realJpegEngineUsedForSimultaneousMemory -ne $true -or
+              $i.observedExactlySpawnedNativePid -ne $true -or
+              $i.sampleParentPlusNativeObservedNotExactProcessLifetimePeak -ne $true -or
+              $memory.Count -ne 2 -or
+              @($memory | Where-Object {
+                $_.LiveJointObservations -lt 1 -or
+                $_.MaxObservedParentWorkingSetBytes -le 0 -or
+                $_.MaxObservedNativeChildPeakWorkingSetBytes -le 0 -or
+                $_.MaxObservedParentPlusNativeWorkingSetBytes -lt $_.MaxObservedParentWorkingSetBytes -or
+                $_.MaxObservedParentPlusNativeWorkingSetBytes -lt $_.MaxObservedNativeChildPeakWorkingSetBytes -or
+                $_.SourceBytes -le $_.CandidateBytes -or
+                $_.SourceUnchanged -ne $true -or
+                $_.CandidateDecodedPixelsMatch -ne $true
+              }).Count -ne 0 -or
+              @($i.phases).Count -lt 5 -or
+              $i.allOriginalHashesAndTimestampsUnchanged -ne $true -or
+              $i.canceledPreviewAborted -ne $true -or
+              $i.rendererOrPhysicalGuiMouseTested -ne $false -or
+              $i.cacheAndCpuControlled -ne $false -or
+              $i.independentSpeedupClaimed -ne $false -or
+              $i.parentPlusChildPrivateCommitMeasured -ne $false -or
+              $i.realUserMediaTouched -ne $false -or
+              $i.productionOriginalReplacementEnabled -ne $false -or
+              $i.productionHardlinkMergeEnabled -ne $false -or
+              $i.actualRecoveredBytes -ne 0) {
+            throw "Real JPG/PNG batch or joint app+child memory safety contract failed"
+          }
+          "R2.17 grouped priority matrix PASS: 1,072 scan files, real JPG/PNG batches/resume, joint memory"
+          Get-Content $scanPath
+          Get-Content $imagePath
+
       - name: Verify R2.17 mid-file SHA byte progress and cancellation
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

@@ -19,7 +19,11 @@ public static class JpegLosslessPreviewEngine
     }
 
     public static Result CreatePreview(string sourcePath, string outputDirectory,
-        string jpegtranPath, CancellationToken ct = default)
+        string jpegtranPath, CancellationToken ct = default
+#if CHAPPY_TESTING
+        , Action<int>? testOnlyNativeProcessId = null
+#endif
+        )
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows専用です。");
         string source = Path.GetFullPath(sourcePath);
@@ -66,8 +70,13 @@ public static class JpegLosslessPreviewEngine
             psi.ArgumentList.Add("-outfile");
             psi.ArgumentList.Add(candidate);
             psi.ArgumentList.Add(source);
-            using (var process = Process.Start(psi) ?? throw new IOException("jpegtran.exeを起動できません。"))
+            using (var process = Process.Start(psi) ?? throw new IOException("jpegtran.exeを起動できません."))
             {
+#if CHAPPY_TESTING
+                // Test-only child PID observation for simultaneous parent/encoder
+                // memory sampling. This does not exist in production builds.
+                testOnlyNativeProcessId?.Invoke(process.Id);
+#endif
                 try { process.WaitForExitAsync(ct).GetAwaiter().GetResult(); }
                 catch (OperationCanceledException)
                 {

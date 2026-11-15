@@ -393,15 +393,35 @@ internal static class R217ExifOrientationMemoryTests
         return all.ToArray();
     }
 
-    private static (bool Found, string Name, long Bytes, bool Passed) AlternateIcc(
+    private static (bool Found, string Name, long Bytes, bool Passed, bool FromWindows, bool Cc0Fallback) AlternateIcc(
         string root, string input, string tool)
     {
         string colorDir = Path.Combine(Environment.GetFolderPath(
             Environment.SpecialFolder.Windows), "System32", "spool", "drivers", "color");
         string srgb = Path.Combine(colorDir, "sRGB Color Space Profile.icm");
-        if (!File.Exists(srgb)) return (false, "", 0, false);
-        string? chosen = FindAlternateColorProfile(srgb, out var bytes);
-        if (chosen is null) return (false, "", 0, false);
+        string? chosen = File.Exists(srgb) ?
+            FindAlternateColorProfile(srgb, out var bytesFromWindows) : null;
+        byte[] bytes;
+        bool fromWindows = chosen is not null;
+        if (fromWindows)
+        {
+            bytes = bytesFromWindows!;
+        }
+        else
+        {
+            // Verbatim 456-byte public-domain (CC0) compact Display P3
+            // compatibility ICC, source commit bdd84663061bc4ae95ca70decff54f581e27f702
+            // saucecontrol/Compact-ICC-Profiles/profiles/DisplayP3Compat-v2-micro.icc
+            // Pin both source Git blob and an independently computed SHA-256.
+            const string p3 = "AAAByGxjbXMCEAAAbW50clJHQiBYWVogB+IAAwAUAAkADgAdYWNzcE1TRlQAAAAAc2F3c2N0cmwAAAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1oYW5kEvVGSDGKCpEUrzU6YQvrBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJZGVzYwAAAPAAAABeY3BydAAAAQwAAAAMd3RwdAAAARgAAAAUclhZWgAAASwAAAAUZ1hZWgAAAUAAAAAUYlhZWgAAAVQAAAAUclRSQwAAAWgAAABgZ1RSQwAAAWgAAABgYlRSQwAAAWgAAABgZGVzYwAAAAAAAAAFdVAzQwAAAAAAAAAAAAAAAHRleHQAAAAAQ0MwAFhZWiAAAAAAAADzUQABAAAAARbMWFlaIAAAAAAAAIPfAAA9vwAAAABYWVogAAAAAAAASr8AALE3AAAKtVhZWiAAAAAAAAAoOAAAEQoAAMh4Y3VydgAAAAAAAAAqAAAAfAD4AZwCdQODBMkGTggSChgMYg70Ec8U9hhqHC4gQySsKWoufjPrObM/1kZXTTZUdlwXZB1shnVWfo2ILJI2nKunjLLbvpnKx9dl5Hfx+f//";
+            bytes = Convert.FromBase64String(p3);
+            if (bytes.Length != 456 ||
+                Convert.ToHexString(SHA256.HashData(bytes)) !=
+                    "A917F04DF365B7331E614A32EA309975006E851B5A39ECB9ACE8F07172E9EF6E" ||
+                !bytes.AsSpan(36, 4).SequenceEqual("acsp"u8) ||
+                !bytes.AsSpan(16, 4).SequenceEqual("RGB "u8))
+                throw new InvalidDataException("Pinned public-domain Display P3 ICC did not verify");
+        }
         string profileCopy = Path.Combine(root, "alternate-profile.icc");
         File.WriteAllBytes(profileCopy, bytes);
         var inputColor = new ColorContext(new Uri(profileCopy));
@@ -424,7 +444,9 @@ internal static class R217ExifOrientationMemoryTests
             left.Width != Width || left.Height != Height ||
             Hash(alternate) != originalHash)
             throw new InvalidDataException("Alternate real ICC WPF conversion is not identical");
-        return (true, Path.GetFileName(chosen), bytes.Length, true);
+        return (true, fromWindows ? Path.GetFileName(chosen!) :
+            "DisplayP3Compat-v2-micro.icc", bytes.Length, true,
+            fromWindows, !fromWindows);
     }
 
     private static Image ConvertColor(string file, ColorContext source, ColorContext target)
@@ -500,8 +522,9 @@ internal static class R217ExifOrientationMemoryTests
                   b.AuditMs > 0 && s.AuditMs > 0,
                 "R2.17: bounded whole-process working-set samples and separate phase timings");
             var alternative = AlternateIcc(root, input, simd!);
-            check(!alternative.Found || alternative.Passed,
-                "R2.17: if a trusted alternate OS RGB ICC exists its actual WPF color transform matches");
+            check(alternative.Found && alternative.Passed &&
+                  alternative.FromWindows != alternative.Cc0Fallback,
+                "R2.17: genuine non-sRGB ICC WPF color transformation matches (OS or SHA-pinned CC0 P3)");
             check(originals.All(x => Hash(Path.Combine(input, x.Key)) == x.Value &&
                   File.GetLastWriteTimeUtc(Path.Combine(input, x.Key)).Ticks == timestamps[x.Key]),
                 "R2.17: unchanged original synthetic Exif JPEG hashes and timestamps");
@@ -521,7 +544,11 @@ internal static class R217ExifOrientationMemoryTests
                     sourceBuiltNonSimdAndSimdCandidatesBothVerified = true,
                     baseline = b,
                     simd = s,
-                    nonSrgbWindowsSystemProfileFound = alternative.Found,
+                    nonSrgbWindowsSystemProfileFound = alternative.FromWindows,
+                    nonSrgbCc0DisplayP3FixtureUsed = alternative.Cc0Fallback,
+                    nonSrgbCc0FixtureSourceCommit = "bdd84663061bc4ae95ca70decff54f581e27f702",
+                    nonSrgbCc0FixtureSha256 = "A917F04DF365B7331E614A32EA309975006E851B5A39ECB9ACE8F07172E9EF6E",
+                    nonSrgbProfilePresentAndVerified = alternative.Found && alternative.Passed,
                     nonSrgbProfileName = alternative.Name,
                     nonSrgbProfileBytes = alternative.Bytes,
                     nonSrgbWicColorTransformPassed = alternative.Passed,

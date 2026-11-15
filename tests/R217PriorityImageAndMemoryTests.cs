@@ -56,7 +56,7 @@ internal static class R217PriorityImageAndMemoryTests
         }
         return pixels;
     }
-    private static void WriteJpeg(string path, int width, int height, int variant)
+    internal static void WriteJpeg(string path, int width, int height, int variant)
     {
         var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32,
             null, CreatePixels(width, height, variant), width * 4);

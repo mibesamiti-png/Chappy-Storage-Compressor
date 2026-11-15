@@ -60,7 +60,8 @@
         <Button x:Name="ScanButton" Content="① 読み取り専用スキャン" Background="#2B7B70" BorderBrush="#3E9E8F" Click="Scan_Click"/>
         <Button x:Name="MediaReportButton" Content="JPG / PNG / MP4別の重複容量レポート・CSV" Click="MediaReport_Click" IsEnabled="False"/>
         <Button x:Name="DetailsButton" Content="選択グループの全パス" Click="Details_Click" IsEnabled="False"/>
-        <Button x:Name="MergeButton" Content="② 統合（実機安全試験まで停止）" Click="Merge_Click" IsEnabled="False"/>
+        <Button x:Name="DedupePlanButton" Content="② 重複優先・独立Undo事前計画（読み取り専用）" Click="DedupePlan_Click" IsEnabled="False"/>
+        <Button x:Name="MergeButton" Content="③ 実際の統合（安全ゲートまで停止）" Click="Merge_Click" IsEnabled="False"/>
         <Button x:Name="StopButton" Content="中断要求" Click="Stop_Click" IsEnabled="False"/>
         <Button x:Name="RecoveryButton" Content="復旧ウィザード" Click="Recovery_Click"/>
         <Button x:Name="PngInspectButton" Content="PNG読み取り診断" Click="InspectPng_Click"/>

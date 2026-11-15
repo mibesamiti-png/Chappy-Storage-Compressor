@@ -36,6 +36,26 @@ internal static class R217CombinedResumePreflightTests
                   fresh.PngPlanEntries == 0 && fresh.JpegPlanEntries == 0 &&
                   !Directory.EnumerateFileSystemEntries(output).Any(),
                 "R2.17: empty output classified as new without creating lock or journal");
+            check(CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, fresh) == fresh,
+                "R2.17 part 13: unchanged empty output passes a second read-only consent gate");
+
+            // A foreign item may appear while the confirmation dialog is open.
+            // The new gate must fail closed and preserve the added file.
+            string lateForeign = Path.Combine(output, "late-foreign.txt");
+            byte[] lateBytes = { 0x10, 0x20, 0x30, 0x40 };
+            File.WriteAllBytes(lateForeign, lateBytes);
+            bool foreignRefused = false;
+            try
+            {
+                CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, fresh);
+            }
+            catch (InvalidDataException) { foreignRefused = true; }
+            check(foreignRefused && File.ReadAllBytes(lateForeign).SequenceEqual(lateBytes) &&
+                  !Directory.EnumerateFiles(output, "*.lock").Any(),
+                "R2.17 part 13: foreign output appearing during confirmation refuses without mutation");
+            File.Delete(lateForeign); // synthetic disposable test artifact only.
 
             using (var canceled = new CancellationTokenSource())
             {
@@ -55,6 +75,9 @@ internal static class R217CombinedResumePreflightTests
             check(pngOnly.IsResume && pngOnly.HasPngPlan && !pngOnly.HasJpegPlan &&
                   pngOnly.PngPlanEntries == 1 && pngOnly.JpegPlanEntries == 0,
                 "R2.17: partial PNG-only output correctly offers PNG resume and JPEG new");
+            check(CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, pngOnly) == pngOnly,
+                "R2.17 part 13: unchanged PNG-only resume remains allowed after consent");
 
             // Synthesize a JPEG *plan only*. The fake executable must never run.
             // An actual runtime would create this via its own BuildPlan/SavePlan.
@@ -78,6 +101,36 @@ internal static class R217CombinedResumePreflightTests
                   File.ReadAllBytes(jpegPlanFile).AsSpan().SequenceEqual(jpegPlanOriginal) &&
                   File.ReadAllBytes(pngJournal).AsSpan().SequenceEqual(pngJournalOriginal),
                 "R2.17: preview inspection leaves both plans and existing journal unchanged");
+
+            check(CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, resumed) == resumed,
+                "R2.17 part 13: unchanged two-format resume passes the consent recheck");
+            bool newPlanRefused = false;
+            try
+            {
+                CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, pngOnly);
+            }
+            catch (InvalidDataException) { newPlanRefused = true; }
+            check(newPlanRefused,
+                "R2.17 part 13: newly appearing JPEG plan invalidates earlier PNG-only consent");
+
+            // A removed plan can still leave a valid PNG-only output. It must
+            // not silently change the user's confirmed combined resume scope.
+            string heldJpegPlan = Path.Combine(root, "held-jpeg-plan.json");
+            File.Move(jpegPlanFile, heldJpegPlan);
+            bool removedPlanRefused = false;
+            try
+            {
+                CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, resumed);
+            }
+            catch (InvalidDataException) { removedPlanRefused = true; }
+            finally { File.Move(heldJpegPlan, jpegPlanFile); }
+            check(removedPlanRefused &&
+                  File.ReadAllBytes(jpegPlanFile).AsSpan().SequenceEqual(jpegPlanOriginal) &&
+                  Hash(png) == pngHash && Hash(jpg) == jpgHash,
+                "R2.17 part 13: disappearing JPEG plan refuses and preserves source/plan bytes");
 
             expectThrows(() => CombinedBatchResumeInspector.Inspect(alternateInput, output, tool),
                 "R2.17: refuse existing output plan tied to a different source directory");
@@ -151,6 +204,10 @@ internal static class R217CombinedResumePreflightTests
                     pngTornJournalRefused = true,
                     hardlinkedPlanRefused = true,
                     missingPlanWithJournalRefused = true,
+                    postConfirmationReadOnlyRecheckVerified = true,
+                    postConfirmationForeignFileRefused = true,
+                    newPlanAfterConsentRefused = true,
+                    removedPlanAfterConsentRefused = true,
                     allUserAndCandidateEvidencePreserved = true,
                     externalExecutableInvoked = false,
                     actualWpfClickAutomationVerified = false,

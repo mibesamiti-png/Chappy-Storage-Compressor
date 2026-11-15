@@ -154,8 +154,8 @@ jobs:
           cmake -S $source -B $build -G "Visual Studio 18 2026" -A x64 -DWITH_SIMD=ON -DREQUIRE_SIMD=ON -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=OFF -DWITH_TESTS=OFF -DWITH_TOOLS=ON "-DCMAKE_ASM_NASM_COMPILER=$nasm"
           if ($LASTEXITCODE -ne 0) { throw "Official-source SIMD CMake configuration failed" }
           $cache = Get-Content -Raw (Join-Path $build "CMakeCache.txt")
-          if ($cache -notmatch "(?m)^WITH_SIMD:BOOL=ON$" -or
-              $cache -notmatch "(?m)^REQUIRE_SIMD:BOOL=ON$") {
+          if ($cache -notmatch "(?m)^WITH_SIMD:BOOL=ON\r?$" -or
+              $cache -notmatch "(?m)^REQUIRE_SIMD:(?:BOOL|UNINITIALIZED)=ON\r?$") {
             throw "Native SIMD is not enabled and required in the official build"
           }
           cmake --build $build --config Release --target jpegtran-static --parallel 2

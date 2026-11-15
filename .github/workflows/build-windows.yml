@@ -682,6 +682,10 @@ jobs:
               $r.pngTornJournalRefused -ne $true -or
               $r.hardlinkedPlanRefused -ne $true -or
               $r.missingPlanWithJournalRefused -ne $true -or
+              $r.postConfirmationReadOnlyRecheckVerified -ne $true -or
+              $r.postConfirmationForeignFileRefused -ne $true -or
+              $r.newPlanAfterConsentRefused -ne $true -or
+              $r.removedPlanAfterConsentRefused -ne $true -or
               $r.allUserAndCandidateEvidencePreserved -ne $true -or
               $r.externalExecutableInvoked -ne $false -or
               $r.actualWpfClickAutomationVerified -ne $false -or

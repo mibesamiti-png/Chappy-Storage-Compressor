@@ -105,6 +105,81 @@ internal static class R217CombinedResumePreflightTests
             check(CombinedBatchResumeInspector.VerifyAfterConfirmation(
                     input, output, tool, resumed) == resumed,
                 "R2.17 part 13: unchanged two-format resume passes the consent recheck");
+
+            // Part 14: same-count changes are not visible in the older typed
+            // presence/count snapshot. The complete validated plan/journal
+            // bytes must be bound to the user's displayed consent.
+            File.AppendAllText(pngPlanFile, "\n");
+            var changedPngPlan = CombinedBatchResumeInspector.Inspect(input, output, tool);
+            check(changedPngPlan.PngPlanEntries == resumed.PngPlanEntries &&
+                  changedPngPlan.JpegPlanEntries == resumed.JpegPlanEntries &&
+                  changedPngPlan.PngPlanSha256 != resumed.PngPlanSha256,
+                "R2.17 part 14: same-count PNG plan byte mutation changes its approval digest");
+            bool changedPngPlanRefused = false;
+            try { CombinedBatchResumeInspector.VerifyAfterConfirmation(input, output, tool, resumed); }
+            catch (InvalidDataException) { changedPngPlanRefused = true; }
+            finally { File.WriteAllBytes(pngPlanFile, pngPlanOriginal); }
+            check(changedPngPlanRefused,
+                "R2.17 part 14: refuse modified-but-valid PNG plan after displayed consent");
+
+            File.AppendAllText(jpegPlanFile, "\n");
+            var changedJpegPlan = CombinedBatchResumeInspector.Inspect(input, output, tool);
+            check(changedJpegPlan.JpegPlanEntries == resumed.JpegPlanEntries &&
+                  changedJpegPlan.JpegPlanSha256 != resumed.JpegPlanSha256,
+                "R2.17 part 14: same-count JPEG plan byte mutation changes its approval digest");
+            bool changedJpegPlanRefused = false;
+            try { CombinedBatchResumeInspector.VerifyAfterConfirmation(input, output, tool, resumed); }
+            catch (InvalidDataException) { changedJpegPlanRefused = true; }
+            finally { File.WriteAllBytes(jpegPlanFile, jpegPlanOriginal); }
+            check(changedJpegPlanRefused,
+                "R2.17 part 14: refuse modified-but-valid JPEG plan after displayed consent");
+
+            File.AppendAllText(pngJournal, "\n");
+            var changedPngJournal = CombinedBatchResumeInspector.Inspect(input, output, tool);
+            check(changedPngJournal.PngPlanEntries == resumed.PngPlanEntries &&
+                  changedPngJournal.PngJournalSha256 != resumed.PngJournalSha256,
+                "R2.17 part 14: equivalent PNG journal with added blank row changes approval digest");
+            bool changedPngJournalRefused = false;
+            try { CombinedBatchResumeInspector.VerifyAfterConfirmation(input, output, tool, resumed); }
+            catch (InvalidDataException) { changedPngJournalRefused = true; }
+            finally { File.WriteAllBytes(pngJournal, pngJournalOriginal); }
+            check(changedPngJournalRefused,
+                "R2.17 part 14: refuse modified-but-valid PNG progress journal after consent");
+
+            string jpegJournal = Path.Combine(output, ".chappy-jpeg-r19.progress.jsonl");
+            File.WriteAllBytes(jpegJournal, Array.Empty<byte>());
+            var emptyJpegLog = CombinedBatchResumeInspector.Inspect(input, output, tool);
+            File.AppendAllText(jpegJournal, "\n");
+            var changedJpegJournal = CombinedBatchResumeInspector.Inspect(input, output, tool);
+            check(changedJpegJournal.JpegPlanEntries == emptyJpegLog.JpegPlanEntries &&
+                  changedJpegJournal.JpegJournalSha256 != emptyJpegLog.JpegJournalSha256,
+                "R2.17 part 14: valid empty JPEG journal change is tracked even with same entry count");
+            bool changedJpegJournalRefused = false;
+            try { CombinedBatchResumeInspector.VerifyAfterConfirmation(input, output, tool, emptyJpegLog); }
+            catch (InvalidDataException) { changedJpegJournalRefused = true; }
+            finally { File.Delete(jpegJournal); } // Synthetic-only disposable state.
+            check(changedJpegJournalRefused,
+                "R2.17 part 14: refuse modified-but-valid JPEG progress journal after consent");
+
+            using (var canceledAfterPrompt = new CancellationTokenSource())
+            {
+                canceledAfterPrompt.Cancel();
+                bool cancelRefused = false;
+                try
+                {
+                    CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                        input, output, tool, resumed, canceledAfterPrompt.Token);
+                }
+                catch (OperationCanceledException) { cancelRefused = true; }
+                check(cancelRefused && Hash(png) == pngHash && Hash(jpg) == jpgHash &&
+                      File.ReadAllBytes(pngPlanFile).AsSpan().SequenceEqual(pngPlanOriginal) &&
+                      File.ReadAllBytes(jpegPlanFile).AsSpan().SequenceEqual(jpegPlanOriginal) &&
+                      File.ReadAllBytes(pngJournal).AsSpan().SequenceEqual(pngJournalOriginal),
+                    "R2.17 part 14: cancellation before approval recheck never changes synthetic originals or journals");
+            }
+            check(CombinedBatchResumeInspector.VerifyAfterConfirmation(
+                    input, output, tool, resumed) == resumed,
+                "R2.17 part 14: original plans/journal still pass a fresh unchanged consent recheck");
             bool newPlanRefused = false;
             try
             {
@@ -208,6 +283,12 @@ internal static class R217CombinedResumePreflightTests
                     postConfirmationForeignFileRefused = true,
                     newPlanAfterConsentRefused = true,
                     removedPlanAfterConsentRefused = true,
+                    pngPlanByteChangeAfterConsentRefused = true,
+                    jpegPlanByteChangeAfterConsentRefused = true,
+                    pngJournalByteChangeAfterConsentRefused = true,
+                    jpegJournalByteChangeAfterConsentRefused = true,
+                    canceledConsentRecheckRefused = true,
+                    restoredByteIdenticalApprovalRecheckPassed = true,
                     allUserAndCandidateEvidencePreserved = true,
                     externalExecutableInvoked = false,
                     actualWpfClickAutomationVerified = false,

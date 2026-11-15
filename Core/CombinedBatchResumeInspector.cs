@@ -30,8 +30,12 @@ public static class CombinedBatchResumeInspector
         PngPreviews, JpegPreviews
     };
 
+    // Approval binds to exact bytes of the four trusted plan/journal files,
+    // not merely entry counts. Empty string means the file is absent.
     public sealed record Summary(bool HasPngPlan, bool HasJpegPlan,
-        int PngPlanEntries, int JpegPlanEntries)
+        int PngPlanEntries, int JpegPlanEntries,
+        string PngPlanSha256, string PngJournalSha256,
+        string JpegPlanSha256, string JpegJournalSha256)
     {
         public bool IsResume => HasPngPlan || HasJpegPlan;
         public string Description => IsResume
@@ -91,17 +95,21 @@ public static class CombinedBatchResumeInspector
             ".chappy-jpeg-preview-", ".jpg", ct);
 
         int pngCount = 0, jpegCount = 0;
+        string pngPlanSha = "", pngJournalSha = "";
+        string jpegPlanSha = "", jpegJournalSha = "";
         if (hasPng)
         {
-            var png = JsonSerializer.Deserialize<PngBatchPreviewEngine.Plan>(
-                ReadLimited(Path.Combine(output, PngPlan), MaxPlanBytes))
+            byte[] planBytes = ReadLimited(Path.Combine(output, PngPlan), MaxPlanBytes);
+            pngPlanSha = Sha256(planBytes);
+            var png = JsonSerializer.Deserialize<PngBatchPreviewEngine.Plan>(planBytes)
                 ?? throw new InvalidDataException("PNGの作業計画がnullです。");
             PngBatchPreviewEngine.ValidatePlan(png, input, output,
                 Path.Combine(output, PngPreviews));
             if (pngLog)
             {
-                ApplyPngJournal(ReadLimited(Path.Combine(output, PngJournal), MaxJournalBytes),
-                    png, input, output, ct);
+                byte[] journalBytes = ReadLimited(Path.Combine(output, PngJournal), MaxJournalBytes);
+                pngJournalSha = Sha256(journalBytes);
+                ApplyPngJournal(journalBytes, png, input, output, ct);
                 PngBatchPreviewEngine.ValidatePlan(png, input, output,
                     Path.Combine(output, PngPreviews));
             }
@@ -110,14 +118,16 @@ public static class CombinedBatchResumeInspector
 
         if (hasJpeg)
         {
-            var jpeg = JsonSerializer.Deserialize<JpegBatchPreviewEngine.Plan>(
-                ReadLimited(Path.Combine(output, JpegPlan), MaxPlanBytes))
+            byte[] planBytes = ReadLimited(Path.Combine(output, JpegPlan), MaxPlanBytes);
+            jpegPlanSha = Sha256(planBytes);
+            var jpeg = JsonSerializer.Deserialize<JpegBatchPreviewEngine.Plan>(planBytes)
                 ?? throw new InvalidDataException("JPGの作業計画がnullです。");
             JpegBatchPreviewEngine.ValidatePlan(jpeg, input, output, tool);
             if (jpegLog)
             {
-                JpegBatchPreviewEngine.ReplayJournalBytes(
-                    ReadLimited(Path.Combine(output, JpegJournal), MaxJournalBytes), jpeg);
+                byte[] journalBytes = ReadLimited(Path.Combine(output, JpegJournal), MaxJournalBytes);
+                jpegJournalSha = Sha256(journalBytes);
+                JpegBatchPreviewEngine.ReplayJournalBytes(journalBytes, jpeg);
                 JpegBatchPreviewEngine.ValidatePlan(jpeg, input, output, tool);
             }
             jpegCount = jpeg.Entries.Count;
@@ -125,13 +135,16 @@ public static class CombinedBatchResumeInspector
         ct.ThrowIfCancellationRequested();
         // Never create the output folder, lock, state file, or journal here.
         // A later engine Run must re-validate after the user's confirmation.
-        return new Summary(hasPng, hasJpeg, pngCount, jpegCount);
+        return new Summary(hasPng, hasJpeg, pngCount, jpegCount,
+            pngPlanSha, pngJournalSha, jpegPlanSha, jpegJournalSha);
     }
 
     /// <summary>
     /// Re-run the read-only output inspection after the user confirms the
     /// displayed preflight. A plan appearing/disappearing while the modal dialog
     /// is open invalidates that consent, even if the new folder state is safe.
+    /// Any plan/journal byte change also invalidates consent, even where both
+    /// the parsed entry count and the safety validation still match.
     /// The preview engines must still independently revalidate immediately
     /// before their own candidate operations; this is NOT an atomic snapshot.
     /// </summary>
@@ -147,6 +160,11 @@ public static class CombinedBatchResumeInspector
         ct.ThrowIfCancellationRequested();
         return current;
     }
+
+    // Hash the very bytes already read and validated. Do not re-read paths
+    // after parsing, which could observe a different concurrent version.
+    private static string Sha256(byte[] bytes) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
 
     private static byte[] ReadLimited(string path, long limit)
     {

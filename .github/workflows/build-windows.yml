@@ -989,6 +989,36 @@ jobs:
           "R2.17 Part25 five real Undo process deaths + explicit safe replay PASS"
           Get-Content $path
 
+      - name: Verify Part26 multi-group completed ledgers, triple refusal and independent Undo
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-multigroup-ledger.json"
+          if (-not (Test-Path $path)) { throw "Part26 multi-group ledger evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part26-multigroup-ledger-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.verifiedScannerGroups -ne 4 -or
+              $r.durableIndependentPairLedgers -ne 3 -or
+              $r.unsupportedTripleSkippedBeforeMutation -ne $true -or
+              $r.reopenedIndependentLedgerProof -ne $true -or
+              $r.externalAliasIsolatedToOneGroup -ne $true -or
+              $r.unaffectedUndoGroupsWhileManualReview -ne 2 -or
+              $r.originalMetadataAndBytesRestored -ne $true -or
+              $r.finalVerifiedRestoredGroups -ne 3 -or
+              $r.pendingRecoveryJournals -ne 0 -or
+              $r.productionDedupeEnabled -ne $false -or
+              $r.productionUndoEnabled -ne $false -or
+              $r.actualUserMediaTouched -ne $false -or
+              $r.actualUserBytesRecovered -ne 0 -or
+              $r.arbitraryMultiAliasUndoProven -ne $false -or
+              $r.powerLossDurabilityProven -ne $false) {
+            throw "Part26 multi-group ledger/Undo safety contract failed"
+          }
+          "R2.17 Part26 three completed ledgers, one isolated tamper and safe independent Undo PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

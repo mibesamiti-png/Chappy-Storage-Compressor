@@ -178,7 +178,7 @@ Windows CIに標準搭載された実際のsRGB ICCプロファイルを読み�
 
 ## R2.17 part 9 — Exif 1/3/6/8 orientation and memory observation
 
-ExifのOrientation（1・3・6・8）を人工JPEGに入れ、正式候補エンジンでSIMDあり/なしの生成後にTIFF値・APP1バイト・WIC復号画素・Exif適用後の全画素一致を独立検査する。Exif改ざんや不正値は人工マイナス試験で拒否。システム内にsRGBと異なる信頼可能なRGB ICCがある場合だけWPF色変換を追加検証し、非存在時は未検証と記録する。10msのプロセスWSサンプリングはJPEG子プロセスの独立ピーク計測ではない。実データ・原本置換・ハードリンク統合は無効。実回復0B、暫定実装率69.4%は据え置き。
+ExifのOrientation（1・3・6・8）を人工JPEGに入れ、正式候補エンジンでSIMDあり/なしの生成後にTIFF値・APP1バイト・WIC復号画素・Exif適用後の全画素一致を独立検査する。Exif改ざんや不正値は人工マイナス試験で拒否。WindowsにsRGB以外の適切なICCがある場合はそれを利用し、非存在時は固定コミット・SHA-256照合済のCC0 Display P3互換ICC（456B）を人工JPEGに埋めて、WPF色変換後の一致を必須試験とする。10msのプロセスWSサンプリングはJPEG子プロセスの独立ピーク計測ではない。実データ・原本置換・ハードリンク統合は無効。実回復0B、暫定実装率69.4%は据え置き。
 
 [仕様と限界](R217_EXIF_ORIENTATION_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 

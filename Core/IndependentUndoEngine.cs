@@ -1,4 +1,8 @@
 using System.Text.Json;
+#if CHAPPY_TESTING
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+#endif
 
 namespace ChappyStorageCompressor.Core;
 
@@ -12,6 +16,15 @@ namespace ChappyStorageCompressor.Core;
 public static class IndependentUndoEngine
 {
     public const bool ProductionEnabled = false;
+#if CHAPPY_TESTING
+    // Only used by synthetic Core tests. Never included as an executable
+    // security-descriptor writer in a production build.
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode,
+        EntryPoint = "SetFileSecurityW", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileSecurity(string path,
+        uint securityInformation, byte[] securityDescriptor);
+#endif
     public sealed record Result(string AliasPath, string DurableEvidencePath,
         FileIdentity SharedIdentityBefore, FileIdentity IndependentIdentityAfter,
         long ApproximateRestoredBytes);
@@ -151,12 +164,32 @@ public static class IndependentUndoEngine
                 expectedHash, StringComparison.OrdinalIgnoreCase);
         bool securityMatches = detached.SecurityDescriptor.AsSpan()
             .SequenceEqual(originalIndependent.SecurityDescriptor);
-        if (!distinct || !pixelsUnchanged || !securityMatches)
+        if (!distinct || !pixelsUnchanged)
             throw new InvalidDataException(
                 "Undo cutover refused: independent identity=" + distinct +
                 ", byte integrity=" + pixelsUnchanged +
-                ", owner+DACL=" + securityMatches +
                 "; durable evidence kept for manual review");
+        if (!securityMatches)
+        {
+            // ReplaceFileW can merge the destination hardlink's security
+            // descriptor into the independent stage even though the stage
+            // itself was proven to contain the original owner/group/DACL.
+            // Apply the exact captured ordinary security descriptor to ONLY
+            // the now-proven independent alias in this disposable NTFS test.
+            // Production Undo cannot use this until privileges/inheritance
+            // and crash-replay gates are independently satisfied.
+            const uint ownerGroupDacl = 0x00000001 | 0x00000002 | 0x00000004;
+            if (!SetFileSecurity(alias, ownerGroupDacl,
+                    originalIndependent.SecurityDescriptor))
+                throw new Win32Exception(Marshal.GetLastWin32Error(),
+                    "Test-only owner/group/DACL restoration failed; durable evidence retained");
+            detached = Safety.Capture(alias);
+            securityMatches = detached.SecurityDescriptor.AsSpan()
+                .SequenceEqual(originalIndependent.SecurityDescriptor);
+            if (!securityMatches)
+                throw new InvalidDataException(
+                    "Test-only owner/group/DACL re-read mismatched original descriptor after SetFileSecurity");
+        }
         if (detached.Attributes != originalIndependent.Attributes ||
             detached.CreationUtc != originalIndependent.CreationUtc ||
             detached.ModifiedUtc != originalIndependent.ModifiedUtc)

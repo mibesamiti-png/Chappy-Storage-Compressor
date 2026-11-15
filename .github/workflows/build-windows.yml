@@ -359,6 +359,55 @@ jobs:
           "R2.17 native SIMD and protected JPEG metadata PASS (no speed claim)"
           Get-Content $path
 
+      - name: Verify R2.17 real Windows sRGB ICC and WPF color conversions
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-real-icc-color.json"
+          if (-not (Test-Path $path)) { throw "R2.17 real ICC/WPF color evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.officialSourceCommit -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $r.generatedOnly -ne $true -or
+              $r.windowsInstalledColorProfileUsed -ne $true -or
+              $r.actualProfileBytes -lt 132 -or
+              $r.actualProfileBytes -gt 131072 -or
+              $r.profileSha256 -notmatch "^[0-9A-F]{64}$" -or
+              $r.profileIccHeaderAndTagCountValidated -ne $true -or
+              $r.wpfColorContextOpenedOriginalProfile -ne $true -or
+              $r.colorConvertedBitmapActuallyInvoked -ne $true -or
+              $r.profileSplitIntoMultipleIccApp2Segments -ne $true -or
+              $r.duplicateAndMissingApp2SegmentsRejected -ne $true -or
+              $r.syntheticJpegCount -ne 4 -or
+              $r.sourceHashesAndTimestampsUnchanged -ne $true -or
+              $r.toolVariants -ne "baseline/simd" -or
+              $r.runOrder -ne "baseline1-simd1-simd2-baseline2" -or
+              @($r.runs).Count -ne 4 -or
+              @($r.runs | Where-Object {
+                $_.Accepted -ne 4 -or
+                $_.SourceBytes -le $_.PreviewBytes -or
+                $_.ProductionEngineMs -le 0 -or
+                $_.IndependentAuditMs -le 0 -or
+                $_.ManagedAllocatedBytesOnTestThread -lt 0 -or
+                $_.ProcessWorkingSetBeforeBytes -le 0 -or
+                $_.ProcessWorkingSetAfterBytes -le 0
+              }).Count -ne 0 -or
+              $r.productionEngineAndIndependentColorAuditMeasuredSeparately -ne $true -or
+              $r.singleTestThreadAllocationSampleNotPeakMemory -ne $true -or
+              $r.processWorkingSetSnapshotsNotAttributable -ne $true -or
+              $r.coldAndWarmCacheNotControlled -ne $true -or
+              $r.memoryPeakPerOperationMeasured -ne $false -or
+              $r.measuredSimdSpeedupGuaranteed -ne $false -or
+              $r.realPhotosTested -ne $false -or
+              $r.actualRecoveredBytes -ne 0 -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.realMediaTouched -ne $false) {
+            throw "Windows real ICC color-conversion evidence or safety gate failed"
+          }
+          "R2.17 real ICC profile, WIC color-management and candidate safety PASS"
+          Get-Content $path
+
       - name: Verify R2.17 mid-file SHA byte progress and cancellation
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

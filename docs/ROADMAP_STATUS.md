@@ -170,6 +170,12 @@ PNG＋JPG一括候補の出力先選択後に、保存済みPNG/JPG計画の有�
 
 [テストの詳細](R217_JPEG_METADATA_SIMD.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17 part 8 — real Windows sRGB ICC / WIC color conversions
+
+Windows CIに標準搭載された実際のsRGB ICCプロファイルを読み込んでWPF ColorContextで検証し、合成JPEGのAPP2に複数分割して埋め込む。実プレビューエンジンでSIMDあり/なしをABBA順で検査し、ICC生バイト・WIC色変換BGRA32画素・原本SHA/日時の完全一致をCI必須とする。ICC断片の欠損・重複は拒否する。Windows ICC本体はGitHubに同梱しない。独立監査と処理エンジンの時間を区別し、スレッド割当・プロセスワーキングセットはピーク値やハードウェア性能の主張に使わない。実画像・物理GUI・厳密な温冷キャッシュ測定は未実施。原本操作禁止、実空き容量回復0B、歴史的実装率69.4%は再評価まで維持。
+
+[試験条件](R217_REAL_ICC_COLOR_MANAGEMENT.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

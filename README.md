@@ -187,6 +187,15 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [検証範囲・制限](docs/R217_JPEG_METADATA_SIMD.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第8段階）：Windows実ICCプロファイルの色変換検証
+
+- 前段階の人工ICCヘッダではなく、**Windows標準の実際に読み込めるsRGBプロファイル**をCIの一時領域で使用。JPEGの複数のAPP2セグメントに分割して埋め込み、元データと候補でICCをバイト完全一致で再構成する。
+- WPFのColorContextとColorConvertedBitmapを使って、実際に色変換した画素も元画像・候補で一致するかを検証する。
+- ICC欠損・重複の拒否、元ファイルのSHA-256・日時不変、通常版/SIMD版での実プレビュー生成をテストする。
+- 生成物・計測ログにWindows付属の実ICCファイル本体は保存しない。原本の自動置換・統合・独立Undoは引き続き本番無効、空き容量の実回復は0B。
+
+[詳細な検証条件](docs/R217_REAL_ICC_COLOR_MANAGEMENT.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

@@ -31,6 +31,10 @@ public partial class MainWindow : Window
     // completed item, allowing deterministic routed Stop between entries.
     private Action<PngBatchPreviewEngine.Progress>? _combinedPngProgressTestTap;
     private Action<JpegBatchPreviewEngine.Progress>? _combinedJpegProgressTestTap;
+    // Deterministic CI-only race injection in the narrow gap after the final
+    // UI read-only checks and immediately before the PNG worker starts.
+    // Remains null in production and changes no default behavior.
+    private Action? _combinedBeforePngEngineTestTap;
 
     private sealed class InlineProgressTap<T>(IProgress<T> downstream,
         Action<T>? observer) : IProgress<T>
@@ -625,6 +629,7 @@ public partial class MainWindow : Window
 
             Log($"PNG/JPGまとめて候補作成開始。PNG {preflight.PngFiles:N0}件、JPG {preflight.JpegFiles:N0}件。");
             ProgressText.Text = "PNG一括候補を生成中";
+            _combinedBeforePngEngineTestTap?.Invoke();
             var pngTap = _combinedPngProgressTestTap;
             var png = await Task.Run(() =>
                 PngBatchPreviewEngine.Run(input, output,

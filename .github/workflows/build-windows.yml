@@ -694,6 +694,35 @@ jobs:
           "R2.17 fail-closed combined preview resume inspection PASS"
           Get-Content $path
 
+      - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-ui-progress-efficiency.json"
+          if (-not (Test-Path $path)) { throw "R2.17 UI progress matrix evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.verdict -ne "PASS" -or
+              $r.schema -ne "chappy-r217-batch-ux-throttle-v1" -or
+              $r.generatedNotificationCount -ne 30005 -or
+              $r.forwardedNotificationCount -ne 7 -or
+              $r.priorityPngFailuresAndDeferralsDelivered -ne $true -or
+              $r.priorityJpegReviewFailuresAndDeferralsDelivered -ne $true -or
+              $r.weightedPngAndJpegCounts -ne $true -or
+              $r.planCountDriftMonotonic -ne $true -or
+              $r.emptyAndSingleFormatHandled -ne $true -or
+              $r.negativeIntervalRejected -ne $true -or
+              $r.actualWpfPerformanceBenchmark -ne $false -or
+              $r.syntheticNotificationsNotProductionEventCounts -ne $true -or
+              $r.durableJournalsUnmodifiedByRateLimiter -ne $true -or
+              $r.productionHardlinkMergeEnabled -ne $false -or
+              $r.productionOriginalReplacementEnabled -ne $false -or
+              $r.realMediaTouched -ne $false -or
+              $r.actualFreedDiskBytes -ne 0) {
+            throw "R2.17 weighted batch UX safety contract failed"
+          }
+          "R2.17: 30,005 synthetic notifications projected to seven UI events; critical events preserved"
+          Get-Content $path
+
       - name: Verify R2.17 WPF routed Scan and Stop interaction (synthetic)
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -712,6 +741,9 @@ jobs:
               $r.canceledUiReturnedToIdle -ne $true -or
               $r.canceledUiHasNoPartialGroups -ne $true -or
               $r.secondScanCompletedRoutedClick -ne $true -or
+              $r.previewButtonsDisabledDuringScanAndRestoredAfterCancellation -ne $true -or
+              $r.previewButtonsRestoredAfterSuccess -ne $true -or
+              $r.safeR217PreviewOnlyTitleShown -ne $true -or
               $r.completedUiDuplicateGroups -ne 1 -or
               $r.completedUiProgressPercent -ne 100 -or
               $r.sourceOracleSha256Unchanged -ne $true -or

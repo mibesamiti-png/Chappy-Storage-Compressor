@@ -37,7 +37,11 @@ public static class PngLosslessOptimizer
     }
 
     public static Result CreatePreview(string sourcePath, string destinationDirectory,
-        CancellationToken ct = default)
+        CancellationToken ct = default
+#if CHAPPY_TESTING
+        , Action<long>? testOnlyAfterInflatedWrite = null
+#endif
+        )
     {
         string source = Path.GetFullPath(sourcePath);
         string outputDir = Path.GetFullPath(destinationDirectory);
@@ -95,7 +99,11 @@ public static class PngLosslessOptimizer
                     using (var decompressor = new ZLibStream(payload,
                         CompressionMode.Decompress, leaveOpen: false))
                     {
-                        CopyInflated(decompressor, compressor, exactScanlineLength, ct);
+                        CopyInflated(decompressor, compressor, exactScanlineLength, ct
+#if CHAPPY_TESTING
+                            , testOnlyAfterInflatedWrite
+#endif
+                        );
                     }
                     idatWriter.Complete();
                 }
@@ -192,7 +200,7 @@ public static class PngLosslessOptimizer
     }
 
     private static void CopyInflated(Stream source, Stream destination, long exactBytes,
-        CancellationToken ct)
+        CancellationToken ct, Action<long>? testOnlyAfterWrite = null)
     {
         long count = 0;
         byte[] buffer = new byte[IoBufferSize];
@@ -203,6 +211,11 @@ public static class PngLosslessOptimizer
             count = checked(count + n);
             if (count > exactBytes) throw new InvalidDataException("PNG展開後データが画像寸法を超えています。");
             destination.Write(buffer, 0, n);
+            // Test-only observer is null in every production code path.
+            // Triggering cancellation AFTER a real decompressed block is
+            // copied guarantees the candidate is already being constructed.
+            testOnlyAfterWrite?.Invoke(count);
+            ct.ThrowIfCancellationRequested();
         }
         if (count != exactBytes)
             throw new InvalidDataException($"PNG展開後データ長が不一致: {count}/{exactBytes}");

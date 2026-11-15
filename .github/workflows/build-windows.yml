@@ -508,6 +508,9 @@ jobs:
               $r.nativeExecutableMeasuredDirectly -ne $true -or
               $r.osProvidedPerChildPeakWorkingSet64 -ne $true -or
               $r.osProvidedPerChildPeakVirtualMemorySize64 -ne $true -or
+              $r.childPeakCountersReadOnlyWhileAlive -ne $true -or
+              $r.observedPeakNotGuaranteedFullLifetimePeak -ne $true -or
+              $r.liveCounterPollingWaitMs -ne 2 -or
               $r.separateDirectToolAndRealApplicationPreviewBothExecuted -ne $true -or
               $r.byteIdenticalOutputsAndWicPixelChecks -ne $true -or
               $r.originalSha256AndTimestampsPreserved -ne $true -or
@@ -518,7 +521,8 @@ jobs:
               @($samples | Where-Object {
                 $_.ChildExitCode -ne 0 -or
                 $_.ChildPeakWorkingSetBytes -le 0 -or
-                $_.ChildPeakVirtualMemoryBytes -le 0 -or
+                 $_.ChildPeakVirtualMemoryBytes -le 0 -or
+                $_.LivePeakSampleCount -le 0 -or
                 $_.ChildPeakPagedMemoryBytes -lt 0 -or
                 $_.NativeJpegtranElapsedMs -le 0 -or
                 $_.EstimatedCandidateSavingBytes -le 0 -or

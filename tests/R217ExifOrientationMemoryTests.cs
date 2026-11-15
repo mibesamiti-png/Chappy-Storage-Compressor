@@ -399,15 +399,11 @@ internal static class R217ExifOrientationMemoryTests
         string colorDir = Path.Combine(Environment.GetFolderPath(
             Environment.SpecialFolder.Windows), "System32", "spool", "drivers", "color");
         string srgb = Path.Combine(colorDir, "sRGB Color Space Profile.icm");
+        byte[] bytes = [];
         string? chosen = File.Exists(srgb) ?
-            FindAlternateColorProfile(srgb, out var bytesFromWindows) : null;
-        byte[] bytes;
+            FindAlternateColorProfile(srgb, out bytes) : null;
         bool fromWindows = chosen is not null;
-        if (fromWindows)
-        {
-            bytes = bytesFromWindows!;
-        }
-        else
+        if (!fromWindows)
         {
             // Verbatim 456-byte public-domain (CC0) compact Display P3
             // compatibility ICC, source commit bdd84663061bc4ae95ca70decff54f581e27f702

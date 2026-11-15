@@ -134,28 +134,16 @@ public static class CombinedBatchResumeInspector
             }
             jpegCount = jpeg.Entries.Count;
         }
-        // A crash can leave a syntactically correct .chappy-preview-GUID.png
-        // even though no durable journal references it. Reject ALL such
-        // unreferenced outputs: do not silently treat the folder as safe and
-        // never guess whether the file is user-owned or delete it.
+        // Syntactically valid GUID names alone do not prove that a file
+        // belongs to a validated plan; reject unreferenced crash remnants.
         if (pngDir)
-        {
-            var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (png != null)
-                foreach (var e in png.Entries)
-                    if (!string.IsNullOrWhiteSpace(e.PreviewPath))
-                        referenced.Add(Path.GetFullPath(e.PreviewPath));
-            RejectUnreferencedCandidates(Path.Combine(output, PngPreviews), referenced, ct);
-        }
+            PreviewReferenceGate.RejectUnreferenced(
+                Path.Combine(output, PngPreviews),
+                png?.Entries.Select(e => e.PreviewPath) ?? Enumerable.Empty<string?>(), ct);
         if (jpegDir)
-        {
-            var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (jpeg != null)
-                foreach (var e in jpeg.Entries)
-                    if (!string.IsNullOrWhiteSpace(e.CandidatePath))
-                        referenced.Add(Path.GetFullPath(e.CandidatePath));
-            RejectUnreferencedCandidates(Path.Combine(output, JpegPreviews), referenced, ct);
-        }
+            PreviewReferenceGate.RejectUnreferenced(
+                Path.Combine(output, JpegPreviews),
+                jpeg?.Entries.Select(e => e.CandidatePath) ?? Enumerable.Empty<string?>(), ct);
         ct.ThrowIfCancellationRequested();
         // Never create the output folder, lock, state file, or journal here.
         // A later engine Run must re-validate after the user's confirmation.
@@ -269,19 +257,6 @@ public static class CombinedBatchResumeInspector
         JpegBatchPreviewEngine.CheckNoReparse(path);
         if (isFile && NativeFile.GetIdentity(path).LinkCount != 1)
             throw new InvalidDataException("作業ファイルが既存ハードリンクです。再開できません。");
-    }
-
-    private static void RejectUnreferencedCandidates(string dir,
-        HashSet<string> referenced, CancellationToken ct)
-    {
-        foreach (string path in Directory.EnumerateFiles(dir))
-        {
-            ct.ThrowIfCancellationRequested();
-            if (!referenced.Contains(Path.GetFullPath(path)))
-                throw new InvalidDataException(
-                    "再開記録に参照のない候補が残っています。自動削除や自動再開はせず、手動で確認してください: " +
-                    Path.GetFileName(path));
-        }
     }
 
     private static void ValidatePreviewDirectory(string dir, string tag,

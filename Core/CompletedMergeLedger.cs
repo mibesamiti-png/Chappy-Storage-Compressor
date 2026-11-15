@@ -356,10 +356,60 @@ public static class CompletedMergeLedger
     public static FileSnapshot LoadOriginalForSyntheticUndo(string rawRoot, string id)
     {
         string root = RequireSynthetic(rawRoot);
+        // A previous Undo process could have died while the alias still
+        // shares the original NTFS ID. The completed *merge* ledger alone
+        // cannot authorize a second Undo while that attempt is unresolved.
+        if (IndependentUndoCrashJournal.Inspect(root).Entries.Any(e =>
+                e.OperationId == id &&
+                e.Phase is not ("aborted" or "finished")))
+            throw new InvalidDataException("Interrupted Undo evidence must be independently reviewed before a new Undo");
         if (Inspect(root).Entries.Count(e => e.OperationId == id &&
                 e.State == "VerifiedCompleted") != 1)
             throw new InvalidDataException("No verified completed ledger available for independent Undo");
         return Original(Read(root, FileFor(root, id, "completed"), id));
+    }
+
+    /// <summary>
+    /// Test-only read of original metadata across a genuine Undo cutover.
+    /// Do NOT infer original attributes/security from the replaced alias:
+    /// those must originate from the saved completed ledger.
+    /// </summary>
+    internal static FileSnapshot LoadOriginalForSyntheticUndoRecovery(
+        string rawRoot, string id, string expectedAlias, string expectedMaster,
+        string expectedHash, uint expectedLinks)
+    {
+        string root = RequireSynthetic(rawRoot);
+        if (Journal.Pending().Count != 0 || Journal.UnresolvedRecordFiles().Count != 0)
+            throw new InvalidDataException("Incomplete merge recovery journal blocks Undo recovery");
+        string completed = FileFor(root, id, "completed");
+        string restored = FileFor(root, id, "restored");
+        if (File.Exists(completed) == File.Exists(restored))
+            throw new InvalidDataException("Exactly one completed or restored ledger is required");
+        Record record = Read(root, File.Exists(completed) ? completed : restored, id);
+        if (!Path.GetFullPath(record.Alias).Equals(Path.GetFullPath(expectedAlias),
+                StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetFullPath(record.Master).Equals(Path.GetFullPath(expectedMaster),
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(record.Hash, expectedHash, StringComparison.OrdinalIgnoreCase) ||
+            record.ExpectedLinkCount != expectedLinks ||
+            !File.Exists(record.Alias) || !File.Exists(record.Master))
+            throw new InvalidDataException("Completed ledger does not match submitted Undo operation");
+        var masterId = NativeFile.GetIdentity(record.Master);
+        var aliasId = NativeFile.GetIdentity(record.Alias);
+        if (masterId.VolumeSerial != record.MasterVolume ||
+            masterId.FileIndex != record.MasterIndex ||
+            aliasId.VolumeSerial != record.MasterVolume ||
+            masterId.LinkCount !=
+                (aliasId.SameFile(masterId) ? expectedLinks : expectedLinks - 1) ||
+            aliasId.LinkCount !=
+                (aliasId.SameFile(masterId) ? expectedLinks : 1) ||
+            !string.Equals(Safety.ComputeSha256(record.Alias, CancellationToken.None),
+                record.Hash, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Safety.ComputeSha256(record.Master, CancellationToken.None),
+                record.Hash, StringComparison.OrdinalIgnoreCase) ||
+            !Safety.ByteEqual(record.Alias, record.Master, CancellationToken.None))
+            throw new InvalidDataException("Master/alias identity or bytes diverged during Undo recovery");
+        return Original(record);
     }
 
     public static void MarkRestoredSynthetic(string rawRoot, string id)

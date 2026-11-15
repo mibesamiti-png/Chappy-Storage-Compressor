@@ -197,6 +197,9 @@ internal static class UiInteractionSmoke
                     StringComparison.Ordinal) &&
                 ledgerBody.Contains("本番統合・本番独立Undoは無効",
                     StringComparison.Ordinal) &&
+                ledgerBody.Contains("独立Undo中断履歴：読み取り専用",
+                    StringComparison.Ordinal) &&
+                ledgerBody.Contains("未完了: 0件", StringComparison.Ordinal) &&
                 !Directory.Exists(Safety.StorePath(originals)) &&
                 OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
                 NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
@@ -735,6 +738,11 @@ internal static class UiInteractionSmoke
                     part24ActualWpfReadOnlyCompletedLedgerChecked = part24WpfReadOnlyLedger,
                     part24NoStoreCreatedByReadOnlyLedger = !Directory.Exists(Safety.StorePath(originals)),
                     part24ProductionMergeStillLocked = !mergeButton.IsEnabled,
+                    part25WpfInterruptedUndoReadOnlyStatusVerified = part24WpfReadOnlyLedger &&
+                        ledgerBody.Contains("未完了: 0件", StringComparison.Ordinal),
+                    part25ProductionUndoMutationStillDisabled =
+                        !IndependentUndoEngine.ProductionEnabled &&
+                        !IndependentUndoCrashJournal.ProductionMutationEnabled,
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

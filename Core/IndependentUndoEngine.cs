@@ -39,6 +39,8 @@ public static class IndependentUndoEngine
         string evidenceDirectory, CancellationToken ct = default
 #if CHAPPY_TESTING
         , Action<string>? testOnlyBeforeFinalValidation = null
+        , string? testOnlyCompletedOperationId = null
+        , Action<string>? testOnlyCrashCheckpoint = null
 #endif
         )
     {
@@ -98,6 +100,13 @@ public static class IndependentUndoEngine
         string record = Path.Combine(evidence, id + ".part23-undo.json");
         if (File.Exists(stage) || File.Exists(record))
             throw new IOException("Undo stage/evidence already exists");
+        if (testOnlyCompletedOperationId is not null)
+        {
+            IndependentUndoCrashJournal.BeginSynthetic(root,
+                testOnlyCompletedOperationId, originalIndependent, master,
+                stage, expectedHash, expectedSharedLinkCount);
+            testOnlyCrashCheckpoint?.Invoke("intent-written");
+        }
 
         // A full independent copy consumes capacity; the duplicate link is
         // retained until the stage is validated. Use test-owned paths only.
@@ -119,6 +128,11 @@ public static class IndependentUndoEngine
                 expectedHash, StringComparison.OrdinalIgnoreCase);
         if (!StageValid(staged))
             throw new InvalidDataException("Independent stage failed byte or owner/DACL/metadata validation");
+        if (testOnlyCompletedOperationId is not null)
+        {
+            IndependentUndoCrashJournal.MarkStageSynthetic(root, testOnlyCompletedOperationId);
+            testOnlyCrashCheckpoint?.Invoke("stage-validated");
+        }
 
         var intent = new Evidence(1, alias, master, stage, expectedHash,
             shared.Identity.VolumeSerial, shared.Identity.FileIndex,
@@ -149,6 +163,13 @@ public static class IndependentUndoEngine
         // This is a single test-owned alias, NOT the master. The independent
         // source and store link remain untouched by the replace operation.
         File.Replace(stage, alias, null);
+        // This crash checkpoint occurs AFTER the name has been switched to
+        // an independent NTFS ID, BEFORE owner/DACL/time normalization.
+        if (testOnlyCompletedOperationId is not null)
+        {
+            testOnlyCrashCheckpoint?.Invoke("post-cutover-before-metadata");
+            IndependentUndoCrashJournal.MarkCutoverSynthetic(root, testOnlyCompletedOperationId);
+        }
         FileSnapshot detached = Safety.Capture(alias);
         // ReplaceFileW can preserve metadata of the *replaced* NTFS alias
         // rather than all metadata of the staged independent file. Reapply
@@ -220,7 +241,76 @@ public static class IndependentUndoEngine
                 ", owner+DACL=" +
                 detached.SecurityDescriptor.AsSpan().SequenceEqual(originalIndependent.SecurityDescriptor) +
                 "; retain evidence");
+        if (testOnlyCompletedOperationId is not null)
+        {
+            IndependentUndoCrashJournal.MarkMetadataSynthetic(root, testOnlyCompletedOperationId);
+            testOnlyCrashCheckpoint?.Invoke("metadata-restored-before-ledger");
+        }
         return new Result(alias, record, shared.Identity, detached.Identity, detached.Length);
 #endif
     }
+
+#if CHAPPY_TESTING
+    // Deliberate, generated-only recovery from a genuine post-File.Replace
+    // crash. The original security and times are from completed history,
+    // never from the potentially half-restored current alias.
+    internal static void RestoreMetadataAfterCrashSynthetic(string testRoot,
+        FileSnapshot original, string master, string hash, uint expectedLinks)
+    {
+        string root = Safety.ValidateRoot(testRoot);
+        string temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        if (!root.StartsWith(temp + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) ||
+            !root.Contains("ChappyStorageSmoke_", StringComparison.OrdinalIgnoreCase) ||
+            File.ReadAllText(Path.Combine(root, ".chappy-part23-generated-only")) !=
+                "Part23 synthetic data only")
+            throw new InvalidOperationException("Non-generated Undo recovery denied");
+        using var exclusive = MutationLease.Acquire();
+        Journal.AssertCleanBeforeMerge();
+        var masterId = NativeFile.GetIdentity(master);
+        var detachedId = NativeFile.GetIdentity(original.Path);
+        if (expectedLinks < 3 ||
+            masterId.LinkCount != expectedLinks - 1 ||
+            detachedId.LinkCount != 1 ||
+            detachedId.SameFile(masterId) ||
+            detachedId.VolumeSerial != masterId.VolumeSerial ||
+            !string.Equals(Safety.ComputeSha256(original.Path, CancellationToken.None),
+                hash, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Safety.ComputeSha256(master, CancellationToken.None),
+                hash, StringComparison.OrdinalIgnoreCase) ||
+            !Safety.ByteEqual(original.Path, master, CancellationToken.None))
+            throw new InvalidDataException("Undo restart refused: NTFS identity/link count or bytes changed");
+
+        FileSnapshot current = Safety.Capture(original.Path);
+        if (!current.SecurityDescriptor.AsSpan().SequenceEqual(original.SecurityDescriptor))
+        {
+            const uint ownerGroupDacl = 0x00000001 | 0x00000002 | 0x00000004;
+            if (!SetFileSecurity(original.Path, ownerGroupDacl, original.SecurityDescriptor))
+                throw new Win32Exception(Marshal.GetLastWin32Error(),
+                    "Restart Undo security restoration failed; evidence retained");
+        }
+        current = Safety.Capture(original.Path);
+        if (current.Attributes != original.Attributes ||
+            current.CreationUtc != original.CreationUtc ||
+            current.ModifiedUtc != original.ModifiedUtc)
+        {
+            File.SetAttributes(original.Path, original.Attributes);
+            File.SetCreationTimeUtc(original.Path, original.CreationUtc);
+            File.SetLastWriteTimeUtc(original.Path, original.ModifiedUtc);
+        }
+        FileSnapshot verified = Safety.Capture(original.Path);
+        if (!verified.Identity.SameFile(detachedId) ||
+            verified.Identity.LinkCount != 1 ||
+            verified.Length != original.Length ||
+            verified.Attributes != original.Attributes ||
+            verified.CreationUtc != original.CreationUtc ||
+            verified.ModifiedUtc != original.ModifiedUtc ||
+            !verified.SecurityDescriptor.AsSpan().SequenceEqual(original.SecurityDescriptor) ||
+            !string.Equals(Safety.ComputeSha256(original.Path, CancellationToken.None),
+                hash, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Safety.ComputeSha256(master, CancellationToken.None),
+                hash, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Interrupted Undo final metadata/identity validation failed");
+    }
+#endif
 }

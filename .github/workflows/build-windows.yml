@@ -945,6 +945,50 @@ jobs:
           "R2.17 Part24 real Core durable ledger, forced death and independent Undo PASS"
           Get-Content $path
 
+      - name: Verify R2.17 actual interrupted independent Undo process deaths and safe replay
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-interrupted-undo-replay.json"
+          if (-not (Test-Path $path)) { throw "Part25 interrupted Undo evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-interrupted-undo-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.realCoreWorkerKillCases -ne 5 -or
+              $r.preCutoverRetryRecovered -ne 2 -or
+              $r.independentPostCutoverRecovered -ne 3 -or
+              $r.tamperedStageRefusedWithoutDeletion -ne $true -or
+              $r.malformedStageLeftForManualReview -ne $true -or
+              $r.originalSourceHashesAndSecurityRestoredInEveryCase -ne $true -or
+              $r.completedMergeHistoryMarkedRestoredInEveryCase -ne $true -or
+              $r.productionReadOnlyInspectorHasNoSideEffects -ne $true -or
+              $r.productionUndoMutationEnabled -ne $false -or
+              $r.productionUndoJournalWritesEnabled -ne $false -or
+              $r.productionDedupeAndOriginalReplacementEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.actualUserBytesRecovered -ne 0 -or
+              $r.actualPowerCutProven -ne $false -or
+              $r.arbitraryAclAdsEfsProven -ne $false) {
+            throw "Part25 actual forced undo process death/replay safety evidence mismatch"
+          }
+          $points = @(
+            'intent-written', 'stage-validated',
+            'post-cutover-before-metadata', 'metadata-restored-before-ledger',
+            'after-ledger-restored-before-journal'
+          )
+          foreach ($point in $points) {
+            $hits = @($r.exactCheckpoints | Where-Object {
+              $_.checkpoint -eq $point -and $_.actualWorkerKilled -eq $true -and
+              $_.ledgerRestored -eq $true -and
+              $_.sourceAndMasterHashMatch -eq $true -and
+              $_.sourceSecurityAndTimeRestored -eq $true
+            })
+            if ($hits.Count -ne 1) { throw "Missing verified actual Undo kill checkpoint: $point" }
+          }
+          "R2.17 Part25 five real Undo process deaths + explicit safe replay PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -1034,6 +1078,8 @@ jobs:
               $r.part24ActualWpfReadOnlyCompletedLedgerChecked -ne $true -or
               $r.part24NoStoreCreatedByReadOnlyLedger -ne $true -or
               $r.part24ProductionMergeStillLocked -ne $true -or
+              $r.part25WpfInterruptedUndoReadOnlyStatusVerified -ne $true -or
+              $r.part25ProductionUndoMutationStillDisabled -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

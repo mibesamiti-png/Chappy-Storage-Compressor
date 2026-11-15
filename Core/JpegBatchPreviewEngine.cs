@@ -95,7 +95,8 @@ public static class JpegBatchPreviewEngine
             if (File.Exists(journalPath))
                 throw new InvalidDataException("計画が存在せず進捗ログだけが残っています。手動確認してください。");
             plan = BuildPlan(input, output, tool, ct);
-            PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
+            if (approvedInput is not null)
+                PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
             SaveNewPlan(planPath, plan);
         }
 #if CHAPPY_TESTING
@@ -103,7 +104,8 @@ public static class JpegBatchPreviewEngine
         // and before any output candidate is created.
         testOnlyBeforeCandidateSetup?.Invoke();
 #endif
-        PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
+        if (approvedInput is not null)
+            PreviewOutputStartGate.AssertKnownRoot(output, ct, LockName);
         if (approvedInput is not null)
             PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
         Directory.CreateDirectory(previews);

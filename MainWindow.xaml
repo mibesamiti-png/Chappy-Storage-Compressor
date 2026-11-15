@@ -1,7 +1,7 @@
 <Window x:Class="ChappyStorageCompressor.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Chappy Storage Compressor R2.14 — PNG/JPGまとめて無劣化候補" Width="1140" Height="830"
+        Title="Chappy Storage Compressor R2.17 — 原本を守るPNG/JPG候補作成" Width="1140" Height="830"
         MinWidth="900" MinHeight="660" Background="#0E1724" FontFamily="Yu Gothic UI, Segoe UI"
         Foreground="#F1F6FC" WindowStartupLocation="CenterScreen">
   <Grid Margin="24">
@@ -16,12 +16,12 @@
 
     <DockPanel Grid.Row="0" Margin="0,0,0,20" LastChildFill="True">
       <Border DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Top" Background="#173E3D" CornerRadius="14" Padding="10,5" Margin="10,0,0,0">
-        <TextBlock Foreground="#79E1C8" Text="R2.14  ·  JPG / PNG 一括候補＋MP4重複分析" FontSize="12"/>
+        <TextBlock Foreground="#79E1C8" Text="R2.17  ·  JPG / PNG 候補＋MP4重複分析" FontSize="12"/>
       </Border>
       <StackPanel>
         <TextBlock Text="CHAPPY  /  STORAGE LAB" Foreground="#57D1BC" FontSize="12" FontWeight="Bold"/>
-        <TextBlock Text="完全一致ファイルの重複検出・統合" FontSize="25" FontWeight="SemiBold" Margin="0,5,0,5"/>
-        <TextBlock Text="重複は読み取り専用検出。PNGは元の場所を保持し、候補を別フォルダに順次生成。" Foreground="#ABC1D4" FontSize="13"/>
+        <TextBlock Text="完全一致の重複検出・安全な圧縮候補" FontSize="25" FontWeight="SemiBold" Margin="0,5,0,5"/>
+        <TextBlock Text="重複検出は読み取り専用。JPG・PNGの候補を別フォルダに生成し、原本は変更しません。" Foreground="#ABC1D4" FontSize="13"/>
       </StackPanel>
     </DockPanel>
 
@@ -51,7 +51,7 @@
         <StackPanel><TextBlock Text="統合可能グループ" Foreground="#ABC1D4" FontSize="12"/><TextBlock x:Name="SafeCountText" Text="—" FontWeight="SemiBold" FontSize="22"/></StackPanel>
       </Border>
       <Border Grid.Column="3" Background="#173E3D" CornerRadius="12" Padding="14">
-        <StackPanel><TextBlock Text="推定回復量（論理値）" Foreground="#ACD9D2" FontSize="12"/><TextBlock x:Name="SavingsText" Text="—" Foreground="#79E1C8" FontWeight="SemiBold" FontSize="22"/></StackPanel>
+        <StackPanel><TextBlock Text="削減見込（未適用の論理値）" Foreground="#ACD9D2" FontSize="12"/><TextBlock x:Name="SavingsText" Text="—" Foreground="#79E1C8" FontWeight="SemiBold" FontSize="22"/></StackPanel>
       </Border>
     </Grid>
 
@@ -83,7 +83,7 @@
         <ProgressBar x:Name="JobProgress" Grid.Column="0" Height="11" Minimum="0" Maximum="100" Value="0" Foreground="#57D1BC" Background="#26394B"/>
         <TextBlock x:Name="ProgressText" Grid.Column="1" Text="待機中" Foreground="#ABC1D4" Margin="14,0,0,0" FontSize="12" Width="180" TextAlignment="Right"/>
       </Grid>
-      <TextBlock Foreground="#E7BC81" FontSize="12" Margin="0,8,0,0" Text="※ ハードリンク後は別の場所の同名データも同時に変わる場合があります。編集する画像・動画には使わないでください。"/>
+      <TextBlock Foreground="#E7BC81" FontSize="12" Margin="0,8,0,0" Text="※ 原本置換・ハードリンク統合・統合解除は本番無効です。候補作成だけでは実際の空き容量は増えません。"/>
     </StackPanel>
 
     <Border Grid.Row="4" Background="{StaticResource Panel}" CornerRadius="12" Padding="10" Margin="0,0,0,12">

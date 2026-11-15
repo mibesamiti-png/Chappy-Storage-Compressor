@@ -50,7 +50,11 @@ public static class JpegBatchPreviewEngine
     public sealed record Audit(IReadOnlyList<ReportRow> Rows, long VerifiedSavingBytes, int NeedsReview);
 
     public static Summary Run(string inputRoot, string outputRoot, string jpegtranExe,
-        IProgress<Progress>? progress = null, CancellationToken ct = default)
+        IProgress<Progress>? progress = null, CancellationToken ct = default
+#if CHAPPY_TESTING
+        , Action<string>? testOnlyAfterVerifiedCandidateBeforeJournal = null
+#endif
+        )
     {
         var input = CanonicalFolder(inputRoot);
         var output = CanonicalFolder(outputRoot);
@@ -122,6 +126,14 @@ public static class JpegBatchPreviewEngine
                     var result = JpegLosslessPreviewEngine.CreatePreview(original, previews, tool, ct);
                     if (result.Candidate is not null)
                     {
+#if CHAPPY_TESTING
+                        // The real official jpegtran process has finished and
+                        // the candidate already passed JPEG marker + WIC pixel
+                        // validation. This deterministic synthetic-only hook
+                        // fires BEFORE the first journal entry references it.
+                        // A killed test worker deliberately leaves an orphan.
+                        testOnlyAfterVerifiedCandidateBeforeJournal?.Invoke(result.Candidate);
+#endif
                         // The original is still locked against writers inside the preview engine.
                         // Recompute its identity for safe read-only auditing on later runs.
                         entry.SourceSha256 = sourceBefore;

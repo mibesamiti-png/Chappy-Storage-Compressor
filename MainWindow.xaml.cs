@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     // Real user-facing feature is a READ-ONLY plan. This adapter permits
     // deterministic STA/WPF CI without a physical Windows message box.
     private Action<string> _showDedupePlan;
+    private Action<string> _showCompletedLedger;
     // Optional, per-window, inline progress taps for isolated WPF tests.
     // Production leaves them null. The real preview engines and their journals
     // run unchanged; the observer is invoked only AFTER the engine reports a
@@ -61,6 +62,9 @@ public partial class MainWindow : Window
         _showDedupePlan = message => MessageBox.Show(message,
             "重複優先・独立Undo事前計画（読み取り専用）",
             MessageBoxButton.OK, MessageBoxImage.Information);
+        _showCompletedLedger = message => MessageBox.Show(message,
+            "統合完了履歴（読み取り専用）",
+            MessageBoxButton.OK, MessageBoxImage.Information);
         InitializeComponent();
         GroupsGrid.ItemsSource = _rows;
         Log("起動しました。対象を選び「読み取り専用スキャン」を実行してください。");
@@ -83,6 +87,7 @@ public partial class MainWindow : Window
         ScanButton.IsEnabled = !busy;
         MergeButton.IsEnabled = false; // destructive merge remains permanently locked.
         DedupePlanButton.IsEnabled = !busy && _lastScan is { Groups.Count: > 0 };
+        CompletedLedgerButton.IsEnabled = !busy;
         MediaReportButton.IsEnabled = !busy && _lastScan != null;
         DetailsButton.IsEnabled = !busy && GroupsGrid.SelectedItems.Count == 1;
         StopButton.IsEnabled = busy;
@@ -225,6 +230,48 @@ public partial class MainWindow : Window
         var safe = _rows.Where(x => x.Status == "統合可能").ToList();
         SafeCountText.Text = safe.Count.ToString("N0");
         SavingsText.Text = GroupRow.HumanSize(safe.Sum(x => x.Group.Savings));
+    }
+
+    // Production reads completed-ledger files but NEVER repairs, promotes,
+    // links, replaces or deletes anything. Even a malformed record is only
+    // reported to the user for manual review.
+    private async void CompletedLedger_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        string root;
+        try { root = Safety.ValidateRoot(PathBox.Text); }
+        catch (Exception ex)
+        {
+            _showCompletedLedger("対象フォルダの安全性を確認できません。\\n" + ex.Message);
+            return;
+        }
+        _work = new CancellationTokenSource();
+        var token = _work.Token;
+        Busy(true);
+        ProgressText.Text = "統合履歴を読み取り専用で照合中";
+        try
+        {
+            var summary = await Task.Run(() => CompletedMergeLedger.Inspect(root, token), token);
+            token.ThrowIfCancellationRequested();
+            ProgressText.Text = "統合履歴を確認（未変更）";
+            Log($"完了台帳を読み取り専用で確認：統合 {summary.VerifiedCompleted}、" +
+                $"独立化 {summary.VerifiedRestored}、要確認 {summary.NeedsReview}、実容量変更 0B。");
+            _showCompletedLedger(summary.Describe());
+        }
+        catch (OperationCanceledException)
+        {
+            ProgressText.Text = "台帳確認を中断";
+        }
+        catch (Exception ex)
+        {
+            ProgressText.Text = "台帳確認エラー（未変更）";
+            _showCompletedLedger("履歴は未検証です。ファイルは変更していません。\\n" + ex.Message);
+        }
+        finally
+        {
+            Busy(false);
+            _work?.Dispose(); _work = null;
+        }
     }
 
     // This is a fully read-only, revalidated plan; deliberately NEVER

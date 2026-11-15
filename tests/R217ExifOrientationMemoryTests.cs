@@ -237,6 +237,7 @@ internal static class R217ExifOrientationMemoryTests
         private readonly Task loop;
         private long maximum;
         private int count;
+        private int disposed;
         public ProcessMemorySampler()
         {
             loop = Task.Run(() =>
@@ -262,6 +263,7 @@ internal static class R217ExifOrientationMemoryTests
         public int Samples => Volatile.Read(ref count);
         public void Dispose()
         {
+            if (Interlocked.Exchange(ref disposed, 1) != 0) return;
             stop.Cancel();
             loop.GetAwaiter().GetResult();
             stop.Dispose();

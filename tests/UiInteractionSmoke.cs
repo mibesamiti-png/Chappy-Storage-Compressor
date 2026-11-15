@@ -48,6 +48,9 @@ internal static class UiInteractionSmoke
             var scanButton = Named<Button>(window, "ScanButton");
             var stopButton = Named<Button>(window, "StopButton");
             var mergeButton = Named<Button>(window, "MergeButton");
+            var unifiedBatchButton = Named<Button>(window, "UnifiedBatchButton");
+            var pngBatchButton = Named<Button>(window, "PngBatchButton");
+            var jpegBatchButton = Named<Button>(window, "JpegBatchButton");
             var jobProgress = Named<ProgressBar>(window, "JobProgress");
             var progressText = Named<TextBlock>(window, "ProgressText");
             var groupsGrid = Named<DataGrid>(window, "GroupsGrid");
@@ -56,6 +59,10 @@ internal static class UiInteractionSmoke
             Require(!mergeButton.IsEnabled &&
                     !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
+            Require(window.Title.Contains("R2.17", StringComparison.Ordinal) &&
+                    unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
+                    jpegBatchButton.IsEnabled,
+                "Actual WPF UI shows R2.17 and preview-only batch actions enabled while idle");
 
             string originals = Path.Combine(testRoot, "synthetic-originals");
             Directory.CreateDirectory(originals);
@@ -79,6 +86,9 @@ internal static class UiInteractionSmoke
                 ButtonBase.ClickEvent, scanButton));
             Require(stopButton.IsEnabled && !scanButton.IsEnabled,
                 "Scan_Click enters busy mode and enables Stop in WPF");
+            Require(!unifiedBatchButton.IsEnabled && !pngBatchButton.IsEnabled &&
+                    !jpegBatchButton.IsEnabled && !mergeButton.IsEnabled,
+                "Actual running Scan disables ALL preview batch launch buttons, never enables Merge");
             Require(jobProgress.IsIndeterminate,
                 "Scanning begins with indeterminate WPF progress");
 
@@ -102,6 +112,9 @@ internal static class UiInteractionSmoke
                     !mergeButton.IsEnabled &&
                     groupsGrid.Items.Count == 0,
                 "Canceled scan clears running UI state and exposes no partial groups");
+            Require(unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
+                    jpegBatchButton.IsEnabled && !mergeButton.IsEnabled,
+                "After canceled Scan, PNG/JPEG preview-only controls recover safely while Merge stays locked");
 
             // A second invocation uses the same synthetic files and must
             // complete normally through the real WPF routed Click handler.
@@ -126,6 +139,9 @@ internal static class UiInteractionSmoke
                     !mergeButton.IsEnabled &&
                     groupsGrid.Items.Count == 1,
                 "Completed scan has one valid duplicate group and 100% WPF progress");
+            Require(unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
+                    jpegBatchButton.IsEnabled && !mergeButton.IsEnabled,
+                "After completed Scan, all preview-only batch controls return to idle availability");
             Require(OracleHash(left) == beforeA &&
                     OracleHash(right) == beforeB &&
                     Directory.EnumerateFiles(originals).Count() == 2,
@@ -146,6 +162,9 @@ internal static class UiInteractionSmoke
                     canceledUiReturnedToIdle = true,
                     canceledUiHasNoPartialGroups = true,
                     secondScanCompletedRoutedClick = true,
+                    previewButtonsDisabledDuringScanAndRestoredAfterCancellation = true,
+                    previewButtonsRestoredAfterSuccess = true,
+                    safeR217PreviewOnlyTitleShown = true,
                     completedUiDuplicateGroups = 1,
                     completedUiProgressPercent = 100,
                     intermediateHashUiSampled = intermediateHashUiSeen,

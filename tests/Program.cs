@@ -1577,6 +1577,7 @@ static class Program
             R217IntegratedDedupeUndoTests.Run(root, Check, ExpectThrows);
             R217CompletedMergeLedgerTests.Run(root, Check, ExpectThrows);
             R217InterruptedUndoReplayTests.Run(root, Check, ExpectThrows);
+            R217MultiGroupLedgerTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

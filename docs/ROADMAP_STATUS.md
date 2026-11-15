@@ -280,6 +280,14 @@ A real separate test-only Core process will be forcibly killed in five distinct 
 
 **Not yet a shippable Undo:** All added journal writers, explicit retry and cutover metadata repair are `CHAPPY_TESTING`-gated on uniquely verified disposable local NTFS test fixtures. Production can only inspect. These are controlled process crashes, not sudden device power loss, cache/rename durability guarantees or arbitrary multi-group ACL/EFS/ADS replay. Original replacement, production hardlink merge and production Undo remain disabled; actual user capacity recovered **0 B**; historical 69.4% implementation estimate is unchanged. PR-head full CI and independent postmerge main CI remain separate gates.
 
+## R2.17 Part 26 — disjoint multi-group completed history and fail-closed multi-alias preflight
+
+Part26 introduces a stricter **test-only** completed-ledger safety boundary: a group with three or more independent filenames is skipped **before** a new hardlink, pending journal or backup rename when `DedupeEngine.Run(...testOnlyRecordCompletedMerges:true)` is used. The existing one-alias durable record stores the master's exact link count; applying a second saved alias to the same master otherwise invalidates that earlier record. It would be misleading to claim that unsupported N-alias groups already have crash-consistent persisted Undo.
+
+A new generated-only Windows Core integration uses three **different two-file** PNG/JPEG/MP4 groups plus an unsupported three-file MP4-like group. It tests one real Core merge pass, three independently re-openable completed ledgers, a changed external hardlink affecting only its own group's read-only approval, and three actual independent Undo operations using original metadata from persisted history. Source bytes, file identities, timestamps, owner+DACL and journal cleanup are asserted. CI additionally requires `r217-multigroup-ledger.json` evidence. [Part26 scope and next multi-alias gate](R217_MULTIGROUP_LEDGER_GATE.md).
+
+**Still outstanding:** a group-level manifest and restartable N-alias commit/Undo protocol, true power-loss durability/isolated VHDX capacity, external writers and arbitrary security metadata, and final production GUI user approval. The normal WPF app's original replacement/merge/Undo are still disabled, actual user capacity regained **0 B** and the historical **69.4%** source estimate remains unchanged. Require final PR-head Windows CI and a distinct postmerge main CI run.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

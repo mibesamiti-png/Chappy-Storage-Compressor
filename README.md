@@ -206,6 +206,15 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [検証仕様と測定限界](docs/R217_EXIF_ORIENTATION_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第10段階）：jpegtran子プロセスのピークメモリ測定
+
+- 前段階の.NET親プロセスの計測とは別に、**Windowsの `Process.PeakWorkingSet64` でネイティブ `jpegtran.exe` 子プロセス自身の最大常駐メモリを測定**するテストを追加。
+- 3種類の人工JPEG×通常版／SIMD版の計6プロセスを実行。独立した出力とアプリ本体の `JpegLosslessPreviewEngine.CreatePreview` の候補をバイト・SHA256・全画素・メタデータで照合。
+- 元データは人工生成のみ。原本のSHA-256・更新日時を保護し、実画像・原本置換・ハードリンク統合は本番無効。容量の実回復は0B。
+- ピークは**子プロセス単独の常駐メモリ**であり、Chappyアプリ全体の最大使用量や一般的なSIMD優位性の保証ではない。
+
+[試験内容と制限](docs/R217_NATIVE_CHILD_PEAK_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

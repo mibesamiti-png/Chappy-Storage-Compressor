@@ -196,6 +196,16 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [詳細な検証条件](docs/R217_REAL_ICC_COLOR_MANAGEMENT.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第9段階）：Exif回転・実ICCの拡張・メモリ計測
+
+- 人工JPEGにExifのOrientation 1・3・6・8を埋め込み、実際のJPEG無劣化候補エンジンで通常版・SIMD版を処理。Exif TIFFの値・APP1の生バイト・元画像・90°/180°/270°回転後の全画素・SHA-256の一致を確認する。
+- 元のExifを6→1へ変更した場合や不正値9は、人工ファイル上の独立テストで拒否する。
+- Windowsに別のRGB ICCが存在する場合はシステムプロファイルを一時的に読み込んで検証する。**存在しなかった場合は未検証と明記し、成功扱いしない**。実ICCファイルは配布しない。
+- 10ms間隔でテストプロセスのワーキングセットを測定。ただし外部jpegtranのメモリや真のピークではないため、誤って性能保証には使わない。
+- 実写真への処理と本番の原本置換・統合は引き続き禁止。実空き容量回復0B。
+
+[検証仕様と測定限界](docs/R217_EXIF_ORIENTATION_MEMORY.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

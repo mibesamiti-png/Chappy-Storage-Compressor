@@ -178,6 +178,15 @@ Windowsの使い捨て合成ファイルについて、**SHA-256が同じでも�
 
 [安全な実測条件と結果の範囲](docs/R217_OFFICIAL_JPEGTRAN_PROFILE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17（第7段階）：JPEGメタデータの無劣化保持とSIMD比較
+
+- 公式libjpeg-turbo 3.2.1の**同じソースコミット**から、通常版（SIMD無効）とネイティブSIMD版をWindows CI上で別々にビルドし、人工JPEGだけで候補生成を比較する。
+- 8件の合成JPEGにExif・XMP・ICC（複数セグメント）・Photoshop APP13・COMを付与して、プレビューの全画素一致・保護対象マーカー一致・独立したAPP/COM生バイト一致を検証する。
+- 通常版→SIMD版→SIMD版→通常版の順に計測し、結果はCIホスト限定の参考値。実際の写真やHDD/SSDでの高速化を保証しない。
+- 元JPEGのSHA-256と更新日時を維持し、本番の原本置換・ハードリンク統合は無効。実際のディスク容量回復は0B。
+
+[検証範囲・制限](docs/R217_JPEG_METADATA_SIMD.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## 開発の安全ゲート
 
 1. Windows CIでビルド・合成ファイルの安全テストをすべて通す。

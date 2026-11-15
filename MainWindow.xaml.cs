@@ -17,10 +17,21 @@ public partial class MainWindow : Window
     // output-folder selection and safe resume confirmation.
     private string? _lastCombinedOutput;
     private string? _lastCombinedJpegtran;
+    // Native dialogs are the production defaults. Per-window private delegates
+    // let the isolated STA/WPF routed test supply deterministic picker/consent
+    // answers without trying to automate an invisible CI desktop.
+    private Func<string?, string?> _pickCombinedTool;
+    private Func<string?, string?> _pickCombinedOutput;
+    private Func<string, bool> _confirmCombined;
+    private Action<string> _showCombinedFailure;
     private readonly ObservableCollection<GroupRow> _rows = new();
 
     public MainWindow()
     {
+        _pickCombinedTool = PickCombinedToolNative;
+        _pickCombinedOutput = PickCombinedOutputNative;
+        _confirmCombined = ConfirmCombinedNative;
+        _showCombinedFailure = ShowCombinedFailureNative;
         InitializeComponent();
         GroupsGrid.ItemsSource = _rows;
         Log("起動しました。対象を選び「読み取り専用スキャン」を実行してください。");
@@ -429,6 +440,39 @@ public partial class MainWindow : Window
         finally { Busy(false); _work?.Dispose(); _work = null; }
     }
 
+    private string? PickCombinedToolNative(string? previous)
+    {
+        var picker = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "公式libjpeg-turboのjpegtran.exeを選択（PNGのみの場合は従来のPNG専用ボタン）",
+            Filter = "jpegtran.exe|jpegtran.exe",
+            CheckFileExists = true
+        };
+        if (File.Exists(previous))
+            picker.InitialDirectory = Path.GetDirectoryName(previous);
+        return picker.ShowDialog(this) == true ? picker.FileName : null;
+    }
+
+    private string? PickCombinedOutputNative(string? previous)
+    {
+        using var picker = new Forms.FolderBrowserDialog
+        {
+            Description = "PNG/JPG両方の候補と再開記録の保存先（原本とは別のフォルダ階層）",
+            ShowNewFolderButton = true
+        };
+        if (Directory.Exists(previous)) picker.SelectedPath = previous;
+        return picker.ShowDialog() == Forms.DialogResult.OK ? picker.SelectedPath : null;
+    }
+
+    private bool ConfirmCombinedNative(string preview) =>
+        MessageBox.Show(preview, "PNG/JPGまとめて無劣化候補作成",
+            MessageBoxButton.YesNo, MessageBoxImage.Information,
+            MessageBoxResult.No) == MessageBoxResult.Yes;
+
+    private void ShowCombinedFailureNative(string message) =>
+        MessageBox.Show(message, "一括候補作成の安全停止",
+            MessageBoxButton.OK, MessageBoxImage.Warning);
+
     // R2.14: One source/output selection for the existing PNG and JPEG
     // preview-only engines. Their separate journals remain authoritative.
     // Neither engine is permitted to modify original user media.
@@ -444,25 +488,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        var toolPicker = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "公式libjpeg-turboのjpegtran.exeを選択（PNGのみの場合は従来のPNG専用ボタン）",
-            Filter = "jpegtran.exe|jpegtran.exe",
-            CheckFileExists = true
-        };
-        if (File.Exists(_lastCombinedJpegtran))
-            toolPicker.InitialDirectory = Path.GetDirectoryName(_lastCombinedJpegtran);
-        if (toolPicker.ShowDialog(this) != true) return;
-
-        using var folder = new Forms.FolderBrowserDialog
-        {
-            Description = "PNG/JPG両方の候補と再開記録の保存先（原本とは別のフォルダ階層）",
-            ShowNewFolderButton = true
-        };
-        if (Directory.Exists(_lastCombinedOutput))
-            folder.SelectedPath = _lastCombinedOutput;
-        if (folder.ShowDialog() != Forms.DialogResult.OK) return;
-        string output = folder.SelectedPath, tool = toolPicker.FileName;
+        // Every run still requires explicit selections. A null response is
+        // a canceled native picker and must never enter the batch engines.
+        string? tool = _pickCombinedTool(_lastCombinedJpegtran);
+        if (string.IsNullOrWhiteSpace(tool)) return;
+        string? output = _pickCombinedOutput(_lastCombinedOutput);
+        if (string.IsNullOrWhiteSpace(output)) return;
 
         _work = new CancellationTokenSource();
         CancellationToken token = _work.Token;
@@ -514,9 +545,12 @@ public partial class MainWindow : Window
                 "\n候補生成は追加のディスク容量を消費します。" +
                 "\n元ファイルの置換・削除・統合は行いません。" +
                 "\n\n処理を開始しますか？";
-            if (MessageBox.Show(preview, "PNG/JPGまとめて無劣化候補作成",
-                MessageBoxButton.YesNo, MessageBoxImage.Information,
-                MessageBoxResult.No) != MessageBoxResult.Yes) return;
+            if (!_confirmCombined(preview))
+            {
+                ProgressText.Text = "確認でキャンセル（未実行）";
+                Log("PNG/JPG候補生成は確認画面でキャンセルされました。元ファイル・候補は変更していません。");
+                return;
+            }
 
             // The modal confirmation can remain open while another process
             // changes the output folder. Recheck before starting any engine;
@@ -607,8 +641,7 @@ public partial class MainWindow : Window
         {
             ProgressText.Text = "一括処理エラー";
             Log("PNG/JPGまとめて候補処理のエラー: " + ex);
-            MessageBox.Show(ex.Message + "\n原本は変更していません。保存済みの候補と記録は削除しません。",
-                "一括候補作成の安全停止", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _showCombinedFailure(ex.Message + "\n原本は変更していません。保存済みの候補と記録は削除しません。");
         }
         finally
         {

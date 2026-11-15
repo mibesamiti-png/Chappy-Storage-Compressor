@@ -348,6 +348,111 @@ internal static class R217PriorityImageAndMemoryTests
             catch (OperationCanceledException) { cancelled = true; }
             check(cancelled, "R2.17 image priority: pre-canceled JPEG preview aborts safely");
 
+            // Part 18: unlike a pre-canceled token, both probes cancel AFTER
+            // genuinely entering the candidate engine's inner work. These
+            // hooks only exist in the CHAPPY_TESTING linked Core compilation.
+            // Each output root is disposable and separate from the real batch
+            // test's completed candidates and journals.
+            string pngSource = sources.First(x => x.EndsWith(".png",
+                StringComparison.OrdinalIgnoreCase));
+            string jpegSource = sources.First(x => x.EndsWith(".jpg",
+                StringComparison.OrdinalIgnoreCase));
+            string pngInterruptedRoot = Path.Combine(root, "part18-png-inner-stop");
+            string jpegInterruptedRoot = Path.Combine(root, "part18-jpeg-post-start-stop");
+            Directory.CreateDirectory(pngInterruptedRoot);
+            Directory.CreateDirectory(jpegInterruptedRoot);
+            string pngOriginalHash = Hash(pngSource);
+            string jpegOriginalHash = Hash(jpegSource);
+            long pngOriginalTicks = File.GetLastWriteTimeUtc(pngSource).Ticks;
+            long jpegOriginalTicks = File.GetLastWriteTimeUtc(jpegSource).Ticks;
+
+            long bytesCopiedBeforePngCancel = 0;
+            bool pngInnerCanceled = false;
+            using (var pngCts = new CancellationTokenSource())
+            {
+                try
+                {
+                    PngLosslessOptimizer.CreatePreview(pngSource, pngInterruptedRoot,
+                        pngCts.Token, testOnlyAfterInflatedWrite: bytes =>
+                        {
+                            if (bytesCopiedBeforePngCancel != 0) return;
+                            bytesCopiedBeforePngCancel = bytes;
+                            // A candidate was opened and the compression
+                            // stream received a real decompressed block.
+                            pngCts.Cancel();
+                        });
+                }
+                catch (OperationCanceledException) { pngInnerCanceled = true; }
+            }
+            bool pngPartialDiscarded = pngInnerCanceled &&
+                bytesCopiedBeforePngCancel > 0 &&
+                !Directory.EnumerateFileSystemEntries(pngInterruptedRoot).Any() &&
+                Hash(pngSource) == pngOriginalHash &&
+                File.GetLastWriteTimeUtc(pngSource).Ticks == pngOriginalTicks;
+            check(pngPartialDiscarded,
+                "R2.17 part 18: PNG cancellation after real inflated block discards incomplete candidate and preserves source");
+
+            var pngAfterCancel = PngLosslessOptimizer.CreatePreview(
+                pngSource, pngInterruptedRoot);
+            bool pngRetrySafe = pngAfterCancel.PreviewPath is not null &&
+                File.Exists(pngAfterCancel.PreviewPath) &&
+                pngAfterCancel.PreviewBytes < pngAfterCancel.OriginalBytes &&
+                Directory.EnumerateFiles(pngInterruptedRoot).Count() == 1 &&
+                Hash(pngSource) == pngOriginalHash &&
+                File.GetLastWriteTimeUtc(pngSource).Ticks == pngOriginalTicks;
+            check(pngRetrySafe,
+                "R2.17 part 18: PNG fresh retry after inner cancellation produces one independently verified candidate");
+
+            int spawnedJpegPid = 0;
+            bool jpegAfterSpawnCanceled = false;
+            using (var jpegCts = new CancellationTokenSource())
+            {
+                try
+                {
+                    JpegLosslessPreviewEngine.CreatePreview(jpegSource,
+                        jpegInterruptedRoot, tool, jpegCts.Token,
+                        testOnlyNativeProcessId: pid =>
+                        {
+                            spawnedJpegPid = pid;
+                            jpegCts.Cancel();
+                        });
+                }
+                catch (OperationCanceledException) { jpegAfterSpawnCanceled = true; }
+            }
+            bool nativeChildReaped = false;
+            if (spawnedJpegPid > 0)
+            {
+                try
+                {
+                    using var child = Process.GetProcessById(spawnedJpegPid);
+                    nativeChildReaped = child.HasExited;
+                }
+                catch (ArgumentException) { nativeChildReaped = true; }
+                catch (InvalidOperationException) { nativeChildReaped = true; }
+            }
+            bool jpegPartialDiscarded = jpegAfterSpawnCanceled &&
+                spawnedJpegPid > 0 && nativeChildReaped &&
+                !Directory.EnumerateFileSystemEntries(jpegInterruptedRoot).Any() &&
+                Hash(jpegSource) == jpegOriginalHash &&
+                File.GetLastWriteTimeUtc(jpegSource).Ticks == jpegOriginalTicks;
+            check(jpegPartialDiscarded,
+                "R2.17 part 18: cancel after actual jpegtran Process.Start reaps native child and discards partial candidate");
+
+            var jpegAfterCancel = JpegLosslessPreviewEngine.CreatePreview(
+                jpegSource, jpegInterruptedRoot, tool);
+            bool jpegRetrySafe = jpegAfterCancel.Candidate is not null &&
+                File.Exists(jpegAfterCancel.Candidate) &&
+                jpegAfterCancel.CandidateBytes < jpegAfterCancel.SourceBytes &&
+                Directory.EnumerateFiles(jpegInterruptedRoot).Count() == 1 &&
+                JpegLosslessPreviewEngine.EquivalentDecodedPixels(
+                    jpegSource, jpegAfterCancel.Candidate) &&
+                JpegMarkerAudit.Inspect(jpegSource) ==
+                    JpegMarkerAudit.Inspect(jpegAfterCancel.Candidate) &&
+                Hash(jpegSource) == jpegOriginalHash &&
+                File.GetLastWriteTimeUtc(jpegSource).Ticks == jpegOriginalTicks;
+            check(jpegRetrySafe,
+                "R2.17 part 18: JPEG fresh retry after child kill produces one pixel/marker-validated candidate");
+
             check(sourceHashes.All(x => Hash(x.Key) == x.Value &&
                   File.GetLastWriteTimeUtc(x.Key).Ticks == sourceTicks[x.Key]),
                 "R2.17 image priority: originals SHA-256 and update timestamps unchanged");
@@ -374,6 +479,16 @@ internal static class R217PriorityImageAndMemoryTests
                     phases,
                     allOriginalHashesAndTimestampsUnchanged = true,
                     canceledPreviewAborted = cancelled,
+                    part18PngCancelAfterInflatedWrite = pngInnerCanceled,
+                    part18PngBytesInflatedBeforeCancel = bytesCopiedBeforePngCancel,
+                    part18PngIncompleteCandidateDiscarded = pngPartialDiscarded,
+                    part18PngFreshRetrySucceeded = pngRetrySafe,
+                    part18JpegCancelAfterNativeStart = jpegAfterSpawnCanceled,
+                    part18NativeChildPidObserved = spawnedJpegPid > 0,
+                    part18NativeChildReaped = nativeChildReaped,
+                    part18JpegIncompleteCandidateDiscarded = jpegPartialDiscarded,
+                    part18JpegFreshRetryPixelsAndMarkersMatch = jpegRetrySafe,
+                    part18AbruptAppProcessKillVerified = false,
                     rendererOrPhysicalGuiMouseTested = false,
                     cacheAndCpuControlled = false,
                     independentSpeedupClaimed = false,

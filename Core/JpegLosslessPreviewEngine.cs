@@ -72,12 +72,18 @@ public static class JpegLosslessPreviewEngine
             psi.ArgumentList.Add(source);
             using (var process = Process.Start(psi) ?? throw new IOException("jpegtran.exeを起動できません."))
             {
+                try
+                {
 #if CHAPPY_TESTING
-                // Test-only child PID observation for simultaneous parent/encoder
-                // memory sampling. This does not exist in production builds.
-                testOnlyNativeProcessId?.Invoke(process.Id);
+                    // The test-only post-Start PID hook must stay INSIDE the
+                    // cancellation cleanup guard: a test can cancel as soon
+                    // as a real child exists, before WaitForExitAsync begins.
+                    // Production binaries do not compile this callback.
+                    testOnlyNativeProcessId?.Invoke(process.Id);
 #endif
-                try { process.WaitForExitAsync(ct).GetAwaiter().GetResult(); }
+                    ct.ThrowIfCancellationRequested();
+                    process.WaitForExitAsync(ct).GetAwaiter().GetResult();
+                }
                 catch (OperationCanceledException)
                 {
                     if (!process.HasExited) process.Kill(entireProcessTree: true);

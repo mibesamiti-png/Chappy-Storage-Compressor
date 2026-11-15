@@ -90,9 +90,20 @@ internal static class R217PreviewCrashTests
         string previewDir = Path.Combine(output, "chappy-png-previews");
         string[] scraps = Directory.Exists(previewDir) ?
             Directory.GetFiles(previewDir, "*.png") : Array.Empty<string>();
+        long orphanOnDiskBytes = scraps.Length == 1 ? new FileInfo(scraps[0]).Length : -1;
+        // TerminateProcess does NOT flush FileStream's managed write buffer.
+        // A valid crash orphan may be 0 B despite having genuinely written
+        // inflated data to the in-process compression stream. Either way it
+        // MUST be rejected by both resume entrypoints.
+        Console.WriteLine("R2.17 part19 crash observation: exit=" + child.ExitCode +
+            ", checkpoint=" + signal +
+            ", plan=" + File.Exists(plan) +
+            ", journal=" + File.Exists(journal) +
+            ", orphanCount=" + scraps.Length +
+            ", orphanBytesOnDisk=" + orphanOnDiskBytes);
         bool crashConfirmed = child.ExitCode != 0 && signal &&
             File.Exists(plan) && !File.Exists(journal) &&
-            scraps.Length == 1 && new FileInfo(scraps[0]).Length > 0 &&
+            scraps.Length == 1 &&
             Hash(source) == originalHash &&
             File.GetLastWriteTimeUtc(source).Ticks == originalTicks;
         check(crashConfirmed,
@@ -144,6 +155,8 @@ internal static class R217PreviewCrashTests
                 childReachedRealInflatedWriteCheckpoint = signal,
                 childExitCodeNonzero = child.ExitCode != 0,
                 leftoverUnjournaledPngCount = scraps.Length,
+                leftoverPngBytesOnDisk = orphanOnDiskBytes,
+                managedBufferMayBeLostOnAbruptKill = true,
                 combinedResumeOrphanRefused = inspectorRefused,
                 directPngResumeOrphanRefused = directRefused,
                 refusalPreservedOrphanAndPlanBytes = evidencePreserved,

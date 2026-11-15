@@ -251,12 +251,19 @@ public partial class MainWindow : Window
         ProgressText.Text = "統合履歴を読み取り専用で照合中";
         try
         {
-            var summary = await Task.Run(() => CompletedMergeLedger.Inspect(root, token), token);
+            var history = await Task.Run(() =>
+            {
+                var completed = CompletedMergeLedger.Inspect(root, token);
+                var undo = IndependentUndoCrashJournal.Inspect(root, token);
+                return (completed, undo);
+            }, token);
             token.ThrowIfCancellationRequested();
             ProgressText.Text = "統合履歴を確認（未変更）";
-            Log($"完了台帳を読み取り専用で確認：統合 {summary.VerifiedCompleted}、" +
-                $"独立化 {summary.VerifiedRestored}、要確認 {summary.NeedsReview}、実容量変更 0B。");
-            _showCompletedLedger(summary.Describe());
+            Log($"完了台帳：統合 {history.completed.VerifiedCompleted}、" +
+                $"独立化 {history.completed.VerifiedRestored}、要確認 {history.completed.NeedsReview}。" +
+                $" Undo中断 {history.undo.Incomplete}、確認要 {history.undo.ManualReview}。実容量変更 0B。");
+            _showCompletedLedger(history.completed.Describe() + "\n\n" +
+                history.undo.Describe());
         }
         catch (OperationCanceledException)
         {

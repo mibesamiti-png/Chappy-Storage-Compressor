@@ -1,0 +1,32 @@
+# R2.17 part 10 — native jpegtran child peak resident memory
+
+## Why the previous memory probe was insufficient
+
+Part 9 measured peak and sampled **parent .NET test-process** working set. That measurement excludes the external native jpegtran process that actually performs JPEG Huffman optimization. It cannot be used to estimate the native encoder's resident memory.
+
+Part 10 adds an OS-tracked **per-child, process-lifetime peak** measurement, without changing or enabling production JPEG source replacement. Source-built jpegtran v3.2.1 remains pinned to full official Git commit `7b4993786d856cbccabfc0ed2f923ba000e326cc` in Windows CI. Both source-built variants (SIMD-disabled and native SIMD) remain temporary CI tools.
+
+## What the test does
+
+1. Generate **three entirely synthetic**, independent baseline JPEG sources (1280 × 720) with WPF's JPEG encoder. The patterns use gradients, stripes and deterministic noise, not real user photos or downloaded image data.
+2. For each source and each of the two pinned jpegtran binaries, launch **a separate process** with the same `-copy all -optimize -outfile` arguments the production engine uses. Restrict input to the generated source and output to its dedicated disposable preview directory.
+3. Wait for the exact child process to exit, then retain its OS `PeakWorkingSet64` (peak resident working-set bytes over this **child process's lifetime**) and `PeakVirtualMemorySize64` and `PeakPagedMemorySize64` counters while the process handle is still open. Record the actual exit code and elapsed wall time. A missing or zero peak is a test failure, not a silent fallback to parent-process memory.
+4. Independently check that the direct native candidate is **smaller**, has the same protected JPEG marker snapshot and exactly the same WIC-decoded pixels as its generated source.
+5. Run the real production `JpegLosslessPreviewEngine.CreatePreview` path separately with the same input and tool. The two kept outputs must have **exactly equal size, SHA-256 and decoded pixels**, proving the measurement uses equivalent JPEG output rather than a different, untested CLI path.
+6. Recheck source hashes and last-write timestamps after all six native child runs.
+7. Record per-child details in `diagnostics/r217-jpegtran-child-memory.json`. A dedicated workflow gate checks six successful process exits, three fixtures per tool, memory counters, byte-for-byte parity and production write-lock invariants.
+
+## Memory interpretation
+
+- **Supported:** Windows' observed process-lifetime peak **working set for each measured jpegtran child**. This is not a guess from the .NET parent and is not a 10-ms sample that might miss a short transient.
+- **Not supported:** full Chappy app peak, parent-plus-child simultaneous resident peak, private-commit bytes, GPU memory, per-JPEG memory across all supported resolutions, Windows disk-cache memory, worst-case 48MP peak, or guaranteed lower memory usage of SIMD vs baseline.
+- **Not controlled:** CPU clock/throttling, warm/cold filesystem caches, SSD/HDD I/O scheduling, parallel machine load, true physical memory pressure. Therefore there is **no universal SIMD speedup or memory-efficiency claim**.
+- The direct process and app engine run **sequentially**, so per-child peak measures native compression only. The real application additionally decodes/validates both images, and its total memory can be higher.
+
+## Safety
+
+All test sources and direct/app candidates live under uniquely generated disposable test directories. No personal media, real photos, production file replacement, hardlink consolidation, or independently destructive undo are used. The two test binaries are built from official pinned source on GitHub Actions, not distributed with the app. **Real recovered disk space: 0 B.**
+
+## Verified CI result
+
+Pending final Windows CI output and machine-readable diagnostic review. Do not present any numerical peak until the test and its independent workflow gate pass.

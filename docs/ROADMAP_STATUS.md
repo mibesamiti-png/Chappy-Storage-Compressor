@@ -194,6 +194,10 @@ Windows CIの人工JPEG3件×公式ソース固定ビルドの通常版/ネイ�
 
 [設計・制限・CI結果](R217_PRIORITY_GROUPED_MATRIX.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
 
+## R2.17 part 12 — weighted batch preview UX and rate-limited WPF updates
+
+PNG/JPG一括候補処理で、ファイル件数比に合わない50/50固定の進捗バーを改善。前回の出力先・jpegtran選択場所はアプリセッション中の**ダイアログ候補のみ**とし、元の明示確認と `CombinedBatchResumeInspector` の再開安全診断を省略しない。エンジンが行う100,000件分の進捗通知でWPFへ100,000件をそのまま送らないよう、参考値125msのレート制限を追加し、失敗・Deferred・NeedsReviewは優先配送する。テストでは人工イベント30,005件と数え上げ・0件・不整合値、WPF本体のスキャン開始・停止・再試行中のPNG/JPGボタン制御を確認する。これは**描画速度・コーデック性能の実測改善率ではない**。原本置換・リンク統合・Undoは本番無効、容量の実回復0B、ソース実装率は暫定69.4%のまま。[検証記録](R217_BATCH_UX_THROTTLE.md) / [Issue #14](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/14)
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

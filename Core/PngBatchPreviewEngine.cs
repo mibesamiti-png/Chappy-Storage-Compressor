@@ -75,15 +75,18 @@ public static class PngBatchPreviewEngine
         // Root admission and user-approved source data must still be valid
         // *inside* the actual engine, even if a process mutated the folders
         // after the WPF confirmation recheck. No output is written here.
-        PreviewOutputStartGate.AssertKnownRoot(output, ct);
         if (approvedInput is not null)
+        {
+            PreviewOutputStartGate.AssertKnownRoot(output, ct);
             PersonalMediaBatchPreflight.VerifyAfterConfirmation(input, output, approvedInput, ct);
+        }
 
         // Cross-process exclusive lock for this output root. A stale lock file
         // is harmless: only the open file handle controls exclusivity.
         using var batchLock = new FileStream(Path.Combine(output, ".chappy-png-batch-r16.lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
+        if (approvedInput is not null)
+            PreviewOutputStartGate.AssertKnownRoot(output, ct, ".chappy-png-batch-r16.lock");
 
         if (!File.Exists(manifest) && File.Exists(progressFile))
             throw new InvalidDataException("計画がないのに進捗ログがあります。出力先を確認してください。");

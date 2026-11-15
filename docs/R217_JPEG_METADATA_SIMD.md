@@ -36,6 +36,32 @@ The same eight generated files are processed in **ABBA order**: baseline (no SIM
 - No interactive physical desktop mouse UI verification.
 - The existing non-SIMD JPEG batch/resume test, 486 C# assertions, WPF routed UI tests, NTFS failure-recovery probes and win-x64 publication remain mandatory.
 
-## CI outcome
+## Verified Windows CI — November 15, 2026
 
-Pending the first verified Windows CI run. Do not infer any successful SIMD comparison or timing until the generated report `diagnostics/r217-jpeg-metadata-simd.json` and Actions workflow pass.
+[Windows PR CI #43688471702](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/actions/runs/43688471702) **SUCCESS: 28/28 steps**, including source-pinned non-SIMD and **required native x64 SIMD** builds, NASM 2.16.03, WPF application build and publish, the WPF routed Click test, previous R2.8–R2.12 NTFS probes, and **493/493 C# safety checks** (previous 486 + 7 new metadata/SIMD checks).
+
+The independent structured report `diagnostics/r217-jpeg-metadata-simd.json` gives these **single-host generated-fixture observations**:
+
+| Property | Result |
+| --- | ---: |
+| Official source libjpeg-turbo | v3.2.1, commit `7b4993786d856cbccabfc0ed2f923ba000e326cc` |
+| NASM version verified | 2.16.03 |
+| Distinct pinned-source binaries | 2; SHA-256 fingerprints differed |
+| Generated JPEGs | 8, with synthetic Exif, XMP, split ICC, Photoshop APP13 and COM combinations |
+| Successful smaller, independently decoded candidates | **8/8 per run, four runs total** |
+| Full decoded pixel and raw APP/COM byte matches | **all candidates** |
+| Input bytes across the 8 files | **545,113 B** |
+| Accepted candidate bytes per run | **492,314 B** |
+| Per-run theoretical candidate reduction | **52,799 B** (approximately **9.69%**) |
+| No-SIMD pass 1 | **306.1212 ms** |
+| Native-SIMD pass 1 | **292.1094 ms** |
+| Native-SIMD pass 2 | **321.6682 ms** |
+| No-SIMD pass 2 | **375.4172 ms** |
+| No-SIMD median of two | **340.7692 ms** |
+| SIMD median of two | **306.8888 ms** |
+| Changes to originals' SHA-256/timestamps | **None** |
+| Actual recovered Windows storage | **0 B** |
+
+**Interpretation:** This small single-CI sample shows a shorter median observed end-to-end candidate-generation time for the SIMD build, but includes source checks, subprocess overhead, WIC decode, hashing and file operations. CPU scheduling, cache temperature and filesystem effects are uncontrolled; the difference **cannot establish a portable SIMD speedup or guaranteed savings**. Both builds generated identical candidate total sizes. The synthetic ICC profile exercises marker retention but is not a complete validation of real color-profile management.
+
+Generated fixtures and both build binaries remained CI-only; no original photo/video, hardlink consolidation, original replacement or independent undo was enabled.

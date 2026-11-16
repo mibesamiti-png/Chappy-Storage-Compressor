@@ -1,5 +1,8 @@
 # Chappy Storage Compressor — R2.16 measured two-stage media scanner
 
+> **完成優先の正式ロードマップ（2026-11-16）:** [v1.0完成ロードマップ：G0〜G5・35項目](V1_COMPLETION_ROADMAP.md) を参照してください。このファイルの69.4%は過去のソース実装見積りで、製品完成率ではありません。以下は検証履歴として保持します。
+
+
 Updated 2026-11-14 UTC. R2.7 source tracking was integrated into `main` through PR #1 (merge `dbfa6a34`). It builds a version 0.2.6 WPF application, with CI fixes and source organization. The version is intentionally unchanged until a functional release gate is achieved.
 
 ## Overall roadmap

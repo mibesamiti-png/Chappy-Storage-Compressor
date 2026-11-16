@@ -160,11 +160,21 @@ public static class IndependentUndoEngine
         FileSnapshot lateStage = Safety.Capture(stage);
         if (!lateStage.Identity.SameFile(staged.Identity) ||
             !StageValid(lateStage) ||
+            // Part31: a writer or ACL editor can change the SHARED master
+            // metadata after initial validation without altering its SHA-256.
+            // Recheck identity, times, normal attributes and owner+DACL for
+            // BOTH names immediately before the irreversible File.Replace.
+            !Safety.SameSnapshot(shared) ||
+            !Safety.SameSnapshot(masterSnapshot) ||
             !NativeFile.SameFile(alias, master) ||
             NativeFile.GetIdentity(master).LinkCount != expectedSharedLinkCount ||
+            !string.Equals(Safety.ComputeSha256(alias, ct), expectedHash,
+                StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(Safety.ComputeSha256(master, ct), expectedHash,
-                StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("Undo stage or source changed after durable intent; refused before cutover");
+                StringComparison.OrdinalIgnoreCase) ||
+            !Safety.ByteEqual(alias, master, ct))
+            throw new InvalidDataException(
+                "Undo stage, shared source bytes/identity or ACL/timestamps changed after durable intent; refused before cutover");
 
         // This is a single test-owned alias, NOT the master. The independent
         // source and store link remain untouched by the replace operation.

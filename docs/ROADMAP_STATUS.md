@@ -320,6 +320,12 @@ The group inspector no longer silently ignores **orphaned checkpoint files**. Ge
 
 This part is **read-only UI + evidence safety**, not production file modification, physical device power-cut proof, arbitrary ACL/SACL/ADS/EFS, or a concurrency-safe capacity reservation. Production hardlink merge, original replacement and independent group Undo **remain disabled**; real-user capacity recovered **0 B**. 69.4% is a historical source estimate, not current release readiness. Full PR-head and separate main CI remain mandatory.
 
+## R2.17 Part 31 — real competing process writer and staged ACL/checkpoint substitution safety
+
+Windows test-only `R217ConcurrentWriterAclTests` now uses three **separate writer processes** with actual live Windows write handles or postscan flushed byte changes to verify the real Core rejects stale source metadata, active external writers and changed exact hashes before constructing a master hardlink. Two generated 3-file groups test true owner/group/DACL mutation **after the independent Undo stage is verified**, and deliberate corruption of the saved group checkpoint just before `File.Replace`. The Core now revalidates **both shared alias/master identities, owner+DACL/times/attributes and bytes** at the final cutover boundary and reopens the durable group checkpoint immediately before final validation; unknown changes remain ManualReview. It does not repair an outsider's ACL or record automatically. Strict Part31 Windows CI machine evidence is required. [Design and exact scope](R217_PART31_EXTERNAL_WRITER_ACL_GATES.md).
+
+**Still not production-ready:** these checks detect only modifications observed before the final guard, not an arbitrary hostile rename/delete or privilege change *after* validation; no atomic global NTFS transaction, physical power cut, security inheritance/SACL/ADS/EFS or real-user cutover is proven. Production dedupe, source replacement and independent group Undo remain locked, 0 B actual user capacity reclaimed. Historical 69.4% is not current readiness. PR-head and postmerge main CI required.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

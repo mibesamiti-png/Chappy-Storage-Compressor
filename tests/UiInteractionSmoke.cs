@@ -62,6 +62,9 @@ internal static class UiInteractionSmoke
             var progressText = Named<TextBlock>(window, "ProgressText");
             var groupsGrid = Named<DataGrid>(window, "GroupsGrid");
             var pathBox = Named<TextBox>(window, "PathBox");
+            var dashboardText = Named<TextBlock>(window, "ReadOnlyDashboardText");
+            Require(dashboardText.Text.Contains("未スキャン", StringComparison.Ordinal),
+                "G1-05: newly opened WPF dashboard never implies that a scan has run");
 
             Require(!mergeButton.IsEnabled && !dedupePlanButton.IsEnabled &&
                     completedLedgerButton.IsEnabled &&
@@ -147,6 +150,13 @@ internal static class UiInteractionSmoke
                     !mergeButton.IsEnabled && dedupePlanButton.IsEnabled &&
                     groupsGrid.Items.Count == 1,
                 "Completed scan has one valid duplicate group and 100% WPF progress");
+            Require(dashboardText.Text.Contains("完全一致 1組", StringComparison.Ordinal) &&
+                    dashboardText.Text.Contains("統合条件一致 1組", StringComparison.Ordinal) &&
+                    dashboardText.Text.Contains("二重計上は未評価", StringComparison.Ordinal) &&
+                    dashboardText.Text.Contains("未実行（0 B、物理空き容量は未計測）",
+                        StringComparison.Ordinal) &&
+                    !mergeButton.IsEnabled,
+                "G1-05: real WPF scan dashboard separates eligible duplicates, unverified preview overlap and unmeasured recovery");
             Require(unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
                     jpegBatchButton.IsEnabled && !mergeButton.IsEnabled,
                 "After completed Scan, all preview-only batch controls return to idle availability");

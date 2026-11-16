@@ -89,7 +89,26 @@ check('R1.5: no overwrite source', 'File.Delete(source)' not in optimizer and 'F
 check('R1.5: CRC structural check and unsafe metadata guard',
       'PngInspector.Inspect(candidate, ct)' in optimizer and 'KnownAncillary.Contains' in optimizer)
 check('R1.5: preview GUI wired', 'PngPreview_Click' in source and 'PngPreviewButton.IsEnabled' in source)
-check('R1.5: production merge hard-gated', '#if !CHAPPY_TESTING' in core and 'throw new NotSupportedException' in core)
+check('R1.5/B2: public product merge stays locked',
+      'public static long Run(' in core and
+      '#else\n        throw new NotSupportedException' in core and
+      'private static long RunCore(' in core)
+check('B2: normal Windows build contains only manifest-authorized internal Core',
+      'internal static long RunPreparedGroup(' in core and
+      'CompletedGroupLedger.AssertPreparedGroup(' in core and
+      'CompletedGroupLedger.AssertPreparedAlias(' in core and
+      'testOnlyPreparedGroupId: id' not in
+      (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
+group_ledger = (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8')
+check('B2: durable manifest writer is compiled for normal Windows Core',
+      'internal static string PrepareVerifiedGroup(' in group_ledger and
+      'string id = PrepareVerifiedGroup(root, group);' in group_ledger and
+      'using var mutationLease = MutationLease.Acquire();' in group_ledger)
+check('B2: synthetic operation wrappers and Undo remain compile-gated',
+      'public static string MergeSynthetic(' in group_ledger and
+      '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and
+      '#if CHAPPY_TESTING\n    public static string MergeSynthetic(' in group_ledger and
+      'public static int ResumeUndoSynthetic(' in group_ledger)
 check('R1.5: PNG test coverage included', 'TestR15PngPreview(root)' in test and 'WritePngChunk' in test)
 
 print(f'\nStatic checks: {len(errors)} failure(s). This does NOT test C# compilation or runtime safety.')
@@ -207,9 +226,11 @@ check('R2.2 GUI event wired', 'ReplacementReadiness_Click' in source and
       'ReplacementReadinessButton.IsEnabled' in source and
       'ReplacementReadiness_Click' in (root/'MainWindow.xaml').read_text(encoding='utf-8'))
 check('R2.2 synthetic tests included', 'TestR22Readiness();' in test)
-check('R2.2 production file replacement remains gated',
+check('R2.2 production file replacement and public merge remain gated',
       'MergeButton.IsEnabled = false' in source and
       'File.Move(candidate, source)' not in source and
-      '#if !CHAPPY_TESTING' in core)
+      'public static long Run(' in core and
+      '#else\n        throw new NotSupportedException' in core and
+      'internal static long RunPreparedGroup(' in core)
 print(f'R2.2 source inspections: {len(errors)} failure(s) overall; Windows build remains REQUIRED')
 if errors: sys.exit(1)

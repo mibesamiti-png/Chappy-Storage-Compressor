@@ -2,39 +2,62 @@ namespace ChappyStorageCompressor.Core;
 
 public static class DedupeEngine
 {
-    public static long Run(string root, IEnumerable<DuplicateGroup> groups, bool allowTimestampDifference,
-        IProgress<EngineProgress>? progress, CancellationToken ct
+    // The shipping UI/public interface stays locked until G2/G3/G5 gates
+    // are complete. Tests keep their legacy entrypoint for older fixtures.
+    public static long Run(string root, IEnumerable<DuplicateGroup> groups,
+        bool allowTimestampDifference, IProgress<EngineProgress>? progress,
+        CancellationToken ct
 #if CHAPPY_TESTING
         , bool testOnlyRecordCompletedMerges = false,
         string? testOnlyPreparedGroupId = null
 #endif
         )
     {
-#if !CHAPPY_TESTING
-        // The R1.5 shipped executable is explicitly read-only for deduplication
-        // until the Windows/NTFS integration gate has been signed off.
+#if CHAPPY_TESTING
+        return RunCore(root, groups, allowTimestampDifference, progress, ct,
+            testOnlyRecordCompletedMerges, testOnlyPreparedGroupId);
+#else
         throw new NotSupportedException(
-            "R1.5のハードリンク統合はWindows実機の安全試験待ちのためロック中です。");
+            "v1のハードリンク統合はUndoと最終安全ゲートが完了するまでロック中です。");
 #endif
+    }
+
+    // Compiled into BOTH Windows builds. There is no public/WPF caller.
+    // A durable group manifest, exact original NTFS IDs, and a clean journal
+    // are required BEFORE even creating the store. This single core path is
+    // the foundation for later normal-build consent and independent Undo.
+    internal static long RunPreparedGroup(string root, DuplicateGroup group,
+        string preparedGroupId, IProgress<EngineProgress>? progress,
+        CancellationToken ct)
+    {
+        if (!Guid.TryParseExact(preparedGroupId, "N", out _))
+            throw new InvalidDataException("Missing durable group authorization");
+        return RunCore(root, [group], false, progress, ct,
+            false, preparedGroupId);
+    }
+
+    private static long RunCore(string root, IEnumerable<DuplicateGroup> groups,
+        bool allowTimestampDifference, IProgress<EngineProgress>? progress,
+        CancellationToken ct, bool testOnlyRecordCompletedMerges,
+        string? preparedGroupId)
+    {
         root = Safety.ValidateRoot(root);
         using var mutationLease = MutationLease.Acquire();
         CapacityGuard.AssertCanStart(root);
         // Never continue a modifying operation while another one needs recovery.
         Journal.AssertCleanBeforeMerge();
         var items = groups.ToList();
-#if CHAPPY_TESTING
-        if (testOnlyPreparedGroupId is not null)
+        if (preparedGroupId is not null)
         {
             if (items.Count != 1 || testOnlyRecordCompletedMerges ||
                 allowTimestampDifference)
                 throw new InvalidDataException(
-                    "Prepared group authorization applies only to one strict synthetic Core group");
-            // An on-disk generated-only group manifest is REQUIRED
-            // before any master, journal or alias transaction is created.
-            CompletedGroupLedger.AssertPreparedGroupSynthetic(
-                root, testOnlyPreparedGroupId, items[0]);
+                    "Authorized transaction must have one strict durable group");
+            // One implementation in both test and normal Windows builds:
+            // forged, incomplete or stale manifests fail before any writes.
+            CompletedGroupLedger.AssertPreparedGroup(
+                root, preparedGroupId, items[0]);
         }
-#endif
         // Fail closed before even creating the store directory. A caller may
         // supply a stale/malicious ScanResult; no pathname outside the selected
         // root, in our store, or beneath a junction may become a mutation
@@ -211,11 +234,11 @@ public static class DedupeEngine
                         // enables completed-merge ledger mutation.
                         if (testOnlyRecordCompletedMerges)
                             CompletedMergeLedger.PrepareSynthetic(root, pending, duplicate);
-                        if (testOnlyPreparedGroupId is not null)
-                            CompletedGroupLedger.AssertPreparedAliasSynthetic(
-                                root, testOnlyPreparedGroupId, group, duplicate,
-                                backup, masterPath, id);
 #endif
+                        if (preparedGroupId is not null)
+                            CompletedGroupLedger.AssertPreparedAlias(
+                                root, preparedGroupId, group, duplicate,
+                                backup, masterPath, id);
                         // Delete only the now-verified, independent duplicate.
                         originalPin.DeleteCurrent(requireIndependent: true);
                         FaultInjection.Hit("backup-deleted");

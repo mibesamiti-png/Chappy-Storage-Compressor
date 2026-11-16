@@ -124,11 +124,17 @@ internal static class R217GroupLedgerResumeTests
                 "B2: prepared manifest fixture consists of three independent byte-equal originals");
 
             string unowned = Guid.NewGuid().ToString("N");
-            expectThrows(() => DedupeEngine.Run(root, [group], false,
-                null, CancellationToken.None, testOnlyPreparedGroupId: unowned),
-                "B2: real Core refuses a missing prepared group manifest BEFORE store/journal mutation");
+            // The same internal authorized entrypoint is compiled into the
+            // normal WPF build; tests use real NTFS files + strict marker.
+            expectThrows(() => DedupeEngine.RunPreparedGroup(root, group,
+                unowned, null, CancellationToken.None),
+                "B2: shared production-compiled Core rejects a missing prepared manifest BEFORE any mutation");
+            expectThrows(() => DedupeEngine.RunPreparedGroup(root, group,
+                "malformed-ID", null, CancellationToken.None),
+                "B2: shared authorized Core rejects malformed group IDs before any mutation");
             check(!Directory.Exists(Safety.StorePath(root)) &&
                 Journal.Pending().Count == 0 &&
+                Journal.UnresolvedRecordFiles().Count == 0 &&
                 group.Files.Select((x, i) =>
                     NativeFile.GetIdentity(x.Path).SameFile(originalIds[i])).All(x => x),
                 "B2: unrecorded group cannot create store links, journals or change original IDs");
@@ -171,6 +177,9 @@ internal static class R217GroupLedgerResumeTests
                 "B2: explicit restart-time promotion requires ALL alias IDs, metadata and bytes, with no pending journal");
             expectThrows(() => CompletedGroupLedger.ConfirmPreparedSynthetic(root, id),
                 "B2: committed group cannot be promoted twice");
+            expectThrows(() => DedupeEngine.RunPreparedGroup(root, group,
+                id, null, CancellationToken.None),
+                "B2: normal-compiled authorized Core cannot reuse a committed durable manifest");
 
             string evidence = Path.Combine(root, "part27-group-evidence");
             Directory.CreateDirectory(evidence);

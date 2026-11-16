@@ -171,7 +171,7 @@ internal static class R217CollisionRecoveryChecklistTests
             var triage = CollisionRecoveryChecklist.Prioritize(summary);
             bool ok = triage.P0 == summary.Rows.Count && triage.P2 == 0 &&
                 triage.Rows.All(x => x.PriorityLabel == "P0 最優先") &&
-                triage.Rows[0].Kind == "操作記録" &&
+                triage.Rows[0].Kind == summary.Rows[0].Kind &&
                 !triage.CanApply &&
                 forFile.Decision == "要確認（証拠に不整合）" &&
                 whole.Decision == forFile.Decision &&

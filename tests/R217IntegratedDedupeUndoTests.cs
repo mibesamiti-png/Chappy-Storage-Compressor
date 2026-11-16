@@ -78,6 +78,20 @@ internal static class R217IntegratedDedupeUndoTests
                 NativeFile.GetIdentity(file).LinkCount == 1).All(x => x) &&
             !Directory.Exists(Safety.StorePath(root)),
             "B1: read-only subgroup analysis preserves originals and creates no merge store");
+
+        // Show the user why scanned names were skipped, not just a vague total.
+        // These new files are separate generated fixtures; they are not part
+        // of the earlier exact-byte candidate analysis.
+        File.WriteAllText(Path.Combine(root, "unrelated.txt"), "test");
+        File.WriteAllBytes(Path.Combine(root, "empty.png"), []);
+        var withSkips = Scanner.Run(root, true, null, CancellationToken.None);
+        check(withSkips.SkipReasons.TryGetValue("対象外の拡張子", out int nonMedia) &&
+            nonMedia >= 1 && withSkips.SkipReasons.TryGetValue("空ファイル", out int empty) &&
+            empty >= 1 &&
+            withSkips.SkipReasons.Values.Sum() == withSkips.Skipped &&
+            withSkips.ErrorReasons.Values.Sum() == withSkips.Errors &&
+            withSkips.Groups.Count == 1,
+            "B1: scanner exposes per-reason excluded-file counts without changing exact duplicate detection");
     }
 
     public static void Run(string parent, Action<bool, string> check,

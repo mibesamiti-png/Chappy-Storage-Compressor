@@ -435,7 +435,8 @@ public static class CompletedGroupLedger
 
     public static int ResumeUndoSynthetic(string input, string id, string evidence,
         Action<int>? afterDurableAlias = null,
-        Action<string>? afterDurablePhase = null)
+        Action<string>? afterDurablePhase = null,
+        Action<string, string>? testOnlyBeforeFinalUndoValidation = null)
     {
         string root = RequireSynthetic(input);
         if (!Safe(root, evidence) || !Directory.Exists(evidence) ||
@@ -489,6 +490,22 @@ public static class CompletedGroupLedger
             uint expectedLinks = checked((uint)(2 + x.Aliases.Count - i));
             IndependentUndoEngine.Restore(root, x.Aliases[i], x.Master, x.Hash,
                 expectedLinks, evidence,
+                // The phase names are never authority by themselves. Reopen
+                // and validate the durable checkpoint AFTER any competing
+                // test editor and BEFORE the actual source/ACL recheck/cutover.
+                testOnlyBeforeFinalValidation: stage =>
+                {
+                    testOnlyBeforeFinalUndoValidation?.Invoke(stage, x.Aliases[i].Path);
+                    Checkpoint latest = ReadCheckpoint(root, x);
+                    if (latest.ActivePhase != "stage-validated" ||
+                        !string.Equals(latest.ActiveStage, stage,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        latest.Detached.Count != i ||
+                        !latest.Detached.Select(z => z.FileIndex)
+                            .SequenceEqual(p.Detached.Select(z => z.FileIndex)))
+                        throw new InvalidDataException(
+                            "Durable group checkpoint was replaced or edited before Undo cutover");
+                },
                 testOnlyGroupPhase: (phase, stage) =>
                 {
                     if (phase == "intent-written")

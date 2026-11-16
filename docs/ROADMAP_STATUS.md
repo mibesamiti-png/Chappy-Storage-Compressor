@@ -326,6 +326,12 @@ Windows test-only `R217ConcurrentWriterAclTests` now uses three **separate write
 
 **Still not production-ready:** these checks detect only modifications observed before the final guard, not an arbitrary hostile rename/delete or privilege change *after* validation; no atomic global NTFS transaction, physical power cut, security inheritance/SACL/ADS/EFS or real-user cutover is proven. Production dedupe, source replacement and independent group Undo remain locked, 0 B actual user capacity reclaimed. Historical 69.4% is not current readiness. PR-head and postmerge main CI required.
 
+## R2.17 Part 32 — external process pathname rename/delete and same-byte backup replacement
+
+Five genuine independent managed processes mutate **only generated, sentinel-guarded NTFS names** at Core checkpoints. The cases move a backup after rename and plant an unrelated alias, move/replace a backup with **identical bytes but a distinct NTFS identity** immediately before irreversible delete, rename+replace a shared alias immediately after independent Undo's final validation, delete the alias name, and delete the independent stage. Core's last-backup validation and exception rollback now verify the **exact original file ID + metadata + SHA-256**, refusing to delete a swapped-in backup or rollback over untrusted evidence. The test-only Undo engine reopens stage/alias/master evidence after the external postvalidation race and fails closed before File.Replace; the group inspector reports ManualReview and keeps history untouched. Strict Part32 JSON and all earlier CI gates must pass. [Exact scenario design and limitations](R217_PART32_PATH_RACE_GATE.md).
+
+**Not proven**: arbitrary external rename/delete after the *last* validation but before the OS pathname operation (TOCTOU), physical power loss, arbitrary owner/SACL/ADS/EFS, production safe consent, or real-user cutoff. Production hardlink merge, original image replacement and independent Undo remain **disabled**. Real recovered user capacity: **0 B**. Historical source-estimate 69.4% is not release readiness.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

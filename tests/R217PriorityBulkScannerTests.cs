@@ -146,6 +146,23 @@ internal static class R217PriorityBulkScannerTests
             check(cancelConfirmed && samples.Count == 4,
                 "R2.17 bulk: explicit canceled duplicate scan never yields partial groups");
 
+            // G1-04: reuse all 1,072 generated files to prove that a
+            // brand-new scan after cancellation produces the exact same
+            // independent oracle, without making a new benchmark project.
+            var restarted = Scanner.Run(root, true, null, CancellationToken.None);
+            string[] restartedGroups = restarted.Groups
+                .Select(g => string.Join("|", g.Files.Select(f =>
+                    Path.GetFileName(f.Path)).OrderBy(x => x, StringComparer.Ordinal)))
+                .OrderBy(x => x, StringComparer.Ordinal).ToArray();
+            check(restarted.FileCount == UniqueCount + SameSizeCount &&
+                  restarted.DeepInspectedFiles == SameSizeCount &&
+                  restarted.HashAttemptedFiles == SameSizeCount &&
+                  restarted.Groups.Count == 4 &&
+                  restartedGroups.SequenceEqual(expected) &&
+                  restarted.SkipReasons.Values.Sum() == restarted.Skipped &&
+                  restarted.ErrorReasons.Values.Sum() == restarted.Errors,
+                "G1-04: after cancellation a full 1,072-file rescan matches all independent SHA/byte groups and exact exclusion counts");
+
             Directory.CreateDirectory("diagnostics");
             File.WriteAllText("diagnostics/r217-priority-bulk-scan.json",
                 JsonSerializer.Serialize(new

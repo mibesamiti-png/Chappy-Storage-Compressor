@@ -383,7 +383,11 @@ public static class CompletedGroupLedger
             throw new InvalidOperationException("Group merge/Undo is generated NTFS testing only");
         return root;
     }
+#endif
 
+    // The exact same durable manifest authorization is compiled in both
+    // normal and synthetic builds. It is read-only: it authorizes the
+    // internal Core transaction but cannot create or modify any file.
     // B2: the existing group manifest must authorize the REAL Core's every
     // irreversible alias deletion, not merely exist beside an unrelated run.
     // Both operations are restricted to generated-only NTFS through the
@@ -397,7 +401,7 @@ public static class CompletedGroupLedger
     private static Manifest ReadPreparedForGroup(string root, string id,
         DuplicateGroup group)
     {
-        string checkedRoot = RequireSynthetic(root);
+        string checkedRoot = Safety.ValidateRoot(root);
         if (!Guid.TryParseExact(id, "N", out _) ||
             File.Exists(PathFor(checkedRoot, id, "completed")) ||
             File.Exists(PathFor(checkedRoot, id, "restored")) ||
@@ -413,7 +417,7 @@ public static class CompletedGroupLedger
         return saved;
     }
 
-    internal static void AssertPreparedGroupSynthetic(string root, string id,
+    internal static void AssertPreparedGroup(string root, string id,
         DuplicateGroup group)
     {
         Manifest saved = ReadPreparedForGroup(root, id, group);
@@ -426,7 +430,7 @@ public static class CompletedGroupLedger
                 "Prepared group requires unchanged independent names and an unused master");
     }
 
-    internal static void AssertPreparedAliasSynthetic(string root, string id,
+    internal static void AssertPreparedAlias(string root, string id,
         DuplicateGroup group, FileSnapshot alias, string backup,
         string masterPath, string journalId)
     {
@@ -478,6 +482,7 @@ public static class CompletedGroupLedger
         }
     }
 
+#if CHAPPY_TESTING
     /// <summary>
     /// Explicit TEST-ONLY confirmation of a fully successful group after an
     /// interruption between Core completion and the prepared->completed move.
@@ -547,9 +552,8 @@ public static class CompletedGroupLedger
         // names. Older CompletedMergeLedger entries remain read-only legacy
         // evidence; do not write another per-alias ledger for new operations.
         long expected = group.Savings;
-        long actual = DedupeEngine.Run(root, [group], false, null,
-            CancellationToken.None, testOnlyRecordCompletedMerges: false,
-            testOnlyPreparedGroupId: id);
+        long actual = DedupeEngine.RunPreparedGroup(root, group, id, null,
+            CancellationToken.None);
         var empty = new Checkpoint { Id = id };
         if (actual != expected || Journal.Pending().Any() ||
             Journal.UnresolvedRecordFiles().Any() || !Verify(x, empty))

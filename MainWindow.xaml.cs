@@ -198,6 +198,11 @@ public partial class MainWindow : Window
             JobProgress.Value = 100;
             Log($"スキャン完了。検出 {result.FileCount:N0} 件、スキップ {result.Skipped:N0} 件、アクセス等のエラー {result.Errors:N0} 件、完全一致 {result.Groups.Count:N0} グループ。");
             Log($"R2.16: サイズによる一次候補 {result.FileCount:N0} 件中、NTFS厳密検査 {result.DeepInspectedFiles:N0} 件、SHA-256試行 {result.HashAttemptedFiles:N0} 件。単独サイズは内容を読み込まずスキップ。");
+            foreach (var item in result.SkipReasons.OrderByDescending(x => x.Value))
+                Log($"除外内訳: {item.Key} — {item.Value:N0}件");
+            foreach (var item in result.ErrorReasons.OrderByDescending(x => x.Value))
+                Log($"検査不能・エラー内訳: {item.Key} — {item.Value:N0}件");
+            Log("※ 除外/エラーが0でも対象外フォルダや別ドライブまで検査した意味ではありません。");
             Log("※ 読み取り専用スキャンではファイルの削除・統合は一切行いません。");
         }
         catch (OperationCanceledException) { Log("スキャンを中断しました。ファイル変更はありません。"); ProgressText.Text = "中断"; }

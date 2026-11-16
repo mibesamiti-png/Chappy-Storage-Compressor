@@ -259,6 +259,23 @@ internal static class UiInteractionSmoke
                 NativeFile.GetIdentity(right).SameFile(beforeRightId);
             Require(part36WpfReadOnly,
                 "R2.17 part36: real WPF read-only collision evidence tab has no apply, creates no journal and preserves existing file IDs");
+            var priorityFilter = recoveryView.FindName("CollisionPriorityFilter")
+                as ComboBox ?? throw new InvalidOperationException("B1 Part39 priority filter missing");
+            var priorityCounts = recoveryView.FindName("CollisionPriorityCounts")
+                as TextBlock ?? throw new InvalidOperationException("B1 Part39 priority counts missing");
+            bool part39EmptyPriority = priorityFilter.Items.Count == 5 &&
+                priorityFilter.SelectedIndex == 0 &&
+                priorityCounts.Text.Contains("U 未判定範囲 1件",
+                    StringComparison.Ordinal) &&
+                !recoveryApply.IsEnabled && collisionGrid.Items.Count == 0;
+            priorityFilter.SelectedIndex = 1; // P0
+            bool part39FilterSafe = collisionGrid.Items.Count == 0 &&
+                !recoveryApply.IsEnabled && !mergeButton.IsEnabled;
+            priorityFilter.SelectedIndex = 0; // All, for existing Part37/38 smoke
+            Require(part39EmptyPriority && part39FilterSafe &&
+                !Directory.Exists(Path.Combine(originals, ".chappy-collision-journal")) &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB,
+                "B1 Part39: real WPF priority filtering shows unverified empty scope and never enables Apply");
             // A deterministic *visualization row* validates the actual WPF
             // selection and guidance display; it is not fake file evidence.
             // Real NTFS evidence classification is covered by Part36/37 Core.
@@ -300,8 +317,11 @@ internal static class UiInteractionSmoke
                 OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
                 NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
                 NativeFile.GetIdentity(right).SameFile(beforeRightId);
-            Require(part38ChecklistShown,
-                "R2.17 part38: real WPF selected evidence displays checklist and never authorizes recovery, deletion or Apply");
+            Require(part38ChecklistShown &&
+                    detail.Text.Contains("【調査の優先度と次の確認】",
+                        StringComparison.Ordinal) &&
+                    detail.Text.Contains("U 未判定", StringComparison.Ordinal),
+                "R2.17 part38 + B1 Part39: selected evidence displays checklist and conservative triage guidance without enabling Apply");
             recoveryView.Close();
 
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with

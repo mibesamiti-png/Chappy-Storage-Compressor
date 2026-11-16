@@ -26,7 +26,7 @@ internal static class R217IntegratedDedupeUndoTests
         // the incompatible names must not discard the safe 2-file subset.
         string root = Path.Combine(parent, "r217-b1-compatible-subgroups");
         Directory.CreateDirectory(root);
-        string[] files = ["a.mp4", "b.mp4", "c.mp4", "d.mp4"]
+        string[] files = new[] { "a.mp4", "b.mp4", "c.mp4", "d.mp4" }
             .Select(name => Path.Combine(root, name)).ToArray();
         File.WriteAllBytes(files[0], RandomNumberGenerator.GetBytes(64 * 1024));
         foreach (string path in files.Skip(1))

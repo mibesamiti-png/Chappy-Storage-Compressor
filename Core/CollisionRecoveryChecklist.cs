@@ -53,15 +53,19 @@ public static class CollisionRecoveryChecklist
                 "選択された証拠" : "操作ID " + selected.RecordId;
         string id = selected?.RecordId ?? "";
 
-        if (!evidence.JournalPresent)
-            return Unverified(root, scope,
-                "選択したフォルダに台帳がありません。別フォルダや過去の操作が正常だと示すものではありません。",
-                "証拠なし（復旧可否は未検証）", id);
-
+        // UI may retain a row after refresh, including when the selected
+        // root now contains NO journal. A stale row takes precedence over
+        // the empty-root informational status: never silently downgrade a
+        // contradictory displayed item to a harmless "no evidence" message.
         if (selected is not null && !rows.Contains(selected))
             return Unverified(root, scope,
                 "現在の調査結果に選択された項目が存在しません。再検査が必要です。",
                 "要確認（表示行が最新証拠と不一致）", id);
+
+        if (!evidence.JournalPresent)
+            return Unverified(root, scope,
+                "選択したフォルダに台帳がありません。別フォルダや過去の操作が正常だと示すものではありません。",
+                "証拠なし（復旧可否は未検証）", id);
 
         if (rows.Count == 0)
             return Unverified(root, scope,

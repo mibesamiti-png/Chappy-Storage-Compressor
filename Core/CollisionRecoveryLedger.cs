@@ -30,7 +30,8 @@ public static class CollisionRecoveryLedger
 
     public sealed record Receipt(int Schema, string Id, int Index,
         string DestinationRelativePath, string Hash, uint Volume,
-        ulong FileIndex, long Length);
+        ulong FileIndex, long Length, long CreationTicks, long ModifiedTicks,
+        FileAttributes Attributes, string SecurityHash);
 
     public sealed record Status(string State, int VerifiedFiles,
         int ExpectedFiles, string Explanation)
@@ -237,7 +238,10 @@ public static class CollisionRecoveryLedger
             !receipt.DestinationRelativePath.Equals(targetRelative,
                 StringComparison.OrdinalIgnoreCase) ||
             receipt.Hash.Length != 64 || !receipt.Hash.All(Uri.IsHexDigit) ||
-            receipt.Volume == 0 || receipt.FileIndex == 0 || receipt.Length <= 0)
+            receipt.Volume == 0 || receipt.FileIndex == 0 || receipt.Length <= 0 ||
+            receipt.CreationTicks <= 0 || receipt.ModifiedTicks <= 0 ||
+            receipt.SecurityHash.Length != 64 ||
+            !receipt.SecurityHash.All(Uri.IsHexDigit))
             throw new InvalidDataException("Part35 malformed exact output receipt");
         return receipt;
     }
@@ -253,6 +257,11 @@ public static class CollisionRecoveryLedger
                 now.Identity.FileIndex == receipt.FileIndex &&
                 now.Identity.LinkCount == 1 &&
                 now.Length == receipt.Length &&
+                now.CreationUtc.Ticks == receipt.CreationTicks &&
+                now.ModifiedUtc.Ticks == receipt.ModifiedTicks &&
+                now.Attributes == receipt.Attributes &&
+                Convert.ToHexString(SHA256.HashData(now.SecurityDescriptor)) ==
+                    receipt.SecurityHash &&
                 Safety.ComputeSha256(path, CancellationToken.None) == receipt.Hash &&
                 Safety.SameSnapshot(now);
         }
@@ -268,7 +277,10 @@ public static class CollisionRecoveryLedger
             !Safety.SameSnapshot(snapshot))
             throw new InvalidDataException("Part35 output failed before durable receipt");
         return new Receipt(1, id, index, relative, hash,
-            snapshot.Identity.VolumeSerial, snapshot.Identity.FileIndex, snapshot.Length);
+            snapshot.Identity.VolumeSerial, snapshot.Identity.FileIndex,
+            snapshot.Length, snapshot.CreationUtc.Ticks, snapshot.ModifiedUtc.Ticks,
+            snapshot.Attributes,
+            Convert.ToHexString(SHA256.HashData(snapshot.SecurityDescriptor)));
     }
 
     private static CollisionCollectionPlan.Result Plan(Intent x) =>

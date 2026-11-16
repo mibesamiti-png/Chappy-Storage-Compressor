@@ -99,11 +99,16 @@ check('B2: normal Windows build contains only manifest-authorized internal Core'
       'CompletedGroupLedger.AssertPreparedAlias(' in core and
       'testOnlyPreparedGroupId: id' not in
       (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
-check('B2: synthetic-only writer and Undo remain compile-gated',
-      'public static string MergeSynthetic(' in
-      (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8') and
-      '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in
-      (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
+group_ledger = (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8')
+check('B2: durable manifest writer is compiled for normal Windows Core',
+      'internal static string PrepareVerifiedGroup(' in group_ledger and
+      'string id = PrepareVerifiedGroup(root, group);' in group_ledger and
+      'using var mutationLease = MutationLease.Acquire();' in group_ledger)
+check('B2: synthetic operation wrappers and Undo remain compile-gated',
+      'public static string MergeSynthetic(' in group_ledger and
+      '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and
+      '#if CHAPPY_TESTING\n    public static string MergeSynthetic(' in group_ledger and
+      'public static int ResumeUndoSynthetic(' in group_ledger)
 check('R1.5: PNG test coverage included', 'TestR15PngPreview(root)' in test and 'WritePngChunk' in test)
 
 print(f'\nStatic checks: {len(errors)} failure(s). This does NOT test C# compilation or runtime safety.')

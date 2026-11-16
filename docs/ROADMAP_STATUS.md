@@ -332,6 +332,14 @@ Five genuine independent managed processes mutate **only generated, sentinel-gua
 
 **Not proven**: arbitrary external rename/delete after the *last* validation but before the OS pathname operation (TOCTOU), physical power loss, arbitrary owner/SACL/ADS/EFS, production safe consent, or real-user cutoff. Production hardlink merge, original image replacement and independent Undo remain **disabled**. Real recovered user capacity: **0 B**. Historical source-estimate 69.4% is not release readiness.
 
+## R2.17 Part 33 — generated-only NTFS pinned-handle mutation feasibility
+
+Rather than adding another path-based snapshot to Part32's final-instruction TOCTOU gap, a **strictly `CHAPPY_TESTING`-only** `SyntheticPinnedNtfsFile` prototype now opens the generated original by `CreateFileW(DELETE | FILE_READ_ATTRIBUTES)`, authenticates its NTFS volume+file ID and original SHA, and uses Microsoft's `SetFileInformationByHandle` FileRenameInfo (class 3, **ReplaceIfExists=FALSE**) or FileDispositionInfo (class 4, single independent file only). Eight controlled NTFS proofs include **four real external processes** that move/replace the source pathname (including same-SHA different NTFS ID) or plant a foreign destination after precheck, plus normal rename, single-link deletion, hardlink refusal and out-of-root refusal. Crucially, the pinned handle's target ID does not silently change when its prior pathname has acquired a foreign occupant, and the native no-replace operation must reject an occupied target.
+
+**This is a feasibility experiment, not integrated into real Core dedupe/Undo or authorized production writing.** A user's externally relocated file would generally require ManualReview rather than a demonstration-mode handle rename, even though its identity is stable. Multi-file transactions and journal durability, directory/name rebinding, external deletion after final verification, arbitrary ACL/ADS/EFS/SACL, power loss and opt-in user consent remain release blockers. Native API support, measurements and precise limits: [Part33 contract](R217_PART33_PINNED_HANDLE_GATE.md).
+
+Production deduplication, original media replacement and independent Undo remain disabled. **0 B real-user storage recovered**; the old 69.4% source estimate remains a historical snapshot, not product release-readiness. Require full PR-head and postmerge main Windows CI.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

@@ -292,7 +292,8 @@ public static class CompletedMergeLedger
                 Path.GetFullPath(independent.Path), StringComparison.OrdinalIgnoreCase) ||
             !Journal.Pending().Any(x => x.OperationId == pending.OperationId) ||
             !Safety.SameRenamedSnapshot(independent, pending.BackupPath) ||
-            !string.Equals(Safety.ComputeSha256(pending.BackupPath, CancellationToken.None),
+            !string.Equals(Safety.ComputeSha256(pending.BackupPath,
+                CancellationToken.None, allowDeleteSharing: true),
                 pending.Sha256, StringComparison.OrdinalIgnoreCase) ||
             !NativeFile.SameFile(independent.Path, pending.MasterPath))
             throw new InvalidDataException("Pre-deletion completed ledger intent failed independent backup proof");

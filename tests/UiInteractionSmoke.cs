@@ -209,6 +209,39 @@ internal static class UiInteractionSmoke
             Require(part24WpfReadOnlyLedger,
                 "R2.17 part24: production WPF ledger inspector shows verified-empty history without any media/store mutations");
 
+            // Part30: actual RecoveryWindow XAML with separate non-actionable
+            // history tab. Use the routed Loaded event in hosted CI; no
+            // physical mouse, real desktop, or production source mutation.
+            var recoveryView = new RecoveryWindow(originals);
+            var historyTabs = recoveryView.FindName("RecoveryTabs") as TabControl ??
+                throw new InvalidOperationException("Part30 WPF RecoveryTabs missing");
+            var historyGrid = recoveryView.FindName("HistoryGrid") as DataGrid ??
+                throw new InvalidOperationException("Part30 WPF HistoryGrid missing");
+            var recoveryApply = recoveryView.FindName("ApplyButton") as Button ??
+                throw new InvalidOperationException("Part30 WPF ApplyButton missing");
+            var historyStatus = recoveryView.FindName("HistorySummaryText") as TextBlock ??
+                throw new InvalidOperationException("Part30 WPF history summary missing");
+            Require(historyTabs.Items.Count == 2 && historyGrid.IsReadOnly &&
+                    !recoveryApply.IsEnabled && !mergeButton.IsEnabled,
+                "R2.17 part30: real recovery XAML separates journal actions from immutable evidence history");
+            recoveryView.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            PumpUntil(() => historyStatus.Text.Contains("対象フォルダ履歴",
+                StringComparison.Ordinal), TimeSpan.FromSeconds(25));
+            historyTabs.SelectedIndex = 1;
+            bool part30WpfHistoryReadOnly = historyGrid.IsReadOnly &&
+                historyGrid.Items.Count == 0 &&
+                historyStatus.Text.Contains("要確認・未完了 0 件", StringComparison.Ordinal) &&
+                historyStatus.Text.Contains("本番統合・独立Undoは無効",
+                    StringComparison.Ordinal) &&
+                !recoveryApply.IsEnabled && !mergeButton.IsEnabled &&
+                !Directory.Exists(Safety.StorePath(originals)) &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId);
+            Require(part30WpfHistoryReadOnly,
+                "R2.17 part30: recovery history tab routed Loaded refresh never enables Apply or mutates originals/store");
+            recoveryView.Close();
+
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with
             // native dialogs replaced by deterministic in-process answers.
             // Hosted Actions has no visible/interactive desktop. We do not
@@ -743,6 +776,13 @@ internal static class UiInteractionSmoke
                     part25ProductionUndoMutationStillDisabled =
                         !IndependentUndoEngine.ProductionEnabled &&
                         !IndependentUndoCrashJournal.ProductionMutationEnabled,
+                    part30RecoveryHistoryTabRoutedLoadedVerified = part30WpfHistoryReadOnly,
+                    part30HistoryTabRemainsReadOnly = historyGrid.IsReadOnly,
+                    part30NeverEnabledApplyForHistory = !recoveryApply.IsEnabled,
+                    part30ReadOnlyInspectionNeverCreatedStore =
+                        !Directory.Exists(Safety.StorePath(originals)),
+                    part30CrossLedgerDashboardProductionMutationDisabled =
+                        !RecoveryEvidenceOverview.ProductionMutationEnabled,
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

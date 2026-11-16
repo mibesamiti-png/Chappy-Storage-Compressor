@@ -41,6 +41,7 @@ public static class IndependentUndoEngine
         , Action<string>? testOnlyBeforeFinalValidation = null
         , string? testOnlyCompletedOperationId = null
         , Action<string>? testOnlyCrashCheckpoint = null
+        , Action<string, string>? testOnlyGroupPhase = null
 #endif
         )
     {
@@ -108,6 +109,10 @@ public static class IndependentUndoEngine
             testOnlyCrashCheckpoint?.Invoke("intent-written");
         }
 
+        // Persist group-wide intent BEFORE any stage byte is written.
+        // This testing hook is deliberately absent from normal builds.
+        testOnlyGroupPhase?.Invoke("intent-written", stage);
+
         // A full independent copy consumes capacity; the duplicate link is
         // retained until the stage is validated. Use test-owned paths only.
         File.Copy(alias, stage, overwrite: false);
@@ -128,6 +133,7 @@ public static class IndependentUndoEngine
                 expectedHash, StringComparison.OrdinalIgnoreCase);
         if (!StageValid(staged))
             throw new InvalidDataException("Independent stage failed byte or owner/DACL/metadata validation");
+        testOnlyGroupPhase?.Invoke("stage-validated", stage);
         if (testOnlyCompletedOperationId is not null)
         {
             IndependentUndoCrashJournal.MarkStageSynthetic(root, testOnlyCompletedOperationId);
@@ -163,6 +169,8 @@ public static class IndependentUndoEngine
         // This is a single test-owned alias, NOT the master. The independent
         // source and store link remain untouched by the replace operation.
         File.Replace(stage, alias, null);
+        // A real post-cutover crash may happen before metadata restoration.
+        testOnlyGroupPhase?.Invoke("post-cutover-before-metadata", stage);
         // This crash checkpoint occurs AFTER the name has been switched to
         // an independent NTFS ID, BEFORE owner/DACL/time normalization.
         if (testOnlyCompletedOperationId is not null)
@@ -241,6 +249,7 @@ public static class IndependentUndoEngine
                 ", owner+DACL=" +
                 detached.SecurityDescriptor.AsSpan().SequenceEqual(originalIndependent.SecurityDescriptor) +
                 "; retain evidence");
+        testOnlyGroupPhase?.Invoke("metadata-restored-before-ledger", stage);
         if (testOnlyCompletedOperationId is not null)
         {
             IndependentUndoCrashJournal.MarkMetadataSynthetic(root, testOnlyCompletedOperationId);

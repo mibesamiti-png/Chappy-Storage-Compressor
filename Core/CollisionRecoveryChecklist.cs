@@ -58,9 +58,19 @@ public static class CollisionRecoveryChecklist
         if (!evidence.JournalPresent || evidence.Rows.Count == 0)
             return new PrioritySummary(evidence, 0, 0, 0, 1);
 
+        // All evidence rows of one operation share the same Part38 decision.
+        // Cache that decision instead of re-scanning up to 512 intents x 64
+        // outputs for every individual file row. Unknown evidence is keyed
+        // separately in case a hostile record ID collides with a real one.
+        var decisions = new Dictionary<(string, bool), Review>();
         var ranked = evidence.Rows.Select((row, ordinal) =>
         {
-            Review review = Analyze(evidence, row);
+            var key = (row.RecordId, row.Kind == "不明な証拠");
+            if (!decisions.TryGetValue(key, out Review? review))
+            {
+                review = Analyze(evidence, row);
+                decisions.Add(key, review);
+            }
             string priority = review.Decision.StartsWith("要確認",
                     StringComparison.Ordinal) ||
                 review.Decision.StartsWith("検査不能", StringComparison.Ordinal) ?

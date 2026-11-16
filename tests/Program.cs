@@ -25,7 +25,8 @@ static class Program
             // Existing synthetic tests now exercise the production ID-based
             // recovery contract rather than minting unauthenticated legacy
             // records and relying on SHA alone.
-            IndependentIdentity = NativeFile.GetIdentity(original),
+            IndependentIdentity = File.Exists(original) ? NativeFile.GetIdentity(original) :
+                File.Exists(backup) ? NativeFile.GetIdentity(backup) : null,
             MasterIdentity = File.Exists(master) ? NativeFile.GetIdentity(master) : null };
 
     // R2.2: storage preflight formula tests; no user file modification.

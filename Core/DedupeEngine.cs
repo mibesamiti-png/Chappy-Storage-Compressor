@@ -72,7 +72,9 @@ public static class DedupeEngine
             // the operation still cannot be atomic against a separate deleter.
             using var sourceGuard = File.Open(source.Path, FileMode.Open, FileAccess.Read,
                 FileShare.Read | FileShare.Delete);
-            if (!Safety.SameSnapshot(source) ||
+            var pinnedSourceId = NativeFile.IdentityFromHandle(sourceGuard.SafeFileHandle);
+            if (!pinnedSourceId.SameFile(source.Identity) ||
+                !Safety.SameSnapshot(source) ||
                 !string.Equals(Safety.ComputeSha256(source.Path, ct), group.Hash, StringComparison.Ordinal))
             {
                 done += group.Files.Count - 1;
@@ -96,16 +98,30 @@ public static class DedupeEngine
                 {
                     // This handle blocks third-party writers; a file already open
                     // for writing makes the merge fail safely before any rename.
-                    using var duplicateGuard = File.Open(duplicate.Path, FileMode.Open,
-                        FileAccess.Read, FileShare.Read | FileShare.Delete);
-                    if (!Safety.SameSnapshot(duplicate) || !Safety.SameSnapshot(source) ||
-                        NativeFile.GetIdentity(duplicate.Path).LinkCount != 1)
-                        throw new IOException("スキャン後にファイルやハードリンク状態が変更されました");
-                    if (!string.Equals(Safety.ComputeSha256(duplicate.Path, ct), group.Hash,
-                        StringComparison.Ordinal) || !Safety.ByteEqual(source.Path, duplicate.Path, ct))
-                        throw new IOException("内容が変更されました");
+                    // Snapshot/hash full-byte proof first. Then pin the exact
+                    // independent NTFS ID for rename and eventual deletion.
+                    // Never keep a second data-read handle alive during the
+                    // final kernel disposition (otherwise deletion is delayed).
+                    using (var duplicateGuard = File.Open(duplicate.Path, FileMode.Open,
+                        FileAccess.Read, FileShare.Read | FileShare.Delete))
+                    {
+                        if (!NativeFile.IdentityFromHandle(
+                                duplicateGuard.SafeFileHandle).SameFile(duplicate.Identity) ||
+                            !Safety.SameSnapshot(duplicate) || !Safety.SameSnapshot(source) ||
+                            NativeFile.GetIdentity(duplicate.Path).LinkCount != 1)
+                            throw new IOException("スキャン後にファイルやハードリンク状態が変更されました");
+                        if (!string.Equals(Safety.ComputeSha256(duplicate.Path, ct), group.Hash,
+                            StringComparison.Ordinal) ||
+                            !Safety.ByteEqual(source.Path, duplicate.Path, ct))
+                            throw new IOException("内容が変更されました");
+                    }
                     ct.ThrowIfCancellationRequested();
                     Journal.AssertCleanBeforeMerge();
+                    using var originalPin = NativeFile.PinnedFile.Open(
+                        duplicate.Path, duplicate.Identity, group.Hash);
+                    if (!originalPin.PathStillMatches(duplicate.Path) ||
+                        !Safety.SameSnapshot(duplicate) || !Safety.SameSnapshot(source))
+                        throw new IOException("最終NTFSハンドル固定前に変更されました");
 
                     // Don't create the extra store link until at least one actual
                     // duplicate has passed the full preflight. This keeps a failed
@@ -115,8 +131,9 @@ public static class DedupeEngine
                         NativeFile.NewHardLink(masterPath, source.Path);
                         masterCreatedByUs = true;
                     }
-                    if (!NativeFile.SameFile(masterPath, source.Path))
-                        throw new IOException("統合先が代表ファイルと異なる実体です");
+                    if (!NativeFile.GetIdentity(masterPath).SameFile(pinnedSourceId) ||
+                        !NativeFile.SameFile(masterPath, source.Path))
+                        throw new IOException("統合先が固定した代表NTFS IDと異なる実体です");
 
                     string id = Guid.NewGuid().ToString("N");
                     string backup = duplicate.Path + ".chappy-backup-" + id;
@@ -139,20 +156,24 @@ public static class DedupeEngine
                     {
                         if (!Safety.SameSnapshot(duplicate) || !Safety.SameSnapshot(source))
                             throw new IOException("統合直前に更新されました");
-                        File.Move(duplicate.Path, backup);
+                        // Rename by the original held NTFS ID, never by a
+                        // last-moment pathname lookup; target replacement=false.
+                        originalPin.RenameNoReplace(backup);
                         backupCreated = true;
                         FaultInjection.Hit("backup-renamed");
-                        if (!Safety.SameRenamedSnapshot(duplicate, backup))
-                            throw new IOException("退避ファイルの同一性・属性が変わりました");
+                        if (!originalPin.PathStillMatches(backup) ||
+                            !Safety.SameRenamedSnapshot(duplicate, backup))
+                            throw new IOException("退避ファイルの固定ID・属性が変わりました");
                         NativeFile.NewHardLink(duplicate.Path, masterPath);
                         FaultInjection.Hit("new-link-created");
                         if (!NativeFile.SameFile(duplicate.Path, masterPath))
                             throw new IOException("ハードリンクの実体確認に失敗");
-                        if (!Safety.SameRenamedSnapshot(duplicate, backup) ||
-                            !string.Equals(Safety.ComputeSha256(backup, CancellationToken.None),
-                                group.Hash, StringComparison.Ordinal))
-                            throw new IOException("退避ファイルの内容・属性が変わりました。削除しません");
-                        if (!Safety.ByteEqual(backup, masterPath, CancellationToken.None) ||
+                        if (!originalPin.PathStillMatches(backup) ||
+                            !Safety.SameRenamedSnapshot(duplicate, backup))
+                            throw new IOException("退避ファイルの固定ID・属性が変わりました。削除しません");
+                        if (!Safety.ByteEqual(backup, masterPath, CancellationToken.None,
+                                allowDeleteSharing: true) ||
+                            !originalPin.PathStillMatches(backup) ||
                             !Safety.SameRenamedSnapshot(duplicate, backup))
                             throw new IOException("退避ファイルの最終照合に失敗。削除しません");
                         FaultInjection.Hit("pre-backup-delete");
@@ -162,15 +183,14 @@ public static class DedupeEngine
                         // Hash alone does not authorize deleting a pathname:
                         // re-open the exact scanned NTFS identity immediately
                         // before irreversible backup deletion.
-                        if (!Safety.SameRenamedSnapshot(duplicate, backup) ||
-                            !string.Equals(Safety.ComputeSha256(backup,
-                                CancellationToken.None), group.Hash,
-                                StringComparison.OrdinalIgnoreCase) ||
+                        if (!originalPin.PathStillMatches(backup) ||
+                            !Safety.SameRenamedSnapshot(duplicate, backup) ||
                             !Safety.ByteEqual(backup, masterPath,
-                                CancellationToken.None) ||
-                            !NativeFile.SameFile(duplicate.Path, masterPath))
+                                CancellationToken.None, allowDeleteSharing: true) ||
+                            !NativeFile.SameFile(duplicate.Path, masterPath) ||
+                            !NativeFile.GetIdentity(masterPath).SameFile(pinnedSourceId))
                             throw new InvalidDataException(
-                                "Backup path or original NTFS identity changed before irreversible delete; retain evidence");
+                                "Pinned backup ID or shared master changed before irreversible delete; retain evidence");
 #if CHAPPY_TESTING
                         // Durable original metadata BEFORE irreversible backup
                         // deletion. Test-only opt-in; normal product code NEVER
@@ -179,7 +199,7 @@ public static class DedupeEngine
                             CompletedMergeLedger.PrepareSynthetic(root, pending, duplicate);
 #endif
                         // Delete only the now-verified, independent duplicate.
-                        File.Delete(backup);
+                        originalPin.DeleteCurrent(requireIndependent: true);
                         FaultInjection.Hit("backup-deleted");
 #if CHAPPY_TESTING
                         if (testOnlyRecordCompletedMerges)
@@ -206,18 +226,26 @@ public static class DedupeEngine
                             // Leave the pending journal and both names for
                             // explicit manual review instead of deleting a
                             // possible foreign file or hiding the original.
-                            bool exactBackup = File.Exists(backup) &&
-                                Safety.SameRenamedSnapshot(duplicate, backup) &&
-                                string.Equals(Safety.ComputeSha256(backup,
-                                    CancellationToken.None), group.Hash,
-                                    StringComparison.OrdinalIgnoreCase);
+                            bool exactBackup = originalPin.PathStillMatches(backup) &&
+                                Safety.SameRenamedSnapshot(duplicate, backup);
                             if (exactBackup)
                             {
-                                if (File.Exists(duplicate.Path) &&
-                                    NativeFile.SameFile(duplicate.Path, masterPath))
-                                    File.Delete(duplicate.Path);
+                                // A foreign alias is NEVER deleted, even when
+                                // its SHA matches. Remove only a pinned link
+                                // whose ID matches the verified master.
+                                if (File.Exists(duplicate.Path))
+                                {
+                                    if (!NativeFile.GetIdentity(masterPath)
+                                            .SameFile(pinnedSourceId))
+                                        throw new InvalidDataException(
+                                            "Master changed during rollback");
+                                    using var ownedAlias = NativeFile.PinnedFile.Open(
+                                        duplicate.Path, pinnedSourceId, group.Hash,
+                                        requireIndependent: false);
+                                    ownedAlias.DeleteCurrent(requireIndependent: false);
+                                }
                                 if (!File.Exists(duplicate.Path))
-                                    File.Move(backup, duplicate.Path);
+                                    originalPin.RenameNoReplace(duplicate.Path);
                             }
                         }
                         // Do not silently erase a journal during exception handling.
@@ -242,8 +270,12 @@ public static class DedupeEngine
             // If no duplicate could be merged, don't keep a newly made link
             // that would otherwise hide the source from future scans.
             if (successfulInGroup == 0 && masterCreatedByUs && File.Exists(masterPath) &&
-                NativeFile.SameFile(masterPath, source.Path))
-                File.Delete(masterPath);
+                NativeFile.GetIdentity(masterPath).SameFile(pinnedSourceId))
+            {
+                using var ownedMaster = NativeFile.PinnedFile.Open(
+                    masterPath, pinnedSourceId, group.Hash, requireIndependent: false);
+                ownedMaster.DeleteCurrent(requireIndependent: false);
+            }
         }
         return estimatedSaved;
     }

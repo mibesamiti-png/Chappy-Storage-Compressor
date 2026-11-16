@@ -22,7 +22,7 @@ internal static class R217IntegratedDedupeUndoTests
     private static void CheckReadOnlySafePartitions(string parent, Action<bool, string> check)
     {
         // Real generated NTFS IDs/attrs/time, not fake snapshots or real media.
-        // Three matching ordinary files and one byte-identical Archive case:
+        // Two regular files plus byte-identical Archive/time-divergent peers:
         // the incompatible names must not discard the safe 2-file subset.
         string root = Path.Combine(parent, "r217-b1-compatible-subgroups");
         Directory.CreateDirectory(root);
@@ -42,7 +42,7 @@ internal static class R217IntegratedDedupeUndoTests
         File.SetLastWriteTimeUtc(files[3], stamp.AddMinutes(3));
         string[] sha = files.Select(Hash).ToArray();
         FileIdentity[] ids = files.Select(NativeFile.GetIdentity).ToArray();
-        var scan = Scanner.Run(root, mediaOnly: true, null, CancellationToken.None);
+        var scan = Scanner.Run(root, true, null, CancellationToken.None);
         check(scan.Groups.Count == 1 && scan.Groups[0].Files.Count == 4 &&
             scan.Groups[0].BlockReason(false) is not null,
             "B1: exact-byte scanner keeps all four differently attributed/timed originals in one detection group");
@@ -76,8 +76,8 @@ internal static class R217IntegratedDedupeUndoTests
                 Hash(file) == sha[i] &&
                 NativeFile.GetIdentity(file).SameFile(ids[i]) &&
                 NativeFile.GetIdentity(file).LinkCount == 1).All(x => x) &&
-            !Directory.Exists(Safety.StorePath(root)) ,
-            "B1: full subgroup analysis preserves every independent original and cannot enable production merge");
+            !Directory.Exists(Safety.StorePath(root)),
+            "B1: read-only subgroup analysis preserves originals and creates no merge store");
     }
 
     public static void Run(string parent, Action<bool, string> check,

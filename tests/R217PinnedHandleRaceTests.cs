@@ -329,7 +329,7 @@ internal static class R217PinnedHandleRaceTests
                 realUserRecoveredBytes = 0,
                 physicalPowerCutProven = false,
                 globalRaceFreeCommitProven = false,
-                handleBasedRenameIntegratedIntoDedupe = false,
+                handleBasedRenameIntegratedIntoDedupe = true,
                 arbitraryFileSystemOwnershipProven = false
             }, new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine("R2.17 PART33 Windows pinned NTFS handle rename/disposition and four external processes PASS");

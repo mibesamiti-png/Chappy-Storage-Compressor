@@ -22,6 +22,11 @@ public static class CollisionEvidenceReview
         string OriginalRelativePath, string DestinationRelativePath,
         string State, string Explanation, bool NeedsAttention)
     {
+        // Part39: immutable read-only presentation metadata, not recovery evidence.
+        // Applied only to rows produced by CollisionRecoveryChecklist.Prioritize.
+        public string PriorityLabel { get; init; } = "U 未判定";
+        public string PriorityGuidance { get; init; } =
+            "対象範囲と最新の証拠を確認してください。";
         public string AttentionText => NeedsAttention ? "要確認" : "保存先照合";
         public string DisplayTarget => string.IsNullOrEmpty(DestinationRelativePath)
             ? RecordId : DestinationRelativePath;

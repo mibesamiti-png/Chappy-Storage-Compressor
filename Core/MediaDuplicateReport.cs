@@ -34,7 +34,9 @@ public static class MediaDuplicateReport
         int eligible = 0, blocked = 0, changed = 0, ordinal = 0;
         long potential = 0;
 
-        foreach (DuplicateGroup group in scan.Groups)
+        var partitions = scan.Groups.SelectMany(g =>
+            g.PartitionForSafeMerge(allowTimestampDifference)).ToArray();
+        foreach (DuplicateGroup group in partitions)
         {
             ct.ThrowIfCancellationRequested();
             int number = ++ordinal;
@@ -109,10 +111,10 @@ public static class MediaDuplicateReport
                 rows.Add(new Row(number, format, status, reason ?? "",
                     relative, file.snapshot.Length, file.i == 0 ? saving : 0, group.Hash));
             }
-            progress?.Report((number, scan.Groups.Count));
+            progress?.Report((number, partitions.Length));
         }
 
-        return new Summary(scan.Groups.Count, eligible, blocked, changed, potential, 0,
+        return new Summary(partitions.Length, eligible, blocked, changed, potential, 0,
             FormatOrder.Select(f => new FormatSummary(f, aggregates[f].Groups,
                 aggregates[f].Files, aggregates[f].Bytes)).ToList(), rows);
     }

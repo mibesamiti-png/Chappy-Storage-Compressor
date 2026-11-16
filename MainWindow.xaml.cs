@@ -198,6 +198,11 @@ public partial class MainWindow : Window
             JobProgress.Value = 100;
             Log($"スキャン完了。検出 {result.FileCount:N0} 件、スキップ {result.Skipped:N0} 件、アクセス等のエラー {result.Errors:N0} 件、完全一致 {result.Groups.Count:N0} グループ。");
             Log($"R2.16: サイズによる一次候補 {result.FileCount:N0} 件中、NTFS厳密検査 {result.DeepInspectedFiles:N0} 件、SHA-256試行 {result.HashAttemptedFiles:N0} 件。単独サイズは内容を読み込まずスキップ。");
+            foreach (var item in result.SkipReasons.OrderByDescending(x => x.Value))
+                Log($"除外内訳: {item.Key} — {item.Value:N0}件");
+            foreach (var item in result.ErrorReasons.OrderByDescending(x => x.Value))
+                Log($"検査不能・エラー内訳: {item.Key} — {item.Value:N0}件");
+            Log("※ 除外/エラーが0でも対象外フォルダや別ドライブまで検査した意味ではありません。");
             Log("※ 読み取り専用スキャンではファイルの削除・統合は一切行いません。");
         }
         catch (OperationCanceledException) { Log("スキャンを中断しました。ファイル変更はありません。"); ProgressText.Text = "中断"; }
@@ -216,17 +221,22 @@ public partial class MainWindow : Window
         _rows.Clear();
         if (_lastScan is null) return;
         bool allowTime = TimeDifferenceCheck.IsChecked == true;
-        foreach (var group in _lastScan.Groups)
+        foreach (var group in _lastScan.Groups.SelectMany(g =>
+            g.PartitionForSafeMerge(allowTime)))
         {
             _rows.Add(new GroupRow
             {
                 Group = group,
                 RepresentativeDisplay = Path.GetRelativePath(_lastScan.Root, group.Representative.Path),
-                Status = group.BlockReason(allowTime) is string reason ? "対象外: " + reason : "統合可能",
+                Status = group.Files.Count < 2 ?
+                    "対象外: 完全一致でも同じ安全条件の相手がいません" :
+                    group.BlockReason(allowTime) is string reason ?
+                        "対象外: " + reason : "統合可能",
             });
         }
         ScannedCountText.Text = _lastScan.FileCount.ToString("N0");
-        GroupCountText.Text = _rows.Count.ToString("N0");
+        // GroupCount always means byte-exact groups, not the safety partitions.
+        GroupCountText.Text = _lastScan.Groups.Count.ToString("N0");
         var safe = _rows.Where(x => x.Status == "統合可能").ToList();
         SafeCountText.Text = safe.Count.ToString("N0");
         SavingsText.Text = GroupRow.HumanSize(safe.Sum(x => x.Group.Savings));

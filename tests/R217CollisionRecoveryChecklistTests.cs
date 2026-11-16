@@ -78,7 +78,10 @@ internal static class R217CollisionRecoveryChecklistTests
             Directory.CreateDirectory(root);
             var summary = CollisionEvidenceReview.Inspect(root);
             var result = CollisionRecoveryChecklist.Analyze(summary);
+            var triage = CollisionRecoveryChecklist.Prioritize(summary);
             bool ok = !summary.JournalPresent &&
+                triage.UnverifiedScope == 1 && triage.Rows.Count == 0 &&
+                !triage.CanApply &&
                 result.Decision == "証拠なし（復旧可否は未検証）" &&
                 ForbiddenOperations(result) &&
                 !Directory.Exists(Path.Combine(root, ".chappy-collision-journal"));
@@ -103,7 +106,11 @@ internal static class R217CollisionRecoveryChecklistTests
             var f = Prepare(parent, "intent-before-output");
             var summary = CollisionEvidenceReview.Inspect(f.Output);
             var review = CollisionRecoveryChecklist.Analyze(summary);
-            bool ok = review.Decision == "未完了（自動再開不可）" &&
+            var triage = CollisionRecoveryChecklist.Prioritize(summary);
+            bool ok = triage.P1 == summary.Rows.Count && triage.P0 == 0 &&
+                triage.Rows.All(x => x.PriorityLabel == "P1 未完了") &&
+                !triage.CanApply &&
+                review.Decision == "未完了（自動再開不可）" &&
                 review.Checks.Any(x => x.Category == "保存先ファイルのID・SHA・ACL" &&
                     x.State == "未完了") &&
                 review.Checks.Any(x => x.Category == "元ファイル・元の権限・保存場所" &&
@@ -125,7 +132,14 @@ internal static class R217CollisionRecoveryChecklistTests
             var review = CollisionRecoveryChecklist.Analyze(summary);
             var firstFile = summary.Rows.First(x => x.Kind == "ファイル");
             var selected = CollisionRecoveryChecklist.Analyze(summary, firstFile);
-            bool ok = review.Decision ==
+            var triage = CollisionRecoveryChecklist.Prioritize(summary);
+            var triagedSelection = CollisionRecoveryChecklist.Analyze(
+                triage.Evidence, triage.Rows.First(x => x.Kind == "ファイル"));
+            bool ok = triage.P2 == summary.Rows.Count && triage.P0 == 0 &&
+                triage.Rows.All(x => x.PriorityLabel == "P2 元未照合") &&
+                !triage.CanApply && !triagedSelection.AuthorizesOriginalRestore &&
+                triagedSelection.Decision == review.Decision &&
+                review.Decision ==
                     "保存先証拠のみ一致（本番復元不可）" &&
                 review.Checks.Count == 8 &&
                 review.Checks.Any(x => x.Category == "保存先ファイルのID・SHA・ACL" &&
@@ -154,7 +168,12 @@ internal static class R217CollisionRecoveryChecklistTests
                 !x.NeedsAttention);
             var forFile = CollisionRecoveryChecklist.Analyze(summary, fileRow);
             var whole = CollisionRecoveryChecklist.Analyze(summary);
-            bool ok = forFile.Decision == "要確認（証拠に不整合）" &&
+            var triage = CollisionRecoveryChecklist.Prioritize(summary);
+            bool ok = triage.P0 == summary.Rows.Count && triage.P2 == 0 &&
+                triage.Rows.All(x => x.PriorityLabel == "P0 最優先") &&
+                triage.Rows[0].Kind == summary.Rows[0].Kind &&
+                !triage.CanApply &&
+                forFile.Decision == "要確認（証拠に不整合）" &&
                 whole.Decision == forFile.Decision &&
                 forFile.Checks.Any(x => x.Category == "未知の証拠・.tmp" &&
                     x.State == "要確認") &&
@@ -180,7 +199,10 @@ internal static class R217CollisionRecoveryChecklistTests
             string orphanHash = Hash(orphan);
             var summary = CollisionEvidenceReview.Inspect(f.Output);
             var checklist = CollisionRecoveryChecklist.Analyze(summary);
-            bool ok = checklist.Decision == "要確認（証拠に不整合）" &&
+            var triage = CollisionRecoveryChecklist.Prioritize(summary);
+            bool ok = triage.P0 == summary.Rows.Count &&
+                triage.Rows.All(x => x.PriorityLabel == "P0 最優先") &&
+                checklist.Decision == "要確認（証拠に不整合）" &&
                 checklist.Checks.Any(x => x.Category == "保存先ファイルのID・SHA・ACL" &&
                     x.State == "要確認") &&
                 ForbiddenOperations(checklist) &&

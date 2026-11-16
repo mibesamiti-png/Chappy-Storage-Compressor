@@ -45,7 +45,10 @@ public static class DedupeFirstWorkflowPlan
         int eligible = 0, blocked = 0, aliases = 0, imageGroups = 0, repeatedImages = 0;
         long savings = 0;
         var result = new List<GroupPreview>();
-        foreach (DuplicateGroup group in scan.Groups)
+        // Keep all byte-exact scan findings, including ineligible singleton
+        // partitions, while re-evaluating safe metadata-compatible subsets.
+        foreach (DuplicateGroup group in scan.Groups.SelectMany(g =>
+            g.PartitionForSafeMerge(allowTimestampDifference)))
         {
             ct.ThrowIfCancellationRequested();
             bool image = group.Files.Count != 0 && group.Files.All(f =>

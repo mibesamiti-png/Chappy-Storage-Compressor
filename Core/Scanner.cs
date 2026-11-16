@@ -20,6 +20,18 @@ public static class Scanner
         var folders = new Stack<string>();
         folders.Push(root);
         int count = 0, skipped = 0, errors = 0;
+        var skipReasons = new Dictionary<string, int>(StringComparer.Ordinal);
+        var errorReasons = new Dictionary<string, int>(StringComparer.Ordinal);
+        void Skip(string reason)
+        {
+            skipped++;
+            skipReasons[reason] = skipReasons.GetValueOrDefault(reason) + 1;
+        }
+        void Error(string reason)
+        {
+            errors++;
+            errorReasons[reason] = errorReasons.GetValueOrDefault(reason) + 1;
+        }
         while (folders.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
@@ -36,17 +48,17 @@ public static class Scanner
                         var attributes = File.GetAttributes(child);
                         if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.System
                                           | FileAttributes.Offline)) != 0)
-                        { skipped++; continue; }
+                        { Skip("リンク・システム・オフラインフォルダ"); continue; }
                         folders.Push(child);
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    { errors++; }
+                    { Error("フォルダ属性読取失敗"); }
                 }
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { errors++; }
+            { Error("フォルダ列挙失敗"); }
 
             try
             {
@@ -57,16 +69,19 @@ public static class Scanner
                     // rejected before any content is hashed, not followed.
                     if (Path.GetFileName(path).Contains(".chappy-backup-",
                         StringComparison.OrdinalIgnoreCase))
-                    { skipped++; continue; }
-                    if (mediaOnly && !Safety.IsMedia(path)) { skipped++; continue; }
+                    { Skip("未完了の退避ファイル"); continue; }
+                    if (mediaOnly && !Safety.IsMedia(path)) { Skip("対象外の拡張子"); continue; }
 
                     try
                     {
                         var info = new FileInfo(path);
                         info.Refresh();
-                        if (!info.Exists || info.Length <= 0 ||
-                            !Safety.EligibleAttributes(info.Attributes))
-                        { skipped++; continue; }
+                        if (!info.Exists)
+                        { Skip("ファイルが存在しない"); continue; }
+                        if (info.Length <= 0)
+                        { Skip("空ファイル"); continue; }
+                        if (!Safety.EligibleAttributes(info.Attributes))
+                        { Skip("特殊属性・読取専用"); continue; }
                         var item = new InventoryItem(info.FullName, info.Length,
                             info.CreationTimeUtc, info.LastWriteTimeUtc, info.Attributes);
                         if (!bySize.TryGetValue(item.Length, out var bucket))
@@ -79,12 +94,12 @@ public static class Scanner
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                         or ArgumentException or NotSupportedException)
-                    { skipped++; }
+                    { Skip("ファイル属性読取失敗"); }
                 }
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            { errors++; }
+            { Error("ファイル列挙失敗"); }
         }
 
         // A unique-size file cannot form a byte-identical pair in this scan,
@@ -109,14 +124,14 @@ public static class Scanner
                     snapshot.ModifiedUtc != item.ModifiedUtc ||
                     snapshot.Attributes != item.Attributes ||
                     snapshot.Identity.LinkCount != 1)
-                { skipped++; continue; }
+                { Skip("一次検査後の変更・既存ハードリンク"); continue; }
                 candidates.Add(snapshot);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                 or ArgumentException or InvalidOperationException
                 or System.ComponentModel.Win32Exception)
-            { skipped++; }
+            { Skip("NTFSメタデータ・ADS・アクセス制限"); }
             if (captured % 100 == 0)
                 progress?.Report($"厳密検査: {captured:N0} / {possiblePairs.Count:N0}");
         }
@@ -140,13 +155,13 @@ public static class Scanner
             ct.ThrowIfCancellationRequested();
             try
             {
-                if (!Safety.SameSnapshot(f)) { skipped++; continue; }
+                if (!Safety.SameSnapshot(f)) { Skip("SHA計算前の変更"); continue; }
                 string digest = Safety.ComputeSha256(f.Path, ct,
                     hashProgress is null ? null : (read, length) =>
                         hashProgress.Report(new ScanHashProgress(settledFiles,
                             candidates.Count, settledCandidateBytes, totalCandidateBytes,
                             read, length)));
-                if (!Safety.SameSnapshot(f)) { skipped++; continue; }
+                if (!Safety.SameSnapshot(f)) { Skip("SHA計算後の変更"); continue; }
                 f.Sha256 = digest;
                 var key = (f.Length, digest);
                 if (!sameHash.TryGetValue(key, out var list))
@@ -156,7 +171,7 @@ public static class Scanner
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
                 or InvalidOperationException or System.ComponentModel.Win32Exception)
-            { errors++; }
+            { Error("SHA計算失敗"); }
             finally
             {
                 // Even a rejected candidate is now a completed unit of work.
@@ -193,7 +208,7 @@ public static class Scanner
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                    { errors++; }
+                    { Error("最終バイト比較失敗"); }
                 }
                 if (!joined) clusters.Add(new List<FileSnapshot> { file });
             }
@@ -214,7 +229,8 @@ public static class Scanner
         {
             Root = root, MediaOnly = mediaOnly, FileCount = count,
             Skipped = skipped, Errors = errors, Groups = groups,
-            DeepInspectedFiles = captured, HashAttemptedFiles = hashed
+            DeepInspectedFiles = captured, HashAttemptedFiles = hashed,
+            SkipReasons = skipReasons, ErrorReasons = errorReasons
         };
     }
 }

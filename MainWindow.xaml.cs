@@ -23,6 +23,9 @@ public partial class MainWindow : Window
     private Func<string?, string?> _pickCombinedTool;
     private Func<string?, string?> _pickCombinedOutput;
     private Func<string, bool> _confirmCombined;
+    // Reuse the existing PNG/JPG output picker for the read-only report.
+    // Only the report's optional CSV confirmation needs its own UI adapter.
+    private Func<string, bool> _confirmCombinedReportCsv;
     private Action<string> _showCombinedFailure;
     private Action<string> _showCombinedResult;
     // Real user-facing feature is a READ-ONLY plan. This adapter permits
@@ -57,6 +60,10 @@ public partial class MainWindow : Window
         _pickCombinedTool = PickCombinedToolNative;
         _pickCombinedOutput = PickCombinedOutputNative;
         _confirmCombined = ConfirmCombinedNative;
+        _confirmCombinedReportCsv = message =>
+            MessageBox.Show(message, "PNG/JPG統合候補レポート",
+                MessageBoxButton.YesNo, MessageBoxImage.Information,
+                MessageBoxResult.Yes) == MessageBoxResult.Yes;
         _showCombinedFailure = ShowCombinedFailureNative;
         _showCombinedResult = ShowCombinedResultNative;
         _showDedupePlan = message => MessageBox.Show(message,
@@ -1127,13 +1134,10 @@ public partial class MainWindow : Window
         string input;
         try { input = Safety.ValidateRoot(PathBox.Text); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "親フォルダを確認"); return; }
-        using var folder = new Forms.FolderBrowserDialog
-        {
-            Description = "PNG/JPG一括候補の記録がある保存先を指定",
-            ShowNewFolderButton = false
-        };
-        if (folder.ShowDialog() != Forms.DialogResult.OK) return;
-        string output = folder.SelectedPath;
+        // The identical native folder picker is already used for preview
+        // creation. Reuse it, avoiding another UI/test-only picker workflow.
+        string? output = _pickCombinedOutput(_lastCombinedOutput);
+        if (string.IsNullOrWhiteSpace(output)) return;
         _work = new CancellationTokenSource();
         var ct = _work.Token;
         Busy(true);
@@ -1184,8 +1188,7 @@ public partial class MainWindow : Window
                 CombinedSavingsPlanner.DescribeDashboard(report, combinedEstimate,
                     combinedEstimate is null ? null : lastScan);
             Log(summary);
-            if (MessageBox.Show(summary, "PNG/JPG統合候補レポート", MessageBoxButton.YesNo,
-                MessageBoxImage.Information, MessageBoxResult.Yes) != MessageBoxResult.Yes) return;
+            if (!_confirmCombinedReportCsv(summary)) return;
             var save = new Microsoft.Win32.SaveFileDialog
             {
                 Title = "統合容量CSV（原本・候補フォルダの外に保存）",

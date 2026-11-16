@@ -35,6 +35,70 @@ public static class CollisionRecoveryChecklist
             "\n\nこの一覧は安全性の判定補助のみ。自動修復・再開・復元許可は発行しません。";
     }
 
+    // Part39: project the EXISTING Part36/38 inspection into stable priorities.
+    // It does no IO, never opens untrusted SourcePath, and issues no action permit.
+    public sealed record PrioritySummary(CollisionEvidenceReview.Summary Evidence,
+        int P0, int P1, int P2, int UnverifiedScope)
+    {
+        public IReadOnlyList<CollisionEvidenceReview.Row> Rows => Evidence.Rows;
+        public bool CanApply => false;
+        public string Describe() =>
+            $"調査優先順位：P0 最優先 {P0}件 ／ P1 未完了 {P1}件 ／ " +
+            $"P2 元データ未照合 {P2}件 ／ U 未判定範囲 {UnverifiedScope}件。" +
+            " 優先順位は調査順のみで、復元・削除・上書きの実行許可ではありません。";
+    }
+
+    public static PrioritySummary Prioritize(CollisionEvidenceReview.Summary? evidence)
+    {
+        // A missing/failed inspection is a single unverified SCOPE, not a
+        // fabricated file record. In particular, never return a green zero.
+        if (evidence is null)
+            return new PrioritySummary(
+                new CollisionEvidenceReview.Summary("(未選択)", [], false), 0, 0, 0, 1);
+        if (!evidence.JournalPresent || evidence.Rows.Count == 0)
+            return new PrioritySummary(evidence, 0, 0, 0, 1);
+
+        var ranked = evidence.Rows.Select((row, ordinal) =>
+        {
+            Review review = Analyze(evidence, row);
+            string priority = review.Decision.StartsWith("要確認",
+                    StringComparison.Ordinal) ||
+                review.Decision.StartsWith("検査不能", StringComparison.Ordinal) ?
+                    "P0 最優先" :
+                review.Decision.StartsWith("未完了", StringComparison.Ordinal) ?
+                    "P1 未完了" :
+                review.Decision.StartsWith("保存先証拠のみ一致",
+                    StringComparison.Ordinal) ? "P2 元未照合" : "U 未判定";
+            string nextStep = priority switch
+            {
+                "P0 最優先" =>
+                    "未知の証拠・レシート・実体の矛盾を先に調査。ファイルや台帳を動かさず保全してください。",
+                "P1 未完了" =>
+                    "欠けた出力・完了レシート・中断位置を確認。自動再開や記録の整理はできません。",
+                "P2 元未照合" =>
+                    "保存先だけが一致。元ファイルの現在のID・SHA・所有権は未確認です。",
+                _ => "対象範囲と最新の履歴を確認してください。安全性は未判定です。"
+            };
+            int order = priority switch
+            {
+                "P0 最優先" => 0,
+                "P1 未完了" => 1,
+                "P2 元未照合" => 2,
+                _ => 3
+            };
+            return (row: row with
+            {
+                PriorityLabel = priority, PriorityGuidance = nextStep
+            }, order, ordinal);
+        }).OrderBy(x => x.order).ThenBy(x => x.ordinal).Select(x => x.row).ToArray();
+        var displayedEvidence = evidence with { Rows = ranked };
+        return new PrioritySummary(displayedEvidence,
+            ranked.Count(r => r.PriorityLabel == "P0 最優先"),
+            ranked.Count(r => r.PriorityLabel == "P1 未完了"),
+            ranked.Count(r => r.PriorityLabel == "P2 元未照合"),
+            ranked.Count(r => r.PriorityLabel == "U 未判定"));
+    }
+
     private static Check CheckOf(string category, string state, string description) =>
         new(category, state, description);
 

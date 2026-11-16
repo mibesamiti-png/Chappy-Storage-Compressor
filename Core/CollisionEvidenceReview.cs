@@ -25,6 +25,26 @@ public static class CollisionEvidenceReview
         public string AttentionText => NeedsAttention ? "要確認" : "保存先照合";
         public string DisplayTarget => string.IsNullOrEmpty(DestinationRelativePath)
             ? RecordId : DestinationRelativePath;
+
+        /// <summary>
+        /// Safe instructions only. In particular, no instruction here permits
+        /// deleting an orphan, overwriting a destination or editing a journal.
+        /// The WPF view has no mutation API and offers no Apply action.
+        /// </summary>
+        public string ReviewGuidance =>
+            Kind == "不明な証拠" ?
+                "見覚えのない証拠を移動・削除せず、操作IDと保存先の記録を保管して調査してください。" :
+            Kind == "操作記録" && NeedsAttention ?
+                "台帳全体に未完了・不整合があります。元ファイルと保存先を保存したまま、該当する証拠を個別に確認してください。" :
+            State == "未書き出し" ?
+                "元ファイルや保存先に変更を加えず、正式な復旧手順が検証されるまで再開しないでください。" :
+            Kind == "ファイル" && NeedsAttention &&
+                Explanation.Contains("完了レシートがありません",
+                    StringComparison.Ordinal) ?
+                "保存先に既存ファイルがあります。内容が一致していても削除・上書き・自動採用せず、記録を保管してください。" :
+            NeedsAttention ?
+                "証拠が一致していません。ファイルと台帳を編集せず、ID・SHA-256・権限情報を再調査してください。" :
+                "保存先の証拠だけが一致しています。元データと台帳全体の復旧完了は未検証です。";
     }
 
     public sealed record Summary(string Root, IReadOnlyList<Row> Rows,
@@ -58,6 +78,8 @@ public static class CollisionEvidenceReview
         public string? SourcePath { get; set; }
         public string? OriginalRelativePath { get; set; }
         public string? DestinationRelativePath { get; set; }
+        public bool Collected { get; set; }
+        public string? Reason { get; set; }
         public string? Hash { get; set; }
         public long Length { get; set; }
     }
@@ -125,6 +147,27 @@ public static class CollisionEvidenceReview
             throw new InvalidDataException("壊れた/大きすぎる/リンク形式の記録");
         return JsonSerializer.Deserialize<T>(File.ReadAllBytes(file)) ??
             throw new InvalidDataException("空の操作記録");
+    }
+
+    private static string CanonicalReportHash(string root, Manifest manifest)
+    {
+        // Reconstruct exactly the Part35 report from the persisted user-
+        // approved collision plan, without opening SourcePath or touching
+        // any output file. This detects a self-consistent *changed* report
+        // and edited receipt that no longer reflect the intent's mapping.
+        if (manifest.Items is null ||
+            string.IsNullOrWhiteSpace(manifest.ReportRelativePath) ||
+            string.IsNullOrWhiteSpace(manifest.CollectionRelativePath))
+            throw new InvalidDataException("一覧メモの元となる操作内容がありません");
+        var plan = new CollisionCollectionPlan.Result(
+            root, manifest.CollectionRelativePath, manifest.ReportRelativePath,
+            manifest.Items.Select(x => new CollisionCollectionPlan.Entry(
+                x.OriginalRelativePath ?? "", x.DestinationRelativePath ?? "",
+                x.Collected, x.Reason ?? "")).ToList());
+        var utf8 = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+        byte[] bytes = utf8.GetPreamble().Concat(
+            utf8.GetBytes(CollisionCollectionPlan.ReportText(plan))).ToArray();
+        return Convert.ToHexString(SHA256.HashData(bytes));
     }
 
     private static bool Matches(string root, Receipt rec, string target)
@@ -207,6 +250,21 @@ public static class CollisionEvidenceReview
                     throw new InvalidDataException("操作記録の型・ルート・件数が不正");
 
                 string reportRelative = record.ReportRelativePath ?? "";
+                bool collected = record.Items.Any(x => x.Collected);
+                string collection = record.CollectionRelativePath ?? "";
+                if (collected != (reportRelative.Length > 0) ||
+                    collected != (collection.Length > 0))
+                    throw new InvalidDataException("同名ファイルの有無と報告書が不整合");
+                if (collected)
+                {
+                    // Collection nesting is exactly 同名ファイル/同名ファイル...,
+                    // never an arbitrary path supplied by a forged journal.
+                    string[] names = collection.Replace('\\', '/').Split('/');
+                    if (names.Length is < 1 or > 32 ||
+                        names.Any(name => name != CollisionCollectionPlan.FolderName))
+                        throw new InvalidDataException("同名ファイル集約フォルダの形式が不正");
+                    StrictRelative(root, collection);
+                }
                 if (reportRelative.Length > 0)
                 {
                     string reportPath = StrictRelative(root, reportRelative);
@@ -224,7 +282,12 @@ public static class CollisionEvidenceReview
                     string relative = item.DestinationRelativePath ?? "";
                     string destination = StrictRelative(root, relative);
                     StrictRelative(root, original);
-                    if (!Hash64(item.Hash) || item.Length <= 0 ||
+                    if (item.Reason is null ||
+                        (item.Collected && (collection.Length == 0 ||
+                         !relative.StartsWith(collection +
+                             Path.DirectorySeparatorChar,
+                             StringComparison.OrdinalIgnoreCase))) ||
+                        !Hash64(item.Hash) || item.Length <= 0 ||
                         !seen.Add(destination) ||
                         relative.Equals(Folder, StringComparison.OrdinalIgnoreCase) ||
                         relative.StartsWith(Folder + Path.DirectorySeparatorChar,
@@ -278,6 +341,9 @@ public static class CollisionEvidenceReview
                             "保存先の記録検証失敗: " + ex.GetType().Name));
                     }
                 }
+                if (reportRelative.Length > 0 &&
+                    seen.Contains(StrictRelative(root, reportRelative)))
+                    throw new InvalidDataException("一覧メモが出力ファイルと同じ名前です");
                 string reportName = id + ".report.json";
                 string completeName = id + ".complete";
                 knownNames.Add(completeName);
@@ -308,6 +374,9 @@ public static class CollisionEvidenceReview
                             if (proof.Id != id || proof.Index != record.Items.Count ||
                                 !string.Equals(proof.DestinationRelativePath,
                                     reportRelative, StringComparison.OrdinalIgnoreCase) ||
+                                !string.Equals(proof.Hash,
+                                    CanonicalReportHash(root, record),
+                                    StringComparison.OrdinalIgnoreCase) ||
                                 !Matches(root, proof, pathToReport))
                                 throw new InvalidDataException("一覧メモのレシート不一致");
                             rows.Add(new Row("一覧メモ", id, "", reportRelative,
@@ -352,12 +421,27 @@ public static class CollisionEvidenceReview
                     "操作記録を検証できません: " + ex.GetType().Name));
             }
         }
-        foreach (string path in evidence)
+        var unrecognized = evidence.Where(path =>
+            !knownNames.Contains(Path.GetFileName(path))).ToArray();
+        foreach (string path in unrecognized)
         {
             ct.ThrowIfCancellationRequested();
-            if (knownNames.Contains(Path.GetFileName(path))) continue;
             rows.Add(Problem("不明な証拠", Path.GetFileName(path), "", "",
                 "未登録・未完了・別操作の証拠があります"));
+        }
+        // Part36 displayed the foreign .tmp row but could still mark the
+        // *operation* Verified because the known receipts were valid.
+        // One unexplained file means this journal folder is NOT all-clear.
+        if (unrecognized.Length > 0)
+        {
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                if (row.Kind != "操作記録" || row.NeedsAttention) continue;
+                rows[i] = Problem("操作記録", row.RecordId,
+                    row.OriginalRelativePath, row.DestinationRelativePath,
+                    "同じ台帳に不明な証拠があるため操作全体は未検証");
+            }
         }
         return new Summary(root, rows, true);
     }

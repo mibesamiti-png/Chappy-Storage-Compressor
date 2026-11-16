@@ -1049,6 +1049,44 @@ jobs:
           "R2.17 Part27 four-file completed group, real worker death, explicit continued Undo PASS"
           Get-Content $path
 
+      - name: Verify Part28 inner Undo real worker kills and two-group isolation
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-group-intra-alias-crash.json"
+          if (-not (Test-Path $path)) { throw "Part28 intra-alias crash evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part28-intra-alias-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.actualIndependentWorkerKills -ne 4 -or
+              $r.supportedGroupCountPerScenario -ne 2 -or
+              $r.tamperedStageAndExternalAliasRefused -ne $true -or
+              $r.fullOriginalBytesAndOwnerDaclRestored -ne $true -or
+              $r.productionMergeEnabled -ne $false -or
+              $r.productionUndoEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserCapacityRecovered -ne 0 -or
+              $r.truePowerCutProven -ne $false -or
+              $r.arbitraryUserSecurityProven -ne $false) {
+            throw "Part28 test-only group Undo crash safety contract mismatch"
+          }
+          $points = @(
+            'intent-written', 'stage-validated',
+            'post-cutover-before-metadata', 'metadata-restored-before-ledger'
+          )
+          foreach ($point in $points) {
+            $hits = @($r.exactCheckpoints | Where-Object {
+              $_.phase -eq $point -and $_.actualWorkerKilled -eq $true -and
+              $_.independentOtherGroup -eq $true -and
+              $_.evidenceTamperingRefused -eq $true -and
+              $_.explicitRestartAndBothGroupsRestored -eq $true
+            })
+            if ($hits.Count -ne 1) { throw "Part28 missing forced crash/recovery: $point" }
+          }
+          "R2.17 Part28 four actual interrupted inner Undo windows across isolated groups PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

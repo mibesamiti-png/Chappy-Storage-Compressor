@@ -21,7 +21,12 @@ static class Program
 
     private static PendingOperation Operation(string id, string original, string backup, string master, string hash) =>
         new() { OperationId = id, OriginalPath = original, BackupPath = backup,
-            MasterPath = master, Sha256 = hash, RecordedUtc = DateTime.UtcNow };
+            MasterPath = master, Sha256 = hash, RecordedUtc = DateTime.UtcNow,
+            // Existing synthetic tests now exercise the production ID-based
+            // recovery contract rather than minting unauthenticated legacy
+            // records and relying on SHA alone.
+            IndependentIdentity = NativeFile.GetIdentity(original),
+            MasterIdentity = File.Exists(master) ? NativeFile.GetIdentity(master) : null };
 
     // R2.2: storage preflight formula tests; no user file modification.
     private static void TestR22Readiness()
@@ -203,6 +208,56 @@ static class Program
             "変更されたバックアップは削除も移動もしない");
         File.Delete(rec2.BackupPath); // Only test-generated files.
         Journal.Completed(id2);
+
+        // A byte-identical but DIFFERENT NTFS file is never a valid backup.
+        // This would have passed the older SHA-only Journal.RecoverSafely path.
+        File.WriteAllBytes(original, bytes);
+        string id3 = Guid.NewGuid().ToString("N");
+        var rec3 = Operation(id3, original, original + ".chappy-backup-" + id3,
+            master, hash);
+        Journal.Add(rec3);
+        File.Move(original, rec3.BackupPath);
+        string relocated = Path.Combine(root, "generated-original-preserved.jpg");
+        File.Move(rec3.BackupPath, relocated);
+        File.Copy(relocated, rec3.BackupPath);
+        var foreignId = NativeFile.GetIdentity(rec3.BackupPath);
+        Check(!foreignId.SameFile(rec3.IndependentIdentity!) &&
+            Safety.ComputeSha256(rec3.BackupPath, CancellationToken.None) == hash,
+            "B2: foreign replacement has identical bytes but a different NTFS ID");
+        Check(RecoveryService.Inspect(rec3).Action == RecoveryAction.ManualReview,
+            "B2: WPF recovery inspection refuses same-hash foreign backup");
+        var foreignLog = Journal.RecoverSafely();
+        Check(!File.Exists(original) && File.Exists(relocated) &&
+            File.Exists(rec3.BackupPath) &&
+            NativeFile.GetIdentity(rec3.BackupPath).SameFile(foreignId) &&
+            Journal.Pending().Count == 1 &&
+            foreignLog.Any(x => x.Contains("要手動確認", StringComparison.Ordinal)),
+            "B2: scripted recovery preserves same-hash foreign backup, original evidence and unresolved journal");
+        File.Delete(rec3.BackupPath); // Explicitly test-owned artificial file.
+        File.Delete(relocated);
+        Journal.Completed(id3);
+
+        // A legacy journal without recorded original NTFS identity is readable
+        // but cannot authorize any file mutation, even when the hash matches.
+        File.WriteAllBytes(original, bytes);
+        string id4 = Guid.NewGuid().ToString("N");
+        var legacy = new PendingOperation
+        {
+            OperationId = id4, OriginalPath = original,
+            BackupPath = original + ".chappy-backup-" + id4,
+            MasterPath = master, Sha256 = hash, RecordedUtc = DateTime.UtcNow
+        };
+        Journal.Add(legacy);
+        File.Move(original, legacy.BackupPath);
+        Check(RecoveryService.Inspect(legacy).Action == RecoveryAction.ManualReview &&
+            !File.Exists(original) && File.Exists(legacy.BackupPath),
+            "B2: legacy hash-only record is visible but cannot grant automatic recovery");
+        Journal.RecoverSafely();
+        Check(Journal.Pending().Count == 1 && !File.Exists(original) &&
+            File.Exists(legacy.BackupPath),
+            "B2: legacy journal remains unresolved without altering an unknown independent file");
+        File.Delete(legacy.BackupPath);
+        Journal.Completed(id4);
         Journal.TestFolderPath = null;
     }
 

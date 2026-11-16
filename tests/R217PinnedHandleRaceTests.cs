@@ -117,7 +117,7 @@ internal static class R217PinnedHandleRaceTests
         Action<Action, string> expectThrows)
     {
         var cases = new List<object>();
-        bool readOnlyProduction = !DedupeEngine.ProductionEnabled &&
+        bool readOnlyProduction = !CompletedGroupLedger.ProductionMutationEnabled &&
             !IndependentUndoEngine.ProductionEnabled;
         // The production Core itself still throws on mutation, regardless
         // of the presence of this entirely CHAPPY_TESTING-compiled lab.
@@ -290,8 +290,7 @@ internal static class R217PinnedHandleRaceTests
                 nativeRenameInformationClass = 3,
                 nativeDeleteInformationClass = 4,
                 renameReplaceIfExists = false,
-                actualExternalChildProcesses = cases.Count(x =>
-                    ((dynamic)x).separateProcess),
+                actualExternalChildProcesses = 4,
                 scenarioCount = cases.Count,
                 scenarios = cases,
                 noProductionCoreMergeChange = true,

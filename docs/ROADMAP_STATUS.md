@@ -348,6 +348,14 @@ The future same-name handling policy now has a read-only Core plan and generated
 
 **Not integrated into production archive extraction or independent Undo:** the app has no active general-purpose archive decompression path in the current source, and safe multi-file journal/atomic transaction behavior is still unproven. Original JPG/PNG replacement, hardlink consolidation and independent Undo remain disabled. **0 B real-user capacity recovered**; historical 69.4% source estimate remains non-release. Full PR and separate postmerge main CI gates are required.
 
+## R2.17 Part 35 — append-only collision history, verified explicit restart and real killed workers
+
+The Part34 same-name nested `同名ファイル` folder and root `同名ファイル一覧.txt` now have a **generated-only crash-evidence experiment**. `CollisionRecoveryLedger` records an immutable GUID intent with each source path, original and selected destination relative paths, original ID, SHA, timestamp and owner/DACL hash **before any output write**. Each generated output is written using CreateNew + Flush(true), then receives its own immutable receipt with exact NTFS file ID, bytes, attributes, timestamps and owner/DACL proof. The UTF-8 root memo is independently receipted before a separate completion marker. An unknown staged file/receipt/temporary journal, different source/target identity, missing receipt after output Flush, or malformed record **requires manual review; no automatic cleanup or repeat overwrite**.
+
+The Windows suite kills **three actual child processes** after a durable first receipt, between output Flush and receipt, and after the memo receipt before final completion. Only the authenticated receipt prefix can explicitly resume; an orphaned unreceipted output is preserved and blocked. Further cases modify original source, plant a foreign destination, tamper with a receipt and leave an unknown .tmp journal. Strict Part35 Windows CI report required with all earlier Core/NTFS/WPF/publish gates. [Detailed contract](R217_PART35_DURABLE_COLLISION_RECOVERY.md).
+
+**This is not yet production archive extraction or independent Undo.** Multi-file atomic power-loss behavior, hostile journal edits, arbitrary ACL/ADS/EFS, path race defense, signed off user consent and fully safe restoration remain release blockers. All Part35 write methods are compiled out of shipped builds; hardlink merge, original image replacement and Undo remain locked. **0 B real-user storage recovered**; historical 69.4% source estimate is not readiness.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

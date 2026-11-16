@@ -317,7 +317,20 @@ public static class CompletedGroupLedger
         {
             string file = Path.GetFileName(path);
             if (file.EndsWith(".checkpoint.json", StringComparison.OrdinalIgnoreCase))
+            {
+                // Part30: a standalone or orphaned progress record is NOT
+                // proof of an intact completed operation. Earlier inspectors
+                // silently ignored every checkpoint filename, including ones
+                // with no matching manifest; preserve them as ManualReview.
+                string idOfCheckpoint = file[..^".checkpoint.json".Length];
+                bool hasManifest = Guid.TryParseExact(idOfCheckpoint, "N", out _) &&
+                    (File.Exists(PathFor(root, idOfCheckpoint, "completed")) ||
+                     File.Exists(PathFor(root, idOfCheckpoint, "restored")) ||
+                     File.Exists(PathFor(root, idOfCheckpoint, "prepared")));
+                if (!hasManifest)
+                    entries.Add(new Entry(idOfCheckpoint, "ManualReview", 0, 0));
                 continue;
+            }
             string phase = file.EndsWith(".prepared.json", StringComparison.OrdinalIgnoreCase) ?
                 "prepared" : file.EndsWith(".completed.json", StringComparison.OrdinalIgnoreCase) ?
                 "completed" : file.EndsWith(".restored.json", StringComparison.OrdinalIgnoreCase) ?

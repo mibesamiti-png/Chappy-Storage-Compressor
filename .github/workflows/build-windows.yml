@@ -1144,6 +1144,37 @@ jobs:
           "R2.17 Part30 grouped recovery UI backing model and orphan evidence safety PASS"
           Get-Content $path
 
+      - name: Verify Part31 real competing writer, ACL and group checkpoint edit refusal
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part31-concurrent-acl-gates.json"
+          if (-not (Test-Path $path)) { throw "Part31 concurrent writer/ACL proof missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part31-concurrent-acl-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.syntheticNtfsOnly -ne $true -or
+              $r.actualSeparateWriterProcessesVerified -ne 3 -or
+              $r.writerHoldingRepresentativeRefused -ne $true -or
+              $r.writerHoldingDuplicateRefused -ne $true -or
+              $r.externalPostScanByteChangePreserved -ne $true -or
+              $r.aclEditedAfterValidatedStageRefusedBeforeCutover -ne $true -or
+              $r.modifiedAclUnchangedByRefusedRetry -ne $true -or
+              $r.durableCheckpointEditedBeforeCutoverRefused -ne $true -or
+              $r.tamperedCheckpointNeverDeletedOrCorrectedAutomatically -ne $true -or
+              $r.explicitSyntheticRepairAllowsUndo -ne $true -or
+              $r.originalSourceSha256PreservedExceptDeliberateTestWriter -ne $true -or
+              $r.actualPowerCutProven -ne $false -or
+              $r.concurrentDeleteRenameRaceEliminated -ne $false -or
+              $r.productionDedupeEnabled -ne $false -or
+              $r.productionUndoEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserCapacityRecoveredBytes -ne 0) {
+            throw "Part31 external writer/ACL/checkpoint safety contract failed"
+          }
+          "R2.17 Part31 real Windows writer contention, pre-cutover DACL and checkpoint swaps PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

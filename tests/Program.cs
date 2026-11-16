@@ -1595,6 +1595,7 @@ static class Program
             R217ConcurrentWriterAclTests.Run(root, Check, ExpectThrows);
             R217PathSwapRaceTests.Run(root, Check, ExpectThrows);
             R217PinnedHandleRaceTests.Run(root, Check, ExpectThrows);
+            R217CollisionCollectionTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

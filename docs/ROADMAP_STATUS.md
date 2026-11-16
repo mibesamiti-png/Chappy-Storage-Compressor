@@ -340,6 +340,14 @@ Rather than adding another path-based snapshot to Part32's final-instruction TOC
 
 Production deduplication, original media replacement and independent Undo remain disabled. **0 B real-user storage recovered**; the old 69.4% source estimate remains a historical snapshot, not product release-readiness. Require full PR-head and postmerge main Windows CI.
 
+## R2.17 Part 34 — user-approved grouped same-name restoration/extraction specification
+
+The future same-name handling policy now has a read-only Core plan and generated-only Windows tests: **keep the existing filename intact**, send incoming collision files to an outermost `同名ファイル` collection preserving original relative subdirectories and appending ` (1)`, ` (2)`, etc. to names. If `同名ファイル` already exists, create an `同名ファイル` **inside it** (repeat until a new ordinary directory can be created, never reuse an existing prior collection). When a collision exists, write `同名ファイル一覧.txt` at the outermost extraction/restoration root, recording original paths and actual saved paths; existing memo is preserved by numbered report names. A file blocking an intended directory is diverted to the collection, and no-collision outputs produce no memo.
+
+`Core/CollisionCollectionPlan.Inspect` is a read-only preview. Only the `CHAPPY_TESTING` synthetic exercise materializes files on a disposable `ChappyStorageSmoke_` Windows NTFS root with CreateNew, SHA-256 checks and an UTF-8 report. Strict CI verifies old and new source hashes and old NTFS file IDs, nested same-name folders, no overwriting memo, late foreign destination refusal and path traversal/ADS refusal. [Part34 end-user behavior, file tree and limitations](R217_PART34_COLLISION_COLLECTION.md).
+
+**Not integrated into production archive extraction or independent Undo:** the app has no active general-purpose archive decompression path in the current source, and safe multi-file journal/atomic transaction behavior is still unproven. Original JPG/PNG replacement, hardlink consolidation and independent Undo remain disabled. **0 B real-user capacity recovered**; historical 69.4% source estimate remains non-release. Full PR and separate postmerge main CI gates are required.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

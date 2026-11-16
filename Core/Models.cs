@@ -59,11 +59,27 @@ public sealed class DuplicateGroup
             if (matching is null) parts.Add([file]);
             else matching.Add(file);
         }
-        return parts.Select(part => new DuplicateGroup
+        // Preserve legacy report semantics when nothing can be merged:
+        // a two-file pair with different times remains ONE blocked group,
+        // not two misleading one-file "blocked groups".
+        var eligible = parts.Where(part => part.Count >= 2).ToArray();
+        if (eligible.Length == 0) return [this];
+        if (eligible.Length == 1 && eligible[0].Count == Files.Count) return [this];
+
+        var result = eligible.Select(part => new DuplicateGroup
         {
             Hash = Hash,
             Files = part
-        }).ToArray();
+        }).ToList();
+        // Keep unmergeable residual names visible as one blocked remainder.
+        // These singleton partitions could not join one another under the
+        // same strict compatibility predicate, so they cannot form an
+        // accidental new eligible group when reassembled.
+        var residual = parts.Where(part => part.Count == 1)
+            .SelectMany(part => part).ToList();
+        if (residual.Count != 0)
+            result.Add(new DuplicateGroup { Hash = Hash, Files = residual });
+        return result;
     }
 
     public string? BlockReason(bool allowTimestampDifference)

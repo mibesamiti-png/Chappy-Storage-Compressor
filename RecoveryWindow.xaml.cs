@@ -154,7 +154,9 @@ public partial class RecoveryWindow : Window
                 $"種類：{x.Kind}\n判定：{x.AttentionText} / {x.State}\n\n" +
                 $"操作ID：{x.RecordId}\n元の相対パス：{x.OriginalRelativePath}\n" +
                 $"保存先の相対パス：{x.DestinationRelativePath}\n\n" +
-                x.Explanation + "\n\nこの画面では再開・削除・名前変更・自動修復はできません。";
+                x.Explanation + "\n\n【確認するときの注意】\n" +
+                x.ReviewGuidance +
+                "\n\nこの画面では再開・削除・名前変更・自動修復はできません。";
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)

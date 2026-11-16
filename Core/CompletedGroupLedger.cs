@@ -509,10 +509,18 @@ public static class CompletedGroupLedger
         File.Move(PathFor(root, id, "prepared"), PathFor(root, id, "completed"));
     }
 
-    public static string MergeSynthetic(string input, DuplicateGroup group,
-        Action? testOnlyAfterVerifiedCore = null)
+#endif
+
+    // Compiled into BOTH Windows builds. This is the existing single
+    // transaction manifest writer, not a new ledger. It commits ONLY a
+    // durable intent; original files are not touched here.
+    // Currently no non-test production caller exists. G3/G5 must authorize
+    // any future UI path into RunPreparedGroup.
+    internal static string PrepareVerifiedGroup(string input, DuplicateGroup group)
     {
-        string root = RequireSynthetic(input);
+        string root = Safety.ValidateRoot(input);
+        using var mutationLease = MutationLease.Acquire();
+        CapacityGuard.AssertCanStart(root);
         if (group.Files.Count is < 2 or > 33 ||
             group.BlockReason(false) is not null ||
             Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any())
@@ -547,6 +555,16 @@ public static class CompletedGroupLedger
         };
         Validate(root, x, id);
         AtomicWrite(PathFor(root, id, "prepared"), x);
+        return id;
+    }
+
+#if CHAPPY_TESTING
+    public static string MergeSynthetic(string input, DuplicateGroup group,
+        Action? testOnlyAfterVerifiedCore = null)
+    {
+        string root = RequireSynthetic(input);
+        string id = PrepareVerifiedGroup(root, group);
+        Manifest x = Read(root, id, "prepared");
         // Use the REAL Core engine, not a synthetic prelinked imitation.
         // One group manifest covers both a single duplicate alias and 3+
         // names. Older CompletedMergeLedger entries remain read-only legacy

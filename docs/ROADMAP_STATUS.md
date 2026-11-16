@@ -296,6 +296,14 @@ Each synthetic independent Undo success is separately checkpointed with its exac
 
 **Important nonclaim:** a crash *inside* one group alias's own `File.Replace`/metadata/callback window, a partial group merge, an actual power interruption, arbitrary file permissions or external writers still require separate safety gates. Interrupted uncheckpointed alias changes are ManualReview and are not automatically undone. Production hardlink merge/Undo/original replacement **remain disabled**, 0 B end-user capacity reclaimed; 69.4% remains historical source coverage, not product readiness. Require final PR-head and independent postmerge main CI.
 
+## R2.17 Part 28 — four actual group Undo intra-alias process deaths and two-group isolation
+
+Part27 resumed only after a completed per-alias Undo checkpoint. Part28 uses the real CHAPPY_TESTING-only `IndependentUndoEngine.Restore` stage/Replace/metadata checkpoints and extends `CompletedGroupLedger` with a **durable active alias stage and phase** before file mutation. Read-only inspection verifies the complete group NTFS identity/link-count/bytes and per-file metadata, distinguishing an alias still shared (explicit retry after safe stage inspection) from one already independent (restore metadata without repeating `File.Replace`). Suspicious stages, extra links, or inconsistent provenance are manual-review refusals, not automatic cleanup.
+
+New generated Windows tests actually kill four child processes at intent, staged, immediately post-cutover, and fully restored metadata before group checkpoint. Each scenario uses **two independent 3+ filename groups** to detect accidental cross-group interference; synthetic stage and link tampering must fail closed. Separate strict CI proof: `r217-group-intra-alias-crash.json`. [Contract and limitations](R217_GROUP_INTRA_ALIAS_CRASH.md).
+
+**No production mutations enabled.** This is controlled managed-process death, not hardware power loss, true atomic multi-group transactions, or arbitrary permissions/ADS/EFS and real user-media cutover. Real user recovered capacity remains **0 B**, and historical 69.4% source implementation estimate is unchanged (not product readiness). PR-head and postmerge main CI must both succeed.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

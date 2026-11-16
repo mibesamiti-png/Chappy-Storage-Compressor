@@ -1175,6 +1175,45 @@ jobs:
           "R2.17 Part31 real Windows writer contention, pre-cutover DACL and checkpoint swaps PASS"
           Get-Content $path
 
+      - name: Verify Part32 external path swaps and deleted names do not destroy alien evidence
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part32-path-swap-races.json"
+          if (-not (Test-Path $path)) { throw "Part32 external path-swap evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part32-path-swap-races-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedNtfsOnly -ne $true -or
+              $r.realCompetingProcessCount -ne 5 -or
+              $r.originalIdentityCheckedAtBackupDelete -ne $true -or
+              $r.compromisedBackupNeverRemovedDuringCatchRollback -ne $true -or
+              $r.sameHashDifferentFileIdForeignBackupPreserved -ne $true -or
+              $r.postFinalUndoRenameAndDeleteRefused -ne $true -or
+              $r.manualReviewEvidenceNeverAutoRepaired -ne $true -or
+              $r.productionDedupeEnabled -ne $false -or
+              $r.productionIndependentUndoEnabled -ne $false -or
+              $r.realUserFilesTouched -ne $false -or
+              $r.realUserCapacityFreedBytes -ne 0 -or
+              $r.arbitraryDeletionRaceEliminated -ne $false -or
+              $r.physicalPowerCutProven -ne $false) {
+            throw "Part32 path-swap fail-closed safety report invalid"
+          }
+          $cases = @('backup-move','backup-same-byte-swap',
+                     'shared-alias-move-foreign','shared-alias-delete','stage-delete')
+          foreach ($name in $cases) {
+            $matches = @($r.scenarios | Where-Object {
+              $_.scenario -eq $name -and
+              $_.competingChildFinished -eq $true -and
+              $_.originalNtfsIdentityPreserved -eq $true -and
+              $_.foreignEvidencePreserved -eq $true -and
+              $_.journalManualReview -eq $true
+            })
+            if ($matches.Count -ne 1) { throw "Part32 missing exact competing process case: $name" }
+          }
+          "R2.17 Part32 five genuine external rename/delete path-race refusals PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

@@ -1214,6 +1214,54 @@ jobs:
           "R2.17 Part32 five genuine external rename/delete path-race refusals PASS"
           Get-Content $path
 
+      - name: Verify Part33 handle-pinned NTFS rename and guarded no-replace process races
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part33-handle-identity-races.json"
+          if (-not (Test-Path $path)) { throw "Part33 pinned-handle NTFS report missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part33-pinned-handle-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.sourceCodeCompiledOutOfRelease -ne $true -or
+              $r.exactNativeApi -ne "SetFileInformationByHandle" -or
+              $r.nativeRenameInformationClass -ne 3 -or
+              $r.nativeDeleteInformationClass -ne 4 -or
+              $r.renameReplaceIfExists -ne $false -or
+              $r.actualExternalChildProcesses -ne 4 -or
+              $r.scenarioCount -ne 8 -or
+              $r.noProductionCoreMergeChange -ne $true -or
+              $r.allCurrentUserMediaUnchanged -ne $true -or
+              $r.realUserRecoveredBytes -ne 0 -or
+              $r.physicalPowerCutProven -ne $false -or
+              $r.globalRaceFreeCommitProven -ne $false -or
+              $r.handleBasedRenameIntegratedIntoDedupe -ne $false -or
+              $r.arbitraryFileSystemOwnershipProven -ne $false) {
+            throw "Part33 exact Win32 handle semantics/safety contract failed"
+          }
+          $names = @(
+            'handle-pinned-postcheck-swap', 'guard-same-sha-different-id',
+            'native-no-replace-target-race', 'guard-prerename-moved-source',
+            'unopposed-pinned-rename', 'unopposed-pinned-delete',
+            'reject-hardlink-with-two-names', 'reject-nonowned-destination'
+          )
+          foreach ($name in $names) {
+            $hits = @($r.scenarios | Where-Object {
+              $_.name -eq $name -and $_.safe -eq $true -and
+              $_.foreignDataPreserved -eq $true
+            })
+            if ($hits.Count -ne 1) { throw "Part33 missing exact handle proof: $name" }
+          }
+          foreach ($name in $names[0..3]) {
+            if (@($r.scenarios | Where-Object {
+              $_.name -eq $name -and $_.separateProcess -eq $true -and
+              $_.originalDataPreserved -eq $true
+            }).Count -ne 1) { throw "Part33 missing real external child: $name" }
+          }
+          "R2.17 Part33 pinned handle, 4 real child races, no-replace, and guarded disposition PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

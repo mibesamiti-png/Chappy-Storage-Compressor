@@ -146,6 +146,16 @@ internal static class R217ConcurrentWriterAclTests
         return (root, scan.Groups.Single());
     }
 
+    private static bool StoreHasNoFiles(string root)
+    {
+        string store = Safety.StorePath(root);
+        // DedupeEngine.ValidateStore may create an EMPTY dedicated folder even
+        // when source/writer preflight later refuses. This is not a link or
+        // recorded transaction and must not be mistaken for source mutation.
+        return !Directory.Exists(store) ||
+            !Directory.EnumerateFileSystemEntries(store).Any();
+    }
+
     private static bool OriginalIndependent(DuplicateGroup group)
     {
         foreach (var s in group.Files)
@@ -236,7 +246,7 @@ internal static class R217ConcurrentWriterAclTests
                 catch (IOException) { refused = true; }
             });
             check(refused && OriginalIndependent(source.Group) &&
-                  !Directory.Exists(Safety.StorePath(source.Root)) &&
+                  StoreHasNoFiles(source.Root) &&
                   Journal.Pending().Count == 0 && Journal.UnresolvedRecordFiles().Count == 0,
                 "R2.17 Part31: actual separate writer holding source blocks Core hardlink merge before mutation");
 
@@ -249,7 +259,7 @@ internal static class R217ConcurrentWriterAclTests
                     null, CancellationToken.None);
             });
             check(savedUnderWriter == 0 && OriginalIndependent(alias.Group) &&
-                  !Directory.Exists(Safety.StorePath(alias.Root)) &&
+                  StoreHasNoFiles(alias.Root) &&
                   Journal.Pending().Count == 0 && Journal.UnresolvedRecordFiles().Count == 0,
                 "R2.17 Part31: real separate writer holding duplicate blocks merge with no linked files/journal");
 
@@ -271,7 +281,7 @@ internal static class R217ConcurrentWriterAclTests
                   NativeFile.GetIdentity(changedFile).SameFile(beforeId) &&
                   NativeFile.GetIdentity(changedFile).LinkCount == 1 &&
                   Safety.ComputeSha256(changedFile, CancellationToken.None) == changedHash &&
-                  !Directory.Exists(Safety.StorePath(changed.Root)) &&
+                  StoreHasNoFiles(changed.Root) &&
                   Journal.Pending().Count == 0,
                 "R2.17 Part31: stale SHA/snapshot after external process write refuses merge, preserves external bytes");
 

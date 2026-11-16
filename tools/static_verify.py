@@ -35,11 +35,26 @@ for event in sorted(set(re.findall(r'(?<![A-Za-z0-9])(?:Click|SelectionChanged)=
 recovery = (root/'Core/RecoveryService.cs').read_text(encoding='utf-8')
 for action in ['RestoreIndependentBackup','UndoNewHardLink','ClearVerifiedJournal','ManualReview','MalformedRecord']:
     check('recovery state: '+action, action in recovery)
-for guard in ['ValidateContext(p)', 'RequireFresh(p, expected)',
-              'IndependentBackupMatches(p, ct)', 'NativeFile.SameFile(p.OriginalPath, p.MasterPath)',
-              'File.Move(p.BackupPath, p.OriginalPath)', 'File.Delete(p.OriginalPath)']:
-    check('recovery guard: '+guard, guard in recovery)
-check('no automatic backup deletion in recovery', 'File.Delete(p.BackupPath)' not in recovery)
+# R2.17 B2: direct pathname-based File.Move/Delete are not valid proof of
+# ownership. Demand the SAME recorded-ID pinned primitive as DedupeEngine.
+for guard in ['ValidateContext(p)',
+              'RequireFresh(p, expected, allowDeleteSharing: true)',
+              'IndependentBackupMatches(p, ct, allowDeleteSharing)',
+              'NativeFile.SameFile(p.OriginalPath, p.MasterPath)',
+              'NativeFile.PinnedFile.Open(',
+              'originalBackup.RenameNoReplace(p.OriginalPath)',
+              'aliasPin.DeleteCurrent(requireIndependent: false)',
+              'backupPin.RenameNoReplace(p.OriginalPath)',
+              'ProvenOriginalForJournalClear(p, ct, allowDeleteSharing)']:
+    check('recovery ID guard: '+guard, guard in recovery)
+check('no unsafe pathname recovery moves or deletes',
+      'File.Move(p.BackupPath, p.OriginalPath)' not in recovery and
+      'File.Delete(p.OriginalPath)' not in recovery and
+      'File.Delete(p.BackupPath)' not in recovery)
+check('legacy SHA-only journals cannot authorize recovery',
+      'p.IndependentIdentity is null' in recovery and
+      'p.MasterIdentity is null' in recovery and
+      'ManualReview' in recovery)
 check('single-record apply confirmation', 'MessageBoxButton.YesNo' in recovery_code)
 
 core = (root/'Core/DedupeEngine.cs').read_text(encoding='utf-8')
@@ -55,7 +70,12 @@ check('journal record validation exists', 'ValidRecord' in (root/'Core/Journal.c
 check('Windows test script exists', (root/'RUN_TESTS.bat').is_file())
 check('R1.4: WPF singleton mutex', 'ChappyStorageCompressor.SingleInstance' in (root/'App.xaml.cs').read_text(encoding='utf-8'))
 check('R1.4: merge lease', 'MutationLease.Acquire()' in core and 'MutationLease.Acquire()' in recovery)
-check('R1.4: journal operations serialized', 'MutationLease.Acquire()' in (root/'Core/Journal.cs').read_text(encoding='utf-8'))
+journal_source = (root/'Core/Journal.cs').read_text(encoding='utf-8')
+check('R1.4/B2: journal recovery serialized by common RecoveryService',
+      'RecoveryService.Apply(' in journal_source and
+      'MutationLease.Acquire()' in recovery and
+      'File.Move(p.BackupPath, p.OriginalPath)' not in journal_source and
+      'File.Delete(p.OriginalPath)' not in journal_source)
 check('R1.4: low-space gate', 'CapacityGuard.AssertCanStart(root)' in core)
 check('R1.4: PNG inspector read-only', 'FileAccess.Read' in (root/'Core/PngInspector.cs').read_text(encoding='utf-8'))
 check('R1.4: GUI PNG button', 'InspectPng_Click' in source)

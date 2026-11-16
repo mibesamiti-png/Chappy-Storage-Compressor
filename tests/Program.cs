@@ -1401,6 +1401,8 @@ static class Program
             return R217GroupLedgerResumeTests.RunChild(args);
         if (R217GroupIntraAliasCrashTests.IsChild(args))
             return R217GroupIntraAliasCrashTests.RunChild(args);
+        if (R217ConcurrentWriterAclTests.IsChild(args))
+            return R217ConcurrentWriterAclTests.RunChild(args);
         if (!OperatingSystem.IsWindows())
         {
             Console.Error.WriteLine("Windows NTFS only");
@@ -1586,6 +1588,7 @@ static class Program
             R217GroupIntraAliasCrashTests.Run(root, Check, ExpectThrows);
             R217LowSpaceDedupeTests.Run(root, Check, ExpectThrows);
             R217RecoveryEvidenceOverviewTests.Run(root, Check);
+            R217ConcurrentWriterAclTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

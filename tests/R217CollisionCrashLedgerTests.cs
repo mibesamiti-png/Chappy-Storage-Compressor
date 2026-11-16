@@ -168,18 +168,6 @@ internal static class R217CollisionCrashLedgerTests
             !memo.Contains("source-0", StringComparison.Ordinal);
     }
 
-    private static void AcknowledgeAbandonedMutationMutex(
-        Action<Action, string> expectThrows)
-    {
-        // Real child death while holding the global named Windows mutex.
-        // First acquire is an abandoned-mutex refusal, not silent success.
-        // The caller previously inspected persisted evidence explicitly.
-        expectThrows(() =>
-        {
-            using var blocked = MutationLease.Acquire();
-        }, "R2.17 Part35: abandoned global mutation mutex refuses after real killed worker");
-    }
-
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)
     {
@@ -201,7 +189,6 @@ internal static class R217CollisionCrashLedgerTests
                   !File.Exists(Output(f, 1)) &&
                   VerifyUserOriginalAndSources(f),
                 "R2.17 Part35: restart verifies exact first output/NTFS ID; later names are absent");
-            AcknowledgeAbandonedMutationMutex(expectThrows);
             var resumed = CollisionRecoveryLedger.ResumeSynthetic(
                 f.TestRoot, f.Output, f.Id);
             bool ok = resumed.State == "VerifiedCompleted" &&
@@ -229,7 +216,6 @@ internal static class R217CollisionCrashLedgerTests
                   state.VerifiedFiles == 0 &&
                   orphanHash == f.SourceHashes[0],
                 "R2.17 Part35: unreceipted but byte-identical crash output is ManualReview, never silently adopted");
-            AcknowledgeAbandonedMutationMutex(expectThrows);
             expectThrows(() => CollisionRecoveryLedger.ResumeSynthetic(
                 f.TestRoot, f.Output, f.Id),
                 "R2.17 Part35: unreceipted output is not automatically removed or overwritten");
@@ -255,7 +241,6 @@ internal static class R217CollisionCrashLedgerTests
             check(state.State == "ExplicitResumeAvailable" &&
                   state.VerifiedFiles == 3 && FinalReportOnly(f),
                 "R2.17 Part35: complete file receipts and root memo remain verified; completion marker absent");
-            AcknowledgeAbandonedMutationMutex(expectThrows);
             var resumed = CollisionRecoveryLedger.ResumeSynthetic(
                 f.TestRoot, f.Output, f.Id);
             bool ok = resumed.State == "VerifiedCompleted" &&

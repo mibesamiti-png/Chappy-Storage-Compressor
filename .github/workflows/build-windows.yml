@@ -1087,6 +1087,33 @@ jobs:
           "R2.17 Part28 four actual interrupted inner Undo windows across isolated groups PASS"
           Get-Content $path
 
+      - name: Verify Part29 real Core target/journal low-space injection and fail-closed behavior
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part29-core-low-space.json"
+          if (-not (Test-Path $path)) { throw "Part29 Core low-space proof missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part29-core-low-space-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.targetReserveBytes -ne 4194304 -or
+              $r.journalReserveBytes -ne 2097152 -or
+              $r.targetSpaceRefusedBeforeMutation -ne $true -or
+              $r.journalSpaceRefusedBeforeMutation -ne $true -or
+              $r.secondPreflightRemovedTemporaryStoreLink -ne $true -or
+              $r.lateJournalShortagePreservedCommittedAndRemainingAliases -ne $true -or
+              $r.noUnresolvedTransactionJournal -ne $true -or
+              $r.observedPartialGroupLogicalSavingBytes -le 0 -or
+              $r.productionCapacityOverrideExists -ne $false -or
+              $r.productionOriginalMutationEnabled -ne $false -or
+              $r.realUserFilesTouched -ne $false -or
+              $r.realUserCapacityFreed -ne 0) {
+            throw "Part29 Core capacity/fail-closed report contract failed"
+          }
+          "R2.17 Part29 three capacity thresholds and a partial-group safe refusal PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -1212,6 +1239,37 @@ jobs:
               $null -ne $report.png.realWorldCapacityReclaimedBytes) {
             throw "R2.8 measurement or safety invariants failed"
           }
+
+      - name: Measure actual isolated VHDX NTFS free-space after dedupe, Undo, and near-full failure
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          & ./bootstrap/Part29IsolatedVhdxProbe.ps1
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "Part29 isolated VHDX probe process failed" }
+          $path = "diagnostics/r217-part29-isolated-vhdx.json"
+          if (-not (Test-Path $path)) { throw "Part29 isolated VHDX physical capacity proof missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part29-isolated-vhdx-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.disposableWindowsCi -ne $true -or
+              $r.vhdxAttached -ne $true -or
+              $r.isolatedNtfsVerified -ne $true -or
+              $r.noPreexistingVolumeFormatted -ne $true -or
+              $r.syntheticInputBytes -ne 8388608 -or
+              $r.uniqueFileIdAllocatedSavingsBytes -lt 8388608 -or
+              $r.isolatedFreeSpaceGainVerified -ne $true -or
+              $r.independentUndoReallocatedSpaceVerified -ne $true -or
+              $r.lowSpaceReachedBelowFourMiB -ne $true -or
+              $r.allSourceHashesAndIndependentIdsPreserved -ne $true -or
+              $r.productionDedupeEnabled -ne $false -or
+              $r.productionUndoEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserCapacityRecoveredBytes -ne 0 -or
+              $r.physicalPowerCutProven -ne $false) {
+            throw "Part29 isolated VHDX actual NTFS capacity safety contract failed"
+          }
+          "R2.17 Part29 isolated NTFS VHDX actual allocation, Undo cost and near-full refusal PASS"
+          Get-Content $path
 
       - name: Force-kill disposable NTFS transaction subprocesses and verify exact replay
         if: steps.source.outputs.mode == 'tree'

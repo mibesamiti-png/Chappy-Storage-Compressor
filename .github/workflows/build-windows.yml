@@ -1262,6 +1262,52 @@ jobs:
           "R2.17 Part33 pinned handle, 4 real child races, no-replace, and guarded disposition PASS"
           Get-Content $path
 
+      - name: Verify Part34 duplicate-name central collection, nested folders and top-level memo
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part34-collision-collection.json"
+          if (-not (Test-Path $path)) { throw "Part34 collision folder proof missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part34-collision-collection-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.collisionFolder -ne "同名ファイル" -or
+              $r.topLevelReport -ne "同名ファイル一覧.txt" -or
+              $r.incrementalFileNames -ne $true -or
+              $r.originalRelativeHierarchyPreserved -ne $true -or
+              $r.inputAndExistingHashesPreserved -ne $true -or
+              $r.existingCollisionFoldersAndMemosNeverOverwritten -ne $true -or
+              $r.directoryVsFileConflictSupported -ne $true -or
+              $r.noConflictWritesNoMemo -ne $true -or
+              $r.foreignArrivalAfterPreviewRefused -ne $true -or
+              $r.traversalAndAdsPathCandidatesRefused -ne $true -or
+              $r.productionExtractionOrUndoEnabled -ne $false -or
+              $r.productionDedupeEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserCapacityRecoveredBytes -ne 0 -or
+              $r.productionAtomicRecoveryProven -ne $false -or
+              $r.physicalPowerCutProven -ne $false) {
+            throw "Part34 duplicate-name collection/report contract failed"
+          }
+          if ($r.nestedCollisionFolder -ne [IO.Path]::Combine("同名ファイル","同名ファイル","同名ファイル")) {
+            throw "Part34 missing requested recursive same-name folder nesting"
+          }
+          $cases = @(
+            "two-same-name-entries-and-original",
+            "recursive-nested-collection-and-report",
+            "directory-file-conflict",
+            "no-collision-does-not-create-report",
+            "foreign-arrival-reject"
+          )
+          foreach ($case in $cases) {
+            if (@($r.scenarios | Where-Object { $_.name -eq $case -and $_.pass -eq $true }).Count -ne 1) {
+              throw "Part34 missing exact synthetic scenario: $case"
+            }
+          }
+          "R2.17 Part34 central same-name collection, numbered files, nested folder and root memo PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

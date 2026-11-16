@@ -111,6 +111,41 @@ internal static class R217GroupLedgerResumeTests
         check(scan.Groups.Count == 1 && scan.Groups[0].Files.Count == 2 &&
               scan.Groups[0].BlockReason(false) is null,
             "B2: two independently identified equal-byte names are eligible for the common manifest");
+        // Reject a perfectly valid duplicate pair when its source is OUTSIDE
+        // the root selected for the transaction. Hash/ACL equality alone
+        // must never grant arbitrary pathname mutation authority.
+        string outside = Path.Combine(parent, "r217-b2-outside-selected-root");
+        Directory.CreateDirectory(outside);
+        string alienA = Path.Combine(outside, "alien-a.mp4");
+        string alienB = Path.Combine(outside, "alien-b.mp4");
+        File.Copy(a, alienA);
+        File.Copy(a, alienB);
+        File.SetCreationTimeUtc(alienA, File.GetCreationTimeUtc(a));
+        File.SetCreationTimeUtc(alienB, File.GetCreationTimeUtc(a));
+        File.SetLastWriteTimeUtc(alienA, File.GetLastWriteTimeUtc(a));
+        File.SetLastWriteTimeUtc(alienB, File.GetLastWriteTimeUtc(a));
+        var foreignScan = Scanner.Run(outside, true, null, CancellationToken.None);
+        check(foreignScan.Groups.Count == 1 &&
+              !Safety.ContainedRegularSource(root, alienA) &&
+              !Safety.ContainedRegularSource(root, alienB) &&
+              !Safety.ContainedRegularSource(root, Path.Combine(
+                  Safety.StorePath(root), "foreign.mp4")),
+            "B2: outside-root and reserved-store names are not allowed by shared admission policy");
+        string priorA = Hash(alienA), priorB = Hash(alienB);
+        var foreignIdA = NativeFile.GetIdentity(alienA);
+        var foreignIdB = NativeFile.GetIdentity(alienB);
+        expectThrows(() => DedupeEngine.Run(root, foreignScan.Groups, false,
+            null, CancellationToken.None),
+            "B2: real Core refuses foreign-root exact duplicates before any store/journal creation");
+        check(!Directory.Exists(Safety.StorePath(root)) &&
+              NativeFile.GetIdentity(alienA).SameFile(foreignIdA) &&
+              NativeFile.GetIdentity(alienB).SameFile(foreignIdB) &&
+              !NativeFile.SameFile(alienA, alienB) &&
+              Hash(alienA) == priorA && Hash(alienB) == priorB &&
+              Journal.Pending().Count == 0 &&
+              Journal.UnresolvedRecordFiles().Count == 0,
+            "B2: preflight rejection leaves every out-of-scope source independent and original");
+
         var snapshots = scan.Groups.Single().Files.ToDictionary(x => x.Path,
             StringComparer.OrdinalIgnoreCase);
         string hash = scan.Groups.Single().Hash;

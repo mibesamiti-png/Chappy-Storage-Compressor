@@ -48,6 +48,52 @@ public static class Safety
         return full;
     }
 
+    /// <summary>
+    /// B2 shared admission boundary: never allow Core mutation to follow a
+    /// supplied snapshot outside the selected NTFS root or through an
+    /// unverified parent junction/reparse point. No writes and no symbolic
+    /// link resolution. Call only after ValidateRoot(root).
+    /// </summary>
+    public static bool ContainedRegularSource(string root, string path)
+    {
+        try
+        {
+            string baseRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+            string full = Path.GetFullPath(path);
+            if (!full.StartsWith(baseRoot + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase))
+                return false;
+            string relative = Path.GetRelativePath(baseRoot, full);
+            if (relative.Split(Path.DirectorySeparatorChar)
+                    .Any(component => component.Equals(StoreName,
+                        StringComparison.OrdinalIgnoreCase)))
+                return false;
+            string? directory = Path.GetDirectoryName(full);
+            while (directory is not null &&
+                !directory.Equals(baseRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Directory.Exists(directory) ||
+                    (File.GetAttributes(directory) &
+                        (FileAttributes.ReparsePoint | FileAttributes.System |
+                         FileAttributes.Offline)) != 0)
+                    return false;
+                string? parent = Path.GetDirectoryName(directory);
+                if (parent is null || parent == directory) return false;
+                directory = parent;
+            }
+            if (directory is null ||
+                !File.Exists(full) ||
+                !EligibleAttributes(File.GetAttributes(full)))
+                return false;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or ArgumentException or NotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
     public static bool EligibleAttributes(FileAttributes attributes)
     {
         const FileAttributes denied = FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.System |

@@ -5,7 +5,8 @@ public static class DedupeEngine
     public static long Run(string root, IEnumerable<DuplicateGroup> groups, bool allowTimestampDifference,
         IProgress<EngineProgress>? progress, CancellationToken ct
 #if CHAPPY_TESTING
-        , bool testOnlyRecordCompletedMerges = false
+        , bool testOnlyRecordCompletedMerges = false,
+        string? testOnlyPreparedGroupId = null
 #endif
         )
     {
@@ -21,6 +22,19 @@ public static class DedupeEngine
         // Never continue a modifying operation while another one needs recovery.
         Journal.AssertCleanBeforeMerge();
         var items = groups.ToList();
+#if CHAPPY_TESTING
+        if (testOnlyPreparedGroupId is not null)
+        {
+            if (items.Count != 1 || testOnlyRecordCompletedMerges ||
+                allowTimestampDifference)
+                throw new InvalidDataException(
+                    "Prepared group authorization applies only to one strict synthetic Core group");
+            // An on-disk generated-only group manifest is REQUIRED
+            // before any master, journal or alias transaction is created.
+            CompletedGroupLedger.AssertPreparedGroupSynthetic(
+                root, testOnlyPreparedGroupId, items[0]);
+        }
+#endif
         // Fail closed before even creating the store directory. A caller may
         // supply a stale/malicious ScanResult; no pathname outside the selected
         // root, in our store, or beneath a junction may become a mutation
@@ -197,6 +211,10 @@ public static class DedupeEngine
                         // enables completed-merge ledger mutation.
                         if (testOnlyRecordCompletedMerges)
                             CompletedMergeLedger.PrepareSynthetic(root, pending, duplicate);
+                        if (testOnlyPreparedGroupId is not null)
+                            CompletedGroupLedger.AssertPreparedAliasSynthetic(
+                                root, testOnlyPreparedGroupId, group, duplicate,
+                                backup, masterPath, id);
 #endif
                         // Delete only the now-verified, independent duplicate.
                         originalPin.DeleteCurrent(requireIndependent: true);

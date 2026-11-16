@@ -89,6 +89,105 @@ internal static class R217GroupLedgerResumeTests
         return child.ExitCode;
     }
 
+    // B2: crash *after* the real Core has consolidated all names but *before*
+    // group manifest promotion. A prepared record is not implicitly complete.
+    // Explicit approval must re-check every original ID, alias and SHA.
+    private static void VerifyPreparedGroupPromotion(string parent,
+        Action<bool, string> check, Action<Action, string> expectThrows)
+    {
+        string root = Path.Combine(parent, "r217-b2-prepared-group-promotion");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        GuardRoot(root);
+        string? previous = Journal.TestFolderPath;
+        try
+        {
+            Journal.TestFolderPath = Path.Combine(root, "part27-journal");
+            string a = Path.Combine(root, "prepared-a.mp4");
+            string b = Path.Combine(root, "prepared-b.mp4");
+            string d = Path.Combine(root, "prepared-c.mp4");
+            File.WriteAllBytes(a, RandomNumberGenerator.GetBytes(96 * 1024));
+            File.Copy(a, b);
+            File.Copy(a, d);
+            DateTime common = File.GetLastWriteTimeUtc(a);
+            DateTime created = File.GetCreationTimeUtc(a);
+            foreach (string path in new[] { a, b, d })
+            {
+                File.SetCreationTimeUtc(path, created);
+                File.SetLastWriteTimeUtc(path, common);
+            }
+            var scan = Scanner.Run(root, true, null, CancellationToken.None);
+            var group = scan.Groups.Single();
+            var originalIds = group.Files.Select(f => f.Identity).ToArray();
+            check(group.Files.Count == 3 && group.BlockReason(false) is null,
+                "B2: prepared manifest fixture consists of three independent byte-equal originals");
+
+            string unowned = Guid.NewGuid().ToString("N");
+            expectThrows(() => DedupeEngine.Run(root, [group], false,
+                null, CancellationToken.None, testOnlyPreparedGroupId: unowned),
+                "B2: real Core refuses a missing prepared group manifest BEFORE store/journal mutation");
+            check(!Directory.Exists(Safety.StorePath(root)) &&
+                Journal.Pending().Count == 0 &&
+                group.Files.Select((x, i) =>
+                    NativeFile.GetIdentity(x.Path).SameFile(originalIds[i])).All(x => x),
+                "B2: unrecorded group cannot create store links, journals or change original IDs");
+
+            expectThrows(() => CompletedGroupLedger.MergeSynthetic(root, group,
+                testOnlyAfterVerifiedCore: () =>
+                    throw new IOException("generated-only stop after core, before durable commit")),
+                "B2: injected crash window after real Core merge keeps PREPARED manifest for review");
+            var review = CompletedGroupLedger.Inspect(root);
+            string id = review.Entries.Single().OperationId;
+            string master = Path.Combine(Safety.StorePath(root), group.Hash + ".mp4");
+            string prepared = Path.Combine(Safety.StorePath(root),
+                ".chappy-group-completed", id + ".prepared.json");
+            check(review.NeedsReview == 1 &&
+                File.Exists(prepared) &&
+                group.Files.All(x => NativeFile.SameFile(x.Path, master)) &&
+                NativeFile.GetIdentity(master).LinkCount == 4 &&
+                Journal.Pending().Count == 0 &&
+                Journal.UnresolvedRecordFiles().Count == 0 &&
+                CompletedMergeLedger.Inspect(root).Entries.Count == 0,
+                "B2: completed physical Core merge remains manual-review until explicit verified durable promotion");
+
+            string foreign = Path.Combine(root, "b2-owned-extra-link.tmp");
+            NativeFile.NewHardLink(foreign, master);
+            expectThrows(() => CompletedGroupLedger.ConfirmPreparedSynthetic(root, id),
+                "B2: unexpected external hardlink blocks promotion of PREPARED manifest");
+            check(CompletedGroupLedger.Inspect(root).NeedsReview == 1 &&
+                File.Exists(prepared) && File.Exists(foreign) &&
+                NativeFile.SameFile(foreign, master),
+                "B2: unexpected link rejection neither erases foreign evidence nor promotes the record");
+            if (!NativeFile.SameFile(foreign, master))
+                throw new InvalidDataException("Generated link ownership changed");
+            File.Delete(foreign);
+
+            CompletedGroupLedger.ConfirmPreparedSynthetic(root, id);
+            var done = CompletedGroupLedger.Inspect(root);
+            check(done.VerifiedCompleted == 1 && done.NeedsReview == 0 &&
+                done.Entries.Single().AliasCount == 2 && !File.Exists(prepared) &&
+                CompletedMergeLedger.Inspect(root).Entries.Count == 0,
+                "B2: explicit restart-time promotion requires ALL alias IDs, metadata and bytes, with no pending journal");
+            expectThrows(() => CompletedGroupLedger.ConfirmPreparedSynthetic(root, id),
+                "B2: committed group cannot be promoted twice");
+
+            string evidence = Path.Combine(root, "part27-group-evidence");
+            Directory.CreateDirectory(evidence);
+            int detached = CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence);
+            var restored = CompletedGroupLedger.Inspect(root);
+            check(detached == 2 && restored.VerifiedRestored == 1 &&
+                group.Files.All(x => Hash(x.Path) == group.Hash) &&
+                !NativeFile.SameFile(a, b) && !NativeFile.SameFile(b, d) &&
+                NativeFile.GetIdentity(master).LinkCount == 2,
+                "B2: explicitly promoted group remains usable by existing independent Undo and durable checkpoints");
+        }
+        finally
+        {
+            Journal.TestFolderPath = previous;
+        }
+    }
+
     // B2: use the SAME durable group ledger and independent Undo for two
     // names and for the older four-name crash fixture. The old pair-specific
     // CompletedMergeLedger remains readable but must receive no new records.
@@ -330,6 +429,7 @@ internal static class R217GroupLedgerResumeTests
                 "R2.17 part27: final restored group cannot be replayed as another Undo");
 
             VerifyTwoNameUnifiedLedger(parent, check, expectThrows);
+            VerifyPreparedGroupPromotion(parent, check, expectThrows);
             // The helper uses a separately guarded generated journal folder.
             Journal.TestFolderPath = Path.Combine(root, "part27-journal");
 

@@ -384,7 +384,128 @@ public static class CompletedGroupLedger
         return root;
     }
 
-    public static string MergeSynthetic(string input, DuplicateGroup group)
+    // B2: the existing group manifest must authorize the REAL Core's every
+    // irreversible alias deletion, not merely exist beside an unrelated run.
+    // Both operations are restricted to generated-only NTFS through the
+    // existing Part23 sentinel guard. There is no production mutation API.
+    private static bool SameRecordedSource(FileSnapshot a, FileSnapshot b) =>
+        Path.GetFullPath(a.Path).Equals(Path.GetFullPath(b.Path),
+            StringComparison.OrdinalIgnoreCase) &&
+        a.Identity.SameFile(b.Identity) && a.Identity.LinkCount == b.Identity.LinkCount &&
+        Exact(a, b);
+
+    private static Manifest ReadPreparedForGroup(string root, string id,
+        DuplicateGroup group)
+    {
+        string checkedRoot = RequireSynthetic(root);
+        if (!Guid.TryParseExact(id, "N", out _) ||
+            File.Exists(PathFor(checkedRoot, id, "completed")) ||
+            File.Exists(PathFor(checkedRoot, id, "restored")) ||
+            File.Exists(PathFor(checkedRoot, id, "checkpoint")))
+            throw new InvalidDataException("Group history is missing or already committed");
+        Manifest saved = Read(checkedRoot, id, "prepared");
+        if (group.Files.Count != saved.Aliases.Count + 1 ||
+            !string.Equals(group.Hash, saved.Hash, StringComparison.OrdinalIgnoreCase) ||
+            !SameRecordedSource(saved.Representative, group.Representative) ||
+            !group.Files.Skip(1).Zip(saved.Aliases,
+                (current, recorded) => SameRecordedSource(recorded, current)).All(x => x))
+            throw new InvalidDataException("Durable group manifest does not match the requested Core group");
+        return saved;
+    }
+
+    internal static void AssertPreparedGroupSynthetic(string root, string id,
+        DuplicateGroup group)
+    {
+        Manifest saved = ReadPreparedForGroup(root, id, group);
+        if (Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any() ||
+            group.BlockReason(false) is not null ||
+            !group.Files.All(s => Safety.ContainedRegularSource(root, s.Path) &&
+                Safety.SameSnapshot(s)) ||
+            File.Exists(saved.Master))
+            throw new InvalidDataException(
+                "Prepared group requires unchanged independent names and an unused master");
+    }
+
+    internal static void AssertPreparedAliasSynthetic(string root, string id,
+        DuplicateGroup group, FileSnapshot alias, string backup,
+        string masterPath, string journalId)
+    {
+        Manifest saved = ReadPreparedForGroup(root, id, group);
+        int index = saved.Aliases.FindIndex(s =>
+            s.Path.Equals(alias.Path, StringComparison.OrdinalIgnoreCase));
+        if (index < 0 || !SameRecordedSource(saved.Aliases[index], alias) ||
+            !saved.Master.Equals(Path.GetFullPath(masterPath),
+                StringComparison.OrdinalIgnoreCase) ||
+            !Safe(root, backup) ||
+            !Safety.SameRenamedSnapshot(alias, backup) ||
+            !Safety.SameSnapshot(saved.Representative) ||
+            Journal.UnresolvedRecordFiles().Count != 0)
+            throw new InvalidDataException("Prepared group alias does not match its durable intent");
+        var intents = Journal.Pending();
+        if (intents.Count != 1 ||
+            intents[0].OperationId != journalId ||
+            !intents[0].OriginalPath.Equals(alias.Path,
+                StringComparison.OrdinalIgnoreCase) ||
+            !intents[0].BackupPath.Equals(backup,
+                StringComparison.OrdinalIgnoreCase) ||
+            !intents[0].MasterPath.Equals(saved.Master,
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(intents[0].Sha256, saved.Hash,
+                StringComparison.OrdinalIgnoreCase) ||
+            intents[0].IndependentIdentity is not { } originalId ||
+            !originalId.SameFile(alias.Identity))
+            throw new InvalidDataException("Durable per-alias journal does not match group manifest");
+
+        FileIdentity master = NativeFile.GetIdentity(saved.Master);
+        if (!master.SameFile(saved.Representative.Identity) ||
+            master.LinkCount != checked((uint)(3 + index)) ||
+            !NativeFile.GetIdentity(saved.Representative.Path).SameFile(master) ||
+            !NativeFile.GetIdentity(alias.Path).SameFile(master) ||
+            !NativeFile.GetIdentity(backup).SameFile(alias.Identity))
+            throw new InvalidDataException("Prepared group master/backup NTFS identity changed");
+
+        for (int i = 0; i < saved.Aliases.Count; i++)
+        {
+            FileSnapshot next = saved.Aliases[i];
+            if (i <= index)
+            {
+                if (!NativeFile.GetIdentity(next.Path).SameFile(master))
+                    throw new InvalidDataException("Earlier group alias no longer shares the authorized master");
+            }
+            else if (!Safety.ContainedRegularSource(root, next.Path) ||
+                     !Safety.SameSnapshot(next))
+                throw new InvalidDataException("Unprocessed group alias changed");
+        }
+    }
+
+    /// <summary>
+    /// Explicit TEST-ONLY confirmation of a fully successful group after an
+    /// interruption between Core completion and the prepared->completed move.
+    /// Never infer success from hash alone, never resolve/erase pending
+    /// journals, and never promote a partial group or unexpected hardlink.
+    /// </summary>
+    public static void ConfirmPreparedSynthetic(string input, string id)
+    {
+        string root = RequireSynthetic(input);
+        if (!Guid.TryParseExact(id, "N", out _) ||
+            Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any())
+            throw new InvalidOperationException("Pending or malformed journal prevents confirmation");
+        var entries = Inspect(root).Entries;
+        if (entries.Count(e => e.OperationId == id && e.State == "ManualReview") != 1 ||
+            entries.Any(e => e.OperationId != id &&
+                e.State is not ("VerifiedCompleted" or "VerifiedRestored")) ||
+            File.Exists(PathFor(root, id, "completed")) ||
+            File.Exists(PathFor(root, id, "restored")) ||
+            File.Exists(PathFor(root, id, "checkpoint")))
+            throw new InvalidDataException("Unknown or conflicting group evidence prevents confirmation");
+        Manifest saved = Read(root, id, "prepared");
+        if (!Verify(saved, new Checkpoint { Id = id }))
+            throw new InvalidDataException("Incomplete or changed group cannot be promoted");
+        File.Move(PathFor(root, id, "prepared"), PathFor(root, id, "completed"));
+    }
+
+    public static string MergeSynthetic(string input, DuplicateGroup group,
+        Action? testOnlyAfterVerifiedCore = null)
     {
         string root = RequireSynthetic(input);
         if (group.Files.Count is < 2 or > 33 ||
@@ -427,12 +548,17 @@ public static class CompletedGroupLedger
         // evidence; do not write another per-alias ledger for new operations.
         long expected = group.Savings;
         long actual = DedupeEngine.Run(root, [group], false, null,
-            CancellationToken.None, testOnlyRecordCompletedMerges: false);
+            CancellationToken.None, testOnlyRecordCompletedMerges: false,
+            testOnlyPreparedGroupId: id);
         var empty = new Checkpoint { Id = id };
         if (actual != expected || Journal.Pending().Any() ||
             Journal.UnresolvedRecordFiles().Any() || !Verify(x, empty))
             throw new InvalidDataException("Group merge incomplete: retain prepared manifest for manual review");
-        File.Move(PathFor(root, id, "prepared"), PathFor(root, id, "completed"));
+        // A real process can die here, after all aliases are linked but
+        // before the durable phase transition. Keep prepared evidence for
+        // explicit, full-ID+metadata+byte verification on restart.
+        testOnlyAfterVerifiedCore?.Invoke();
+        ConfirmPreparedSynthetic(root, id);
         return id;
     }
 

@@ -14,6 +14,7 @@ public static class CompletedGroupLedger
 
     private sealed class Manifest
     {
+        public Manifest() { } // public parameterless constructor for JSON rehydration
         public int Schema { get; set; } = 1;
         public string Id { get; set; } = "";
         public string Hash { get; set; } = "";
@@ -23,6 +24,7 @@ public static class CompletedGroupLedger
     }
     private sealed class Checkpoint
     {
+        public Checkpoint() { } // public parameterless constructor for JSON rehydration
         public int Schema { get; set; } = 1;
         public string Id { get; set; } = "";
         public List<FileIdentity> Detached { get; set; } = [];
@@ -233,8 +235,12 @@ public static class CompletedGroupLedger
                 };
                 entries.Add(new Entry(id, state, x.Aliases.Count + 1, p.Detached.Count));
             }
-            catch
+            catch (Exception ex)
             {
+#if CHAPPY_TESTING
+                Console.WriteLine("PART27 generated-only ledger inspection refusal: " +
+                    ex.GetType().Name + " / " + ex.Message);
+#endif
                 entries.Add(new Entry(id, "ManualReview", 0, 0));
             }
         }

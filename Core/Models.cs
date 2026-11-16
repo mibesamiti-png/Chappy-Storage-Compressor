@@ -96,6 +96,12 @@ public sealed class ScanResult
     // only repeated-size candidates require full ADS/owner/ACL/NTFS checks.
     public int DeepInspectedFiles { get; init; }
     public int HashAttemptedFiles { get; init; }
+    // Counted per occurrence including skipped directories. This is discovery
+    // diagnostic information, NOT an assertion that every file was inspected.
+    public IReadOnlyDictionary<string, int> SkipReasons { get; init; } =
+        new Dictionary<string, int>();
+    public IReadOnlyDictionary<string, int> ErrorReasons { get; init; } =
+        new Dictionary<string, int>();
 }
 
 /// <summary>

@@ -39,7 +39,8 @@
       </StackPanel>
     </Border>
 
-    <Grid Grid.Row="2" Margin="0,0,0,14">
+    <StackPanel Grid.Row="2" Margin="0,0,0,14">
+    <Grid>
       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
       <Border Grid.Column="0" Background="{StaticResource Panel}" CornerRadius="12" Padding="14" Margin="0,0,8,0">
         <StackPanel><TextBlock Text="調査したファイル" Foreground="#ABC1D4" FontSize="12"/><TextBlock x:Name="ScannedCountText" Text="—" FontWeight="SemiBold" FontSize="22"/></StackPanel>
@@ -54,6 +55,12 @@
         <StackPanel><TextBlock Text="削減見込（未適用の論理値）" Foreground="#ACD9D2" FontSize="12"/><TextBlock x:Name="SavingsText" Text="—" Foreground="#79E1C8" FontWeight="SemiBold" FontSize="22"/></StackPanel>
       </Border>
     </Grid>
+    <Border Background="#193044" CornerRadius="8" Padding="10,6" Margin="0,6,0,0">
+      <TextBlock x:Name="ReadOnlyDashboardText"
+                 Text="直近の検証結果：未スキャン。画像候補と重複の合算はまだ評価していません。実際の空き容量回復は未実行です。"
+                 Foreground="#D8E8F4" FontSize="12" TextWrapping="Wrap"/>
+    </Border>
+    </StackPanel>
 
     <StackPanel Grid.Row="3" Margin="0,0,0,12">
       <WrapPanel Margin="0,0,0,10">

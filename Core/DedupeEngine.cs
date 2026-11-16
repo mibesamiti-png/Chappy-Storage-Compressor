@@ -20,8 +20,16 @@ public static class DedupeEngine
         CapacityGuard.AssertCanStart(root);
         // Never continue a modifying operation while another one needs recovery.
         Journal.AssertCleanBeforeMerge();
-        Safety.ValidateStore(root);
         var items = groups.ToList();
+        // Fail closed before even creating the store directory. A caller may
+        // supply a stale/malicious ScanResult; no pathname outside the selected
+        // root, in our store, or beneath a junction may become a mutation
+        // target just because its SHA and metadata happen to match.
+        if (items.Any(g => g.Files.Any(file =>
+                !Safety.ContainedRegularSource(root, file.Path))))
+            throw new InvalidDataException(
+                "統合元のパスが対象フォルダ外・予約領域・リンク経由、または特殊ファイルです。変更せず停止します。");
+        Safety.ValidateStore(root);
         int total = items.Sum(g => Math.Max(0, g.Files.Count - 1));
         int done = 0;
         long estimatedSaved = 0;

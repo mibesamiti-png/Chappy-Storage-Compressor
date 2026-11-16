@@ -19,9 +19,71 @@ internal static class R217IntegratedDedupeUndoTests
         File.SetLastWriteTimeUtc(destination, File.GetLastWriteTimeUtc(source));
     }
 
+    private static void CheckReadOnlySafePartitions(string parent, Action<bool, string> check)
+    {
+        // Real generated NTFS IDs/attrs/time, not fake snapshots or real media.
+        // Three matching ordinary files and one byte-identical Archive case:
+        // the incompatible names must not discard the safe 2-file subset.
+        string root = Path.Combine(parent, "r217-b1-compatible-subgroups");
+        Directory.CreateDirectory(root);
+        string[] files = ["a.mp4", "b.mp4", "c.mp4", "d.mp4"]
+            .Select(name => Path.Combine(root, name)).ToArray();
+        File.WriteAllBytes(files[0], RandomNumberGenerator.GetBytes(64 * 1024));
+        foreach (string path in files.Skip(1))
+            File.Copy(files[0], path);
+        var stamp = new DateTime(2026, 6, 1, 8, 0, 0, DateTimeKind.Utc);
+        foreach (string path in files)
+        {
+            File.SetAttributes(path, FileAttributes.Normal);
+            File.SetCreationTimeUtc(path, stamp);
+            File.SetLastWriteTimeUtc(path, stamp);
+        }
+        File.SetAttributes(files[2], FileAttributes.Archive);
+        File.SetLastWriteTimeUtc(files[3], stamp.AddMinutes(3));
+        string[] sha = files.Select(Hash).ToArray();
+        FileIdentity[] ids = files.Select(NativeFile.GetIdentity).ToArray();
+        var scan = Scanner.Run(root, mediaOnly: true, null, CancellationToken.None);
+        check(scan.Groups.Count == 1 && scan.Groups[0].Files.Count == 4 &&
+            scan.Groups[0].BlockReason(false) is not null,
+            "B1: exact-byte scanner keeps all four differently attributed/timed originals in one detection group");
+        var strict = scan.Groups[0].PartitionForSafeMerge(false);
+        var relaxed = scan.Groups[0].PartitionForSafeMerge(true);
+        check(strict.Count == 3 &&
+            strict.Count(g => g.Files.Count == 2 && g.BlockReason(false) is null) == 1 &&
+            strict.Count(g => g.Files.Count == 1) == 2 &&
+            relaxed.Count == 2 &&
+            relaxed.Count(g => g.Files.Count == 3 && g.BlockReason(true) is null) == 1 &&
+            relaxed.Count(g => g.Files.Count == 1) == 1,
+            "B1: incompatible ACL/attributes/time split only the merge estimates; independent filenames are not discarded");
+        var plan = DedupeFirstWorkflowPlan.Inspect(scan, false);
+        var timePlan = DedupeFirstWorkflowPlan.Inspect(scan, true);
+        var report = MediaDuplicateReport.Analyze(scan, false);
+        var blankPreview = new CombinedCapacityReport.Summary(0, 0, 0, 0, 0, 0,
+            Array.Empty<CombinedCapacityReport.Row>());
+        var combined = CombinedSavingsPlanner.Analyze(blankPreview, scan, false);
+        check(plan.EligibleGroups == 1 && plan.BlockedGroups == 2 &&
+            plan.EstimatedDuplicateBytes == 64 * 1024 &&
+            timePlan.EligibleGroups == 1 && timePlan.BlockedGroups == 1 &&
+            timePlan.EstimatedDuplicateBytes == 2 * 64 * 1024 &&
+            report.EligibleGroups == 1 && report.BlockedGroups == 2 &&
+            report.PotentialBytes == 64 * 1024 &&
+            combined.VerifiedDuplicateGroups == 1 &&
+            combined.SkippedDuplicateGroups == 2 &&
+            combined.DedupeOnlyBytes == 64 * 1024 &&
+            combined.ActualFreedBytes == 0,
+            "B1: actual read-only WPF planners/report/calculator agree on safe subgroup savings without counting excluded peers");
+        check(files.Select((file, i) =>
+                Hash(file) == sha[i] &&
+                NativeFile.GetIdentity(file).SameFile(ids[i]) &&
+                NativeFile.GetIdentity(file).LinkCount == 1).All(x => x) &&
+            !Directory.Exists(Safety.StorePath(root)) ,
+            "B1: full subgroup analysis preserves every independent original and cannot enable production merge");
+    }
+
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)
     {
+        CheckReadOnlySafePartitions(parent, check);
         string input = Path.Combine(parent, "r217-part23-dedupe-undo-generated");
         string output = Path.Combine(parent, "r217-part23-preview-output");
         Directory.CreateDirectory(input);

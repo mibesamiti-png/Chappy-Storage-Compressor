@@ -72,6 +72,11 @@ public static class ChappyPart29Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetFileInformationByHandle(SafeFileHandle file,
         out FileInfo info);
+    // PowerShell's method binder converts a null third string argument to
+    // an empty path on .NET 10. The Core implementation uses an actual null
+    // backup path; call the same .NET overload from a typed C# wrapper.
+    public static void ReplaceWithoutBackup(string stage, string alias) =>
+        System.IO.File.Replace(stage, alias, null);
 }
 '@
 function Assert([bool]$condition, [string]$reason) {
@@ -178,7 +183,7 @@ try {
 
     [IO.File]::Copy($b, $stage)
     Assert ((Identity $stage).Index -ne $linkedA.Index) 'Independent stage is a hardlink'
-    [IO.File]::Replace($stage, $b, $null)
+    [ChappyPart29Native]::ReplaceWithoutBackup($stage, $b)
     $idDetached = Identity $b; $idMaster = Identity $a
     $freeUndone = Free $mountRoot
     Assert ($idDetached.Links -eq 1 -and $idMaster.Links -eq 1 -and

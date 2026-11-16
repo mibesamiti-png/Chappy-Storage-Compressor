@@ -232,7 +232,7 @@ public static class NativeFile
             // FILE_RENAME_INFO class 3, ReplaceIfExists=FALSE.
             // The kernel acts on the already-open ID, never on a new lookup
             // of the original pathname. An occupied target is NOT replaced.
-            byte[] name = System.Text.Encoding.Unicode.GetBytes(Extended(target));
+            byte[] name = System.Text.Encoding.Unicode.GetBytes(target);
             int lengthOffset = IntPtr.Size == 8 ? 16 : 8;
             int nameOffset = lengthOffset + 4;
             byte[] buffer = new byte[nameOffset + name.Length + 2];

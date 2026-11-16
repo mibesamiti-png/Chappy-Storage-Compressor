@@ -10,6 +10,7 @@ public partial class RecoveryWindow : Window
     private readonly ObservableCollection<RecoveryCase> _cases = new();
     private readonly ObservableCollection<RecoveryEvidenceOverview.Row> _history = new();
     private readonly ObservableCollection<CollisionEvidenceReview.Row> _collision = new();
+    private readonly List<CollisionEvidenceReview.Row> _allCollisionRows = new();
     private readonly string? _selectedRoot;
     private CollisionEvidenceReview.Summary? _lastCollisionEvidence;
     private bool _busy;
@@ -32,6 +33,7 @@ public partial class RecoveryWindow : Window
         RecoveryGrid.IsEnabled = !busy;
         HistoryGrid.IsEnabled = !busy;
         CollisionGrid.IsEnabled = !busy;
+        CollisionPriorityFilter.IsEnabled = !busy;
         ApplyButton.IsEnabled = !busy && RecoveryTabs.SelectedIndex == 0 &&
             RecoveryGrid.SelectedItem is RecoveryCase c && c.CanApply;
     }
@@ -43,6 +45,7 @@ public partial class RecoveryWindow : Window
         _cases.Clear();
         _history.Clear();
         _collision.Clear();
+        _allCollisionRows.Clear();
         _lastCollisionEvidence = null;
         DetailText.Text = "ファイル内容・実体の確認を実行しています。大量の動画がある場合は読み込みに時間がかかります。";
         SummaryText.Text = "読み取り専用の復旧状態検証中…";
@@ -92,16 +95,23 @@ public partial class RecoveryWindow : Window
                     "統合・Undo履歴の検証に失敗しました。手動確認が必要です。";
             if (result.Collision is { } collision)
             {
-                _lastCollisionEvidence = collision;
-                foreach (var item in collision.Rows) _collision.Add(item);
+                var priorities = CollisionRecoveryChecklist.Prioritize(collision);
+                _lastCollisionEvidence = priorities.Evidence;
+                _allCollisionRows.AddRange(priorities.Rows);
+                RefreshCollisionPriorityFilter();
+                CollisionPriorityCounts.Text = priorities.Describe();
                 CollisionSummaryText.Text = collision.Describe() + "\n" +
+                    priorities.Describe() + "\n" +
                     CollisionRecoveryChecklist.Analyze(collision).Describe();
             }
             else
             {
+                var priorities = CollisionRecoveryChecklist.Prioritize(null);
+                CollisionPriorityCounts.Text = priorities.Describe();
                 CollisionSummaryText.Text = result.CollisionError ??
                     "同名ファイル履歴の照合に失敗しました。手動確認が必要です。";
                 CollisionSummaryText.Text += "\n" +
+                    priorities.Describe() + "\n" +
                     CollisionRecoveryChecklist.Analyze(null).Describe();
             }
             int safe = inspected.Count(x => x.CanApply);
@@ -118,9 +128,33 @@ public partial class RecoveryWindow : Window
             SummaryText.Text = "復旧状態の読み込みに失敗しました。";
             HistorySummaryText.Text = "履歴は未検証です。ファイルは変更していません。";
             CollisionSummaryText.Text = "同名ファイル履歴も未検証。データは変更していません。";
+            CollisionPriorityCounts.Text = CollisionRecoveryChecklist.Prioritize(null).Describe();
             DetailText.Text = ex.ToString();
         }
         finally { Busy(false); }
+    }
+
+    private void CollisionPriorityFilterChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CollisionGrid is null) return;
+        RefreshCollisionPriorityFilter();
+    }
+
+    private void RefreshCollisionPriorityFilter()
+    {
+        if (CollisionPriorityFilter is null) return;
+        string selected = (CollisionPriorityFilter.SelectedItem as ComboBoxItem)?.Tag as string ?? "ALL";
+        _collision.Clear();
+        foreach (var row in _allCollisionRows)
+        {
+            if (selected == "ALL" || row.PriorityLabel.StartsWith(selected + " ",
+                    StringComparison.Ordinal))
+                _collision.Add(row);
+        }
+        // Filtering only changes displayed rows. It never changes the
+        // immutable evidence or permissions in the legacy recovery tab.
+        if (ApplyButton != null && RecoveryTabs.SelectedIndex != 0)
+            ApplyButton.IsEnabled = false;
     }
 
     private void RecoverySelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -164,6 +198,8 @@ public partial class RecoveryWindow : Window
                 $"保存先の相対パス：{x.DestinationRelativePath}\n\n" +
                 x.Explanation + "\n\n【確認するときの注意】\n" +
                 x.ReviewGuidance +
+                "\n\n【調査の優先度と次の確認】\n" +
+                x.PriorityLabel + "：" + x.PriorityGuidance +
                 "\n\n" +
                 CollisionRecoveryChecklist.Analyze(_lastCollisionEvidence, x)
                     .DetailText() +

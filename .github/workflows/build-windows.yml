@@ -1114,6 +1114,36 @@ jobs:
           "R2.17 Part29 three capacity thresholds and a partial-group safe refusal PASS"
           Get-Content $path
 
+      - name: Verify Part30 cross-ledger evidence and orphan checkpoint fail-closed status
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part30-recovery-overview.json"
+          if (-not (Test-Path $path)) { throw "Part30 cross-ledger safety report missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part30-recovery-overview-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.readOnlyEmptyDidNotCreateStore -ne $true -or
+              $r.orphanCheckpointManualReview -ne $true -or
+              $r.validGroupReportedButNotActionable -ne $true -or
+              $r.changedHardlinkCountRefused -ne $true -or
+              $r.malformedTwoFileLedgerReported -ne $true -or
+              $r.malformedUndoCrashJournalReported -ne $true -or
+              $r.incompleteLegacyJournalReported -ne $true -or
+              $r.interruptedGroupRequiresExplicitResume -ne $true -or
+              $r.repeatingInspectionNeverMutates -ne $true -or
+              $r.verifiedAfterExplicitTestOnlyUndo -ne $true -or
+              $r.productionMergeEnabled -ne $false -or
+              $r.productionUndoEnabled -ne $false -or
+              $r.realUserFilesTouched -ne $false -or
+              $r.realUserCapacityFreedBytes -ne 0 -or
+              $r.actualPowerCutProven -ne $false) {
+            throw "Part30 read-only recovery overview proof failed"
+          }
+          "R2.17 Part30 grouped recovery UI backing model and orphan evidence safety PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -1205,6 +1235,11 @@ jobs:
               $r.part24ProductionMergeStillLocked -ne $true -or
               $r.part25WpfInterruptedUndoReadOnlyStatusVerified -ne $true -or
               $r.part25ProductionUndoMutationStillDisabled -ne $true -or
+              $r.part30RecoveryHistoryTabRoutedLoadedVerified -ne $true -or
+              $r.part30HistoryTabRemainsReadOnly -ne $true -or
+              $r.part30NeverEnabledApplyForHistory -ne $true -or
+              $r.part30ReadOnlyInspectionNeverCreatedStore -ne $true -or
+              $r.part30CrossLedgerDashboardProductionMutationDisabled -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

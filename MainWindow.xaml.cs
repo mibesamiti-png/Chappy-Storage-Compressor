@@ -255,7 +255,10 @@ public partial class MainWindow : Window
             {
                 var completed = CompletedMergeLedger.Inspect(root, token);
                 var undo = IndependentUndoCrashJournal.Inspect(root, token);
-                return (completed, undo);
+                token.ThrowIfCancellationRequested();
+                var group = CompletedGroupLedger.Inspect(root);
+                token.ThrowIfCancellationRequested();
+                return (completed, undo, group);
             }, token);
             token.ThrowIfCancellationRequested();
             ProgressText.Text = "統合履歴を確認（未変更）";
@@ -263,7 +266,12 @@ public partial class MainWindow : Window
                 $"独立化 {history.completed.VerifiedRestored}、要確認 {history.completed.NeedsReview}。" +
                 $" Undo中断 {history.undo.Incomplete}、確認要 {history.undo.ManualReview}。実容量変更 0B。");
             _showCompletedLedger(history.completed.Describe() + "\n\n" +
-                history.undo.Describe());
+                history.undo.Describe() + "\n\n" +
+                "【3件以上のグループ履歴：読み取り専用】\n" +
+                $"統合確認済み {history.group.VerifiedCompleted} 件 ／ Undo完了 {history.group.VerifiedRestored} 件\n" +
+                $"明示的再開待ち {history.group.ExplicitResumeRequired} 件 ／ " +
+                $"処理途中の中断 {history.group.InterruptedAliases} 件 ／ 要手動確認 {history.group.NeedsReview} 件\n" +
+                "※ グループ履歴の検証結果も本番ファイル操作の許可ではありません。");
         }
         catch (OperationCanceledException)
         {
@@ -1435,7 +1443,9 @@ public partial class MainWindow : Window
     private void Recovery_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;
-        var dialog = new RecoveryWindow { Owner = this };
+        // Pass the current target root. A missing/invalid path is reported
+        // as unverified history, never as "all clear" and never written.
+        var dialog = new RecoveryWindow(PathBox.Text) { Owner = this };
         dialog.ShowDialog();
         var pending = Journal.Pending();
         var damaged = Journal.UnresolvedRecordFiles();

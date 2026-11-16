@@ -8,12 +8,16 @@ namespace ChappyStorageCompressor;
 public partial class RecoveryWindow : Window
 {
     private readonly ObservableCollection<RecoveryCase> _cases = new();
+    private readonly ObservableCollection<RecoveryEvidenceOverview.Row> _history = new();
+    private readonly string? _selectedRoot;
     private bool _busy;
 
-    public RecoveryWindow()
+    public RecoveryWindow(string? selectedRoot = null)
     {
+        _selectedRoot = selectedRoot;
         InitializeComponent();
         RecoveryGrid.ItemsSource = _cases;
+        HistoryGrid.ItemsSource = _history;
         Loaded += async (_, _) => await RefreshAsync();
         Closing += (_, e) => { if (_busy) e.Cancel = true; };
     }
@@ -23,7 +27,9 @@ public partial class RecoveryWindow : Window
         _busy = busy;
         RefreshButton.IsEnabled = !busy;
         RecoveryGrid.IsEnabled = !busy;
-        ApplyButton.IsEnabled = !busy && RecoveryGrid.SelectedItem is RecoveryCase c && c.CanApply;
+        HistoryGrid.IsEnabled = !busy;
+        ApplyButton.IsEnabled = !busy && RecoveryTabs.SelectedIndex == 0 &&
+            RecoveryGrid.SelectedItem is RecoveryCase c && c.CanApply;
     }
 
     private async Task RefreshAsync()
@@ -31,18 +37,51 @@ public partial class RecoveryWindow : Window
         if (_busy) return;
         Busy(true);
         _cases.Clear();
+        _history.Clear();
         DetailText.Text = "ファイル内容・実体の確認を実行しています。大量の動画がある場合は読み込みに時間がかかります。";
         SummaryText.Text = "読み取り専用の復旧状態検証中…";
+        HistorySummaryText.Text = "統合済み・Undo履歴を読み取り専用で検証中…";
         try
         {
             // Use background thread: hashing multiple large MP4s must not freeze WPF.
-            var inspected = await Task.Run(() => RecoveryService.InspectAll());
+            var result = await Task.Run(() =>
+            {
+                var pending = RecoveryService.InspectAll();
+                if (string.IsNullOrWhiteSpace(_selectedRoot))
+                    return (Pending: pending,
+                        History: (RecoveryEvidenceOverview.Summary?)null,
+                        HistoryError: "対象フォルダが未指定です。統合・Undo履歴は未検証。");
+                try
+                {
+                    var history = RecoveryEvidenceOverview.Inspect(_selectedRoot, pending);
+                    return (Pending: pending,
+                        History: (RecoveryEvidenceOverview.Summary?)history,
+                        HistoryError: (string?)null);
+                }
+                catch (Exception ex)
+                {
+                    return (Pending: pending,
+                        History: (RecoveryEvidenceOverview.Summary?)null,
+                        HistoryError: "対象フォルダの履歴検証失敗（未検証）: " + ex.Message);
+                }
+            });
+            var inspected = result.Pending;
             foreach (var item in inspected) _cases.Add(item);
+            if (result.History is { } history)
+            {
+                foreach (var item in history.Rows) _history.Add(item);
+                HistorySummaryText.Text =
+                    $"対象フォルダ履歴 {history.Rows.Count:N0} 件 ／ 要確認・未完了 {history.RequiresAttention:N0} 件。" +
+                    " 履歴タブは読み取り専用。本番統合・独立Undoは無効。";
+            }
+            else
+                HistorySummaryText.Text = result.HistoryError ??
+                    "統合・Undo履歴の検証に失敗しました。手動確認が必要です。";
             int safe = inspected.Count(x => x.CanApply);
             int review = inspected.Count - safe;
             SummaryText.Text = inspected.Count == 0
-                ? "未解決の操作はありません。新しい重複統合を実行できます。"
-                : $"未解決 {inspected.Count:N0} 件 ／ 条件付き復旧可能 {safe:N0} 件 ／ 手動調査 {review:N0} 件。" +
+                ? "旧形式の未解決操作記録はありません。統合・Undo履歴の判定は別タブで確認してください。本番統合は無効です。"
+                : $"旧形式の未解決 {inspected.Count:N0} 件 ／ 条件付き復旧可能 {safe:N0} 件 ／ 手動調査 {review:N0} 件。" +
                   "  未解決の記録が残る間は、新しい統合を開始できません。";
             DetailText.Text = inspected.Count == 0 ? "問題は検出されませんでした。" :
                 "行を選択して検証理由を確認してください。操作は選択した1件にのみ実行されます。";
@@ -50,6 +89,7 @@ public partial class RecoveryWindow : Window
         catch (Exception ex)
         {
             SummaryText.Text = "復旧状態の読み込みに失敗しました。";
+            HistorySummaryText.Text = "履歴は未検証です。ファイルは変更していません。";
             DetailText.Text = ex.ToString();
         }
         finally { Busy(false); }
@@ -62,7 +102,8 @@ public partial class RecoveryWindow : Window
             if (ApplyButton != null) ApplyButton.IsEnabled = false;
             return;
         }
-        if (ApplyButton != null) ApplyButton.IsEnabled = !_busy && c.CanApply;
+        if (ApplyButton != null)
+            ApplyButton.IsEnabled = !_busy && RecoveryTabs.SelectedIndex == 0 && c.CanApply;
         if (DetailText != null)
             DetailText.Text = $"判定：{c.ActionText}\n\n{c.Explanation}\n\n" +
                 $"元の保存場所：{c.OriginalPath}\n\n退避ファイル：{c.BackupPath}\n\n" +
@@ -70,9 +111,25 @@ public partial class RecoveryWindow : Window
                 "注意：複数のファイルが同じ実体を参照するハードリンクは、編集で内容が連動します。";
     }
 
+    private void RecoveryTabChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ApplyButton != null && RecoveryGrid != null && RecoveryTabs != null)
+            ApplyButton.IsEnabled = !_busy && RecoveryTabs.SelectedIndex == 0 &&
+                RecoveryGrid.SelectedItem is RecoveryCase c && c.CanApply;
+    }
+
+    private void HistorySelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (HistoryGrid?.SelectedItem is RecoveryEvidenceOverview.Row h && DetailText != null)
+            DetailText.Text = $"証拠の種類：{h.Source}\n\n判定：{h.AttentionText} / {h.State}\n\n" +
+                $"対象：{h.Target}\n\n{h.Explanation}\n\n" +
+                "このタブには復元・修復・削除ボタンはありません。実データは一切変更されません。";
+    }
+
     private async void Apply_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy || RecoveryGrid.SelectedItem is not RecoveryCase item || !item.CanApply) return;
+        if (_busy || RecoveryTabs.SelectedIndex != 0 ||
+            RecoveryGrid.SelectedItem is not RecoveryCase item || !item.CanApply) return;
         string action = item.Action switch
         {
             RecoveryAction.RestoreIndependentBackup => "独立した退避ファイルを元の名前へ戻します。",

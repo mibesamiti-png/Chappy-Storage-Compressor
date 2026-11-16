@@ -19,9 +19,17 @@
                  Foreground="#B1C5D7" FontSize="13" TextWrapping="Wrap"/>
     </StackPanel>
     <Border Grid.Row="1" Background="#193044" CornerRadius="9" Padding="12" Margin="0,0,0,13">
-      <TextBlock x:Name="SummaryText" Text="状態を読み込んでいます…" Foreground="#C7E0EF" FontSize="13" TextWrapping="Wrap"/>
+      <StackPanel>
+        <TextBlock x:Name="SummaryText" Text="状態を読み込んでいます…" Foreground="#C7E0EF" FontSize="13" TextWrapping="Wrap"/>
+        <TextBlock x:Name="HistorySummaryText" Text="統合済み・Undo履歴：対象フォルダの読み取り専用検証待ち"
+                   Foreground="#70DBC7" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"/>
+      </StackPanel>
     </Border>
-    <DataGrid Grid.Row="2" x:Name="RecoveryGrid" Background="#182434" Foreground="#F1F6FC"
+    <TabControl x:Name="RecoveryTabs" Grid.Row="2" Margin="0,0,0,12"
+                Background="#142538" Foreground="#F1F6FC"
+                SelectionChanged="RecoveryTabChanged">
+      <TabItem Header="未解決の操作記録">
+        <DataGrid x:Name="RecoveryGrid" Background="#182434" Foreground="#F1F6FC"
               RowBackground="#1C2A3A" AlternatingRowBackground="#223246" BorderThickness="0"
               GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#35475A"
               HeadersVisibility="Column" AutoGenerateColumns="False" CanUserAddRows="False"
@@ -34,6 +42,25 @@
         <DataGridTextColumn Header="元パス" Binding="{Binding OriginalPath}" Width="4*"/>
       </DataGrid.Columns>
     </DataGrid>
+      </TabItem>
+      <TabItem Header="統合・Undo証拠の横断チェック（読み取り専用）">
+        <DataGrid x:Name="HistoryGrid" AutoGenerateColumns="False" CanUserAddRows="False"
+                  IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
+                  SelectionChanged="HistorySelectionChanged"
+                  Background="#182434" Foreground="#F1F6FC"
+                  RowBackground="#1C2A3A" AlternatingRowBackground="#223246"
+                  BorderThickness="0" GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="#35475A" HeadersVisibility="Column"
+                  RowHeight="29" FontSize="12">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="証拠の種類" Binding="{Binding Source}" Width="2*"/>
+            <DataGridTextColumn Header="判定" Binding="{Binding AttentionText}" Width="*"/>
+            <DataGridTextColumn Header="現在の状態" Binding="{Binding State}" Width="2*"/>
+            <DataGridTextColumn Header="対象名・記録ID" Binding="{Binding Target}" Width="3*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
+    </TabControl>
     <Border Grid.Row="3" Background="#172739" CornerRadius="9" Padding="12" Margin="0,0,0,12">
       <ScrollViewer VerticalScrollBarVisibility="Auto">
         <TextBlock x:Name="DetailText" Text="ファイルを選ぶと、検証内容と復旧手順が表示されます。"

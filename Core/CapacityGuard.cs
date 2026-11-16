@@ -14,8 +14,19 @@ public static class CapacityGuard
     public static bool Enough(long availableBytes, long minimumBytes) =>
         availableBytes >= minimumBytes && minimumBytes >= 0;
 
+#if CHAPPY_TESTING
+    // Strictly synthetic Core tests may inject low-space observations at
+    // deterministic preflight windows. No such override exists in WPF/Release.
+    internal static Func<string, (long TargetBytes, long JournalBytes)>?
+        TestOnlyReadAvailable;
+#endif
+
     public static (long TargetBytes, long JournalBytes) ReadAvailable(string targetRoot)
     {
+#if CHAPPY_TESTING
+        if (TestOnlyReadAvailable is { } synthetic)
+            return synthetic(targetRoot);
+#endif
         // DriveInfo may throw for disconnected or inaccessible drives: fail closed.
         string sourceDrive = Path.GetPathRoot(Path.GetFullPath(targetRoot))
             ?? throw new IOException("対象ドライブを特定できません。");

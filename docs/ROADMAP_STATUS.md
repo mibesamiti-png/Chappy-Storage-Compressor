@@ -304,6 +304,14 @@ New generated Windows tests actually kill four child processes at intent, staged
 
 **No production mutations enabled.** This is controlled managed-process death, not hardware power loss, true atomic multi-group transactions, or arbitrary permissions/ADS/EFS and real user-media cutover. Real user recovered capacity remains **0 B**, and historical 69.4% source implementation estimate is unchanged (not product readiness). PR-head and postmerge main CI must both succeed.
 
+## R2.17 Part 29 — isolated VHDX physical NTFS accounting and Core low-space refusal
+
+A generated-only, CI-scoped 512-MiB NTFS VHDX now measures unique-file-ID allocated bytes and free-space changes after synthetic 8-MiB dedupe and independent Undo, then fills **only that isolated virtual volume** below the 4-MiB target reserve to validate low-space refusal without touching other drives. The script accepts no user paths, selects/formats/detaches only its own new virtual disk, and must verify a distinct mounted volume GUID. If Windows CI cannot safely attach an isolated VHDX, this proof is **not established**, and the dedicated strict gate fails rather than silently falling back to previous host-drive measurements.
+
+A separate `CHAPPY_TESTING`-only `CapacityGuard` observation override drives the actual Core `DedupeEngine.Run` through below-reserve target/journal preflight, post-master-link refusal, and a late shortage after one successful alias. The test insists on exact original SHA, NTFS identity and clean transaction journals. The override is absent from production binaries. [Part29 design and limitations](R217_PART29_VHDX_CAPACITY.md).
+
+**These tests are not a release permission:** no user-file consolidation, original replacement, or production Undo; real recovered user capacity stays **0 B**, historical 69.4% estimate stays a source coverage snapshot rather than current completion percentage. Still missing: physical power interruption/durability, concurrent writers and arbitrary owner/ACL/SACL/ADS/EFS, capacity reservation races, and a full opt-in WPF release safety contract. PR-head and independent postmerge main Windows CI both required.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

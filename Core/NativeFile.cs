@@ -115,6 +115,169 @@ public static class NativeFile
         return bytes;
     }
 
+    // Part33 native pinned-handle operations, now shared with the real Core.
+    // Deliberately an NTFS *file-ID* primitive, not an independent merge engine.
+    // Callers own journaling, root confinement, alias-count and Undo decisions.
+    private const uint DeleteAccess = 0x00010000;
+    private const uint ReadAttributes = 0x00000080;
+    private const uint FileShareReadDelete = 0x00000001 | 0x00000004;
+    private const uint OpenExisting = 3;
+    private const uint OpenReparsePoint = 0x00200000;
+    private const int FileRenameInfo = 3;
+    private const int FileDispositionInfo = 4;
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    private static extern SafeFileHandle CreateFilePinned(
+        string name, uint desiredAccess, uint shareMode, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", EntryPoint = "SetFileInformationByHandle",
+        SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetPinnedInfo(SafeFileHandle handle,
+        int infoClass, IntPtr data, uint bytes);
+
+    internal static FileIdentity IdentityFromHandle(SafeFileHandle handle)
+    {
+        if (!GetFileInformationByHandle(handle, out var info))
+            throw new Win32Exception(Marshal.GetLastWin32Error(),
+                "Pinned NTFS file identity unavailable");
+        return new FileIdentity(info.VolumeSerialNumber,
+            ((ulong)info.FileIndexHigh << 32) | info.FileIndexLow,
+            info.NumberOfLinks);
+    }
+
+    internal sealed class PinnedFile : IDisposable
+    {
+        private readonly SafeFileHandle _handle;
+        private readonly FileIdentity _original;
+        private readonly string _hash;
+        private string _currentPath;
+
+        private PinnedFile(SafeFileHandle handle, string path,
+            FileIdentity id, string hash)
+        {
+            _handle = handle;
+            _currentPath = path;
+            _original = id;
+            _hash = hash;
+        }
+
+        internal FileIdentity OpeningIdentity => _original;
+        internal string OpeningHash => _hash;
+        internal FileIdentity CurrentHandleIdentity => IdentityFromHandle(_handle);
+
+        internal static PinnedFile Open(string path, FileIdentity expected,
+            string hash, bool requireIndependent = true)
+        {
+            string full = Path.GetFullPath(path);
+            if (!File.Exists(full) || !Safety.EligibleAttributes(
+                    File.GetAttributes(full)) ||
+                HasNamedDataStreams(full))
+                throw new InvalidDataException("Pinned NTFS file must be regular without ADS");
+            SafeFileHandle handle = CreateFilePinned(Extended(full),
+                DeleteAccess | ReadAttributes, FileShareReadDelete, IntPtr.Zero,
+                OpenExisting, OpenReparsePoint, IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                int error = Marshal.GetLastWin32Error();
+                handle.Dispose();
+                throw new Win32Exception(error, "Cannot pin original NTFS identity");
+            }
+            try
+            {
+                var pinned = new PinnedFile(handle, full, expected, hash);
+                if (!pinned.CurrentHandleIdentity.SameFile(expected) ||
+                    (requireIndependent && pinned.CurrentHandleIdentity.LinkCount != 1) ||
+                    !pinned.PathStillMatches(full))
+                    throw new InvalidDataException("Original NTFS identity or SHA changed while pinning");
+                return pinned;
+            }
+            catch { handle.Dispose(); throw; }
+        }
+
+        // Opening with DELETE access requires concurrent read streams to
+        // share delete, while denying external write handles.
+        internal bool PathStillMatches(string expectedPath)
+        {
+            try
+            {
+                string full = Path.GetFullPath(expectedPath);
+                if (!full.Equals(_currentPath, StringComparison.OrdinalIgnoreCase) ||
+                    !CurrentHandleIdentity.SameFile(_original) ||
+                    !GetIdentity(full).SameFile(_original) ||
+                    !string.Equals(Safety.ComputeSha256(full,
+                        CancellationToken.None, allowDeleteSharing: true),
+                        _hash, StringComparison.OrdinalIgnoreCase) ||
+                    !GetIdentity(full).SameFile(_original))
+                    return false;
+                return true;
+            }
+            catch { return false; }
+        }
+
+        internal void RenameNoReplace(string destination,
+            Action? afterLastPathCheck = null)
+        {
+            string target = Path.GetFullPath(destination);
+            if (File.Exists(target) || Directory.Exists(target) ||
+                !PathStillMatches(_currentPath))
+                throw new InvalidDataException("Pinned rename preflight rejected source or destination");
+            // Only the generated Part33 race test passes this callback.
+            afterLastPathCheck?.Invoke();
+            if (!CurrentHandleIdentity.SameFile(_original))
+                throw new InvalidDataException("Pinned NTFS identity changed before rename");
+
+            // FILE_RENAME_INFO class 3, ReplaceIfExists=FALSE.
+            // The kernel acts on the already-open ID, never on a new lookup
+            // of the original pathname. An occupied target is NOT replaced.
+            byte[] name = System.Text.Encoding.Unicode.GetBytes(Extended(target));
+            int lengthOffset = IntPtr.Size == 8 ? 16 : 8;
+            int nameOffset = lengthOffset + 4;
+            byte[] buffer = new byte[nameOffset + name.Length + 2];
+            BitConverter.GetBytes(name.Length).CopyTo(buffer, lengthOffset);
+            name.CopyTo(buffer, nameOffset);
+            IntPtr p = Marshal.AllocHGlobal(buffer.Length);
+            try
+            {
+                Marshal.Copy(buffer, 0, p, buffer.Length);
+                if (!SetPinnedInfo(_handle, FileRenameInfo, p, (uint)buffer.Length))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(),
+                        "Pinned NTFS no-replace rename rejected");
+            }
+            finally { Marshal.FreeHGlobal(p); }
+            _currentPath = target;
+            if (!PathStillMatches(target))
+                throw new InvalidDataException(
+                    "Pinned rename postcheck failed; preserve journal evidence");
+        }
+
+        // A disposition acts on the file ID associated with this handle.
+        // requireIndependent protects the last data-bearing backup deletion;
+        // for rollback a caller may remove only its separately authenticated
+        // shared alias link without deleting the shared master content.
+        internal void DeleteCurrent(bool requireIndependent)
+        {
+            if (!PathStillMatches(_currentPath) ||
+                (requireIndependent && CurrentHandleIdentity.LinkCount != 1))
+                throw new InvalidDataException(
+                    "Pinned delete refused changed path, identity, hash or link count");
+            IntPtr p = Marshal.AllocHGlobal(4);
+            try
+            {
+                Marshal.WriteInt32(p, 1);
+                if (!SetPinnedInfo(_handle, FileDispositionInfo, p, 4))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(),
+                        "Pinned NTFS delete disposition rejected");
+            }
+            finally { Marshal.FreeHGlobal(p); }
+            _handle.Dispose();
+        }
+
+        public void Dispose() => _handle.Dispose();
+    }
+
     public static bool SameFile(string a, string b)
     {
         var first = GetIdentity(a);

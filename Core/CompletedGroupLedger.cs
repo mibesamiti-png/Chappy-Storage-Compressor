@@ -436,7 +436,8 @@ public static class CompletedGroupLedger
     public static int ResumeUndoSynthetic(string input, string id, string evidence,
         Action<int>? afterDurableAlias = null,
         Action<string>? afterDurablePhase = null,
-        Action<string, string>? testOnlyBeforeFinalUndoValidation = null)
+        Action<string, string>? testOnlyBeforeFinalUndoValidation = null,
+        Action<string, string>? testOnlyAfterFinalUndoValidation = null)
     {
         string root = RequireSynthetic(input);
         if (!Safe(root, evidence) || !Directory.Exists(evidence) ||
@@ -505,6 +506,22 @@ public static class CompletedGroupLedger
                             .SequenceEqual(p.Detached.Select(z => z.FileIndex)))
                         throw new InvalidDataException(
                             "Durable group checkpoint was replaced or edited before Undo cutover");
+                },
+                testOnlyAfterFinalValidation: stage =>
+                {
+                    // Verify the same flushed group checkpoint even when
+                    // an adversary moves the alias *after* Core's final
+                    // byte/ACL validation and before actual File.Replace.
+                    testOnlyAfterFinalUndoValidation?.Invoke(stage, x.Aliases[i].Path);
+                    Checkpoint latest = ReadCheckpoint(root, x);
+                    if (latest.ActivePhase != "stage-validated" ||
+                        !string.Equals(latest.ActiveStage, stage,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        latest.Detached.Count != i ||
+                        !latest.Detached.Select(z => z.FileIndex)
+                            .SequenceEqual(p.Detached.Select(z => z.FileIndex)))
+                        throw new InvalidDataException(
+                            "Durable group checkpoint changed after last Undo source validation");
                 },
                 testOnlyGroupPhase: (phase, stage) =>
                 {

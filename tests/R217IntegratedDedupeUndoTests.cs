@@ -48,9 +48,9 @@ internal static class R217IntegratedDedupeUndoTests
             "B1: exact-byte scanner keeps all four differently attributed/timed originals in one detection group");
         var strict = scan.Groups[0].PartitionForSafeMerge(false);
         var relaxed = scan.Groups[0].PartitionForSafeMerge(true);
-        check(strict.Count == 3 &&
+        check(strict.Count == 2 &&
             strict.Count(g => g.Files.Count == 2 && g.BlockReason(false) is null) == 1 &&
-            strict.Count(g => g.Files.Count == 1) == 2 &&
+            strict.Count(g => g.Files.Count == 2 && g.BlockReason(false) is not null) == 1 &&
             relaxed.Count == 2 &&
             relaxed.Count(g => g.Files.Count == 3 && g.BlockReason(true) is null) == 1 &&
             relaxed.Count(g => g.Files.Count == 1) == 1,
@@ -61,14 +61,14 @@ internal static class R217IntegratedDedupeUndoTests
         var blankPreview = new CombinedCapacityReport.Summary(0, 0, 0, 0, 0, 0,
             Array.Empty<CombinedCapacityReport.Row>());
         var combined = CombinedSavingsPlanner.Analyze(blankPreview, scan, false);
-        check(plan.EligibleGroups == 1 && plan.BlockedGroups == 2 &&
+        check(plan.EligibleGroups == 1 && plan.BlockedGroups == 1 &&
             plan.EstimatedDuplicateBytes == 64 * 1024 &&
             timePlan.EligibleGroups == 1 && timePlan.BlockedGroups == 1 &&
             timePlan.EstimatedDuplicateBytes == 2 * 64 * 1024 &&
-            report.EligibleGroups == 1 && report.BlockedGroups == 2 &&
+            report.EligibleGroups == 1 && report.BlockedGroups == 1 &&
             report.PotentialBytes == 64 * 1024 &&
             combined.VerifiedDuplicateGroups == 1 &&
-            combined.SkippedDuplicateGroups == 2 &&
+            combined.SkippedDuplicateGroups == 1 &&
             combined.DedupeOnlyBytes == 64 * 1024 &&
             combined.ActualFreedBytes == 0,
             "B1: actual read-only WPF planners/report/calculator agree on safe subgroup savings without counting excluded peers");

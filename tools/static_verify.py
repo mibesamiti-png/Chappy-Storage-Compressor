@@ -226,9 +226,11 @@ check('R2.2 GUI event wired', 'ReplacementReadiness_Click' in source and
       'ReplacementReadinessButton.IsEnabled' in source and
       'ReplacementReadiness_Click' in (root/'MainWindow.xaml').read_text(encoding='utf-8'))
 check('R2.2 synthetic tests included', 'TestR22Readiness();' in test)
-check('R2.2 production file replacement remains gated',
+check('R2.2 production file replacement and public merge remain gated',
       'MergeButton.IsEnabled = false' in source and
       'File.Move(candidate, source)' not in source and
-      '#if !CHAPPY_TESTING' in core)
+      'public static long Run(' in core and
+      '#else\n        throw new NotSupportedException' in core and
+      'internal static long RunPreparedGroup(' in core)
 print(f'R2.2 source inspections: {len(errors)} failure(s) overall; Windows build remains REQUIRED')
 if errors: sys.exit(1)

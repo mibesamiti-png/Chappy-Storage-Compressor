@@ -123,7 +123,7 @@ internal static class R217CollisionRecoveryChecklistTests
             FileIdentity reportId = NativeFile.GetIdentity(rootMemo);
             var summary = CollisionEvidenceReview.Inspect(f.Output);
             var review = CollisionRecoveryChecklist.Analyze(summary);
-            var firstFile = summary.Rows.Single(x => x.Kind == "ファイル");
+            var firstFile = summary.Rows.First(x => x.Kind == "ファイル");
             var selected = CollisionRecoveryChecklist.Analyze(summary, firstFile);
             bool ok = review.Decision ==
                     "保存先証拠のみ一致（本番復元不可）" &&

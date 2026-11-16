@@ -28,6 +28,11 @@ public static class CompletedGroupLedger
         public int Schema { get; set; } = 1;
         public string Id { get; set; } = "";
         public List<FileIdentity> Detached { get; set; } = [];
+        // Part28: a single currently mutating alias. This intent is flushed
+        // before Core creates its independent stage; it is never inferred
+        // from an untrusted phase name alone.
+        public string? ActiveStage { get; set; }
+        public string ActivePhase { get; set; } = "";
     }
     public sealed record Entry(string OperationId, string State, int AliasCount, int DetachedCount);
     public sealed record Summary(IReadOnlyList<Entry> Entries)
@@ -36,6 +41,8 @@ public static class CompletedGroupLedger
         public int VerifiedRestored => Entries.Count(x => x.State == "VerifiedRestored");
         public int ExplicitResumeRequired => Entries.Count(x => x.State == "ExplicitResumeRequired");
         public int NeedsReview => Entries.Count(x => x.State == "ManualReview");
+        public int InterruptedAliases => Entries.Count(x =>
+            x.State is "InterruptedSharedNeedsRetry" or "InterruptedCutoverNeedsRepair");
         public bool CanMutateUserFiles => false;
     }
 
@@ -137,6 +144,23 @@ public static class CompletedGroupLedger
                 p.Detached.Take(i).Any(other => other.FileIndex == id.FileIndex))
                 throw new InvalidDataException("Invalid Undo independent identities");
         }
+        if (p.ActiveStage is not null)
+        {
+            if (p.Detached.Count == x.Aliases.Count ||
+                p.ActivePhase is not ("intent-written" or "stage-validated" or
+                    "post-cutover-before-metadata" or "metadata-restored-before-ledger") ||
+                !Safe(root, p.ActiveStage) ||
+                !Path.GetDirectoryName(Path.GetFullPath(p.ActiveStage))!.Equals(
+                    Path.GetDirectoryName(Path.GetFullPath(x.Aliases[p.Detached.Count].Path)),
+                    StringComparison.OrdinalIgnoreCase) ||
+                !Path.GetFileName(p.ActiveStage).StartsWith(".chappy-part23-undo-",
+                    StringComparison.OrdinalIgnoreCase) ||
+                !Path.GetFileName(p.ActiveStage).EndsWith(".stage",
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Untrusted active group Undo stage");
+        }
+        else if (p.ActivePhase.Length != 0)
+            throw new InvalidDataException("Group Undo phase without an active stage");
         return p;
     }
 
@@ -197,6 +221,90 @@ public static class CompletedGroupLedger
         catch { return false; }
     }
 
+    private static bool VerifiedStage(Manifest x, Checkpoint p)
+    {
+        if (p.ActiveStage is null || !File.Exists(p.ActiveStage)) return false;
+        try
+        {
+            var source = x.Aliases[p.Detached.Count];
+            var stage = Safety.Capture(p.ActiveStage);
+            var master = NativeFile.GetIdentity(x.Master);
+            return stage.Identity.LinkCount == 1 &&
+                stage.Identity.VolumeSerial == master.VolumeSerial &&
+                !stage.Identity.SameFile(master) &&
+                Exact(source, stage) &&
+                Safety.ComputeSha256(stage.Path, CancellationToken.None) == x.Hash;
+        }
+        catch { return false; }
+    }
+
+    // Reconstruct the expected link count from durable group evidence, then
+    // verify EVERY other alias before allowing even an explicit test replay.
+    // The current cutover alias may temporarily lack its original metadata,
+    // so it is checked for byte identity and independent NTFS identity only.
+    private static string ActiveState(Manifest x, Checkpoint p)
+    {
+        try
+        {
+            int index = p.Detached.Count;
+            var master = Safety.Capture(x.Master);
+            var rep = Safety.Capture(x.Representative.Path);
+            var alias = Safety.Capture(x.Aliases[index].Path);
+            if (!master.Identity.SameFile(x.Representative.Identity) ||
+                !rep.Identity.SameFile(master.Identity) ||
+                !Exact(x.Representative, rep) ||
+                Safety.ComputeSha256(rep.Path, CancellationToken.None) != x.Hash ||
+                Safety.ComputeSha256(master.Path, CancellationToken.None) != x.Hash)
+                return "ManualReview";
+            bool shared = alias.Identity.SameFile(master.Identity);
+            uint links = checked((uint)(2 + x.Aliases.Count - index -
+                (shared ? 0 : 1)));
+            if (master.Identity.LinkCount != links ||
+                rep.Identity.LinkCount != links ||
+                (shared ? alias.Identity.LinkCount != links :
+                    alias.Identity.LinkCount != 1 ||
+                    alias.Identity.VolumeSerial != master.Identity.VolumeSerial) ||
+                alias.Length != x.Aliases[index].Length ||
+                Safety.ComputeSha256(alias.Path, CancellationToken.None) != x.Hash ||
+                !Safety.ByteEqual(alias.Path, master.Path, CancellationToken.None))
+                return "ManualReview";
+            for (int i = 0; i < x.Aliases.Count; i++)
+            {
+                if (i == index) continue;
+                var actual = Safety.Capture(x.Aliases[i].Path);
+                if (!Exact(x.Aliases[i], actual) ||
+                    Safety.ComputeSha256(actual.Path, CancellationToken.None) != x.Hash)
+                    return "ManualReview";
+                if (i < index)
+                {
+                    if (!actual.Identity.SameFile(p.Detached[i]) ||
+                        actual.Identity.LinkCount != 1 ||
+                        actual.Identity.SameFile(master.Identity))
+                        return "ManualReview";
+                }
+                else if (!actual.Identity.SameFile(master.Identity) ||
+                    actual.Identity.LinkCount != links)
+                    return "ManualReview";
+            }
+
+            if (shared)
+            {
+                if (p.ActivePhase is "post-cutover-before-metadata" or
+                    "metadata-restored-before-ledger" ||
+                    (File.Exists(p.ActiveStage) && !VerifiedStage(x, p)) ||
+                    (p.ActivePhase == "stage-validated" &&
+                        !File.Exists(p.ActiveStage)))
+                    return "ManualReview";
+                return "InterruptedSharedNeedsRetry";
+            }
+            if (p.ActivePhase == "intent-written" ||
+                File.Exists(p.ActiveStage))
+                return "ManualReview";
+            return "InterruptedCutoverNeedsRepair";
+        }
+        catch { return "ManualReview"; }
+    }
+
     public static Summary Inspect(string inputRoot)
     {
         string root = Safety.ValidateRoot(inputRoot), folder = Folder(root);
@@ -225,6 +333,7 @@ public static class CompletedGroupLedger
                 string state = phase switch
                 {
                     "prepared" => "ManualReview",
+                    "completed" when p.ActiveStage is not null => ActiveState(x, p),
                     "completed" when Verify(x, p) && p.Detached.Count == 0 =>
                         "VerifiedCompleted",
                     "completed" when Verify(x, p) && p.Detached.Count > 0 =>
@@ -280,7 +389,8 @@ public static class CompletedGroupLedger
             group.Hash + Path.GetExtension(group.Representative.Path).ToLowerInvariant());
         if (File.Exists(master))
             throw new InvalidDataException("Unexpected existing group master");
-        if (Inspect(root).Entries.Any(e => e.State != "VerifiedRestored"))
+        if (Inspect(root).Entries.Any(e =>
+                e.State is not ("VerifiedRestored" or "VerifiedCompleted")))
             throw new InvalidDataException("Unresolved group history blocks new test merge");
         Safety.ValidateStore(root);
         string folder = Folder(root);
@@ -311,7 +421,8 @@ public static class CompletedGroupLedger
     }
 
     public static int ResumeUndoSynthetic(string input, string id, string evidence,
-        Action<int>? afterDurableAlias = null)
+        Action<int>? afterDurableAlias = null,
+        Action<string>? afterDurablePhase = null)
     {
         string root = RequireSynthetic(input);
         if (!Safe(root, evidence) || !Directory.Exists(evidence) ||
@@ -320,10 +431,42 @@ public static class CompletedGroupLedger
         var summary = Inspect(root);
         if (summary.Entries.Any(e => e.State == "ManualReview") ||
             summary.Entries.Count(e => e.OperationId == id &&
-                e.State is "VerifiedCompleted" or "ExplicitResumeRequired") != 1)
+                e.State is "VerifiedCompleted" or "ExplicitResumeRequired" or
+                    "InterruptedSharedNeedsRetry" or "InterruptedCutoverNeedsRepair") != 1)
             throw new InvalidDataException("Group Undo cannot proceed from unverified history");
         Manifest x = Read(root, id, "completed");
         Checkpoint p = ReadCheckpoint(root, x);
+        if (p.ActiveStage is not null)
+        {
+            string state = ActiveState(x, p);
+            if (state == "InterruptedSharedNeedsRetry")
+            {
+                // The alias is still a hardlink; never touch an unknown
+                // or incomplete staged copy. Only remove the exact proven
+                // synthetic stage that this checkpoint created.
+                if (File.Exists(p.ActiveStage))
+                {
+                    if (!VerifiedStage(x, p))
+                        throw new InvalidDataException("Changed stage requires manual review");
+                    File.Delete(p.ActiveStage);
+                }
+                p.ActiveStage = null;
+                p.ActivePhase = "";
+                AtomicWrite(PathFor(root, id, "checkpoint"), p, overwrite: true);
+            }
+            else if (state == "InterruptedCutoverNeedsRepair")
+            {
+                int index = p.Detached.Count;
+                uint linksBefore = checked((uint)(2 + x.Aliases.Count - index));
+                IndependentUndoEngine.RestoreMetadataAfterCrashSynthetic(
+                    root, x.Aliases[index], x.Master, x.Hash, linksBefore);
+                p.Detached.Add(NativeFile.GetIdentity(x.Aliases[index].Path));
+                p.ActiveStage = null;
+                p.ActivePhase = "";
+                AtomicWrite(PathFor(root, id, "checkpoint"), p, overwrite: true);
+            }
+            else throw new InvalidDataException("Untrusted interrupted alias requires manual review");
+        }
         if (!Verify(x, p))
             throw new InvalidDataException("Group identity or metadata changed");
         if (!File.Exists(PathFor(root, id, "checkpoint")))
@@ -332,7 +475,22 @@ public static class CompletedGroupLedger
         {
             uint expectedLinks = checked((uint)(2 + x.Aliases.Count - i));
             IndependentUndoEngine.Restore(root, x.Aliases[i], x.Master, x.Hash,
-                expectedLinks, evidence);
+                expectedLinks, evidence,
+                testOnlyGroupPhase: (phase, stage) =>
+                {
+                    if (phase == "intent-written")
+                    {
+                        if (p.ActiveStage is not null)
+                            throw new InvalidDataException("Overlapping group Undo intents");
+                        p.ActiveStage = stage;
+                    }
+                    else if (!string.Equals(p.ActiveStage, stage,
+                                 StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("Unknown group Undo stage changed");
+                    p.ActivePhase = phase;
+                    AtomicWrite(PathFor(root, id, "checkpoint"), p, overwrite: true);
+                    afterDurablePhase?.Invoke(phase);
+                });
             var actual = Safety.Capture(x.Aliases[i].Path);
             if (actual.Identity.LinkCount != 1 ||
                 actual.Identity.SameFile(x.Representative.Identity) ||
@@ -340,6 +498,8 @@ public static class CompletedGroupLedger
                 Safety.ComputeSha256(actual.Path, CancellationToken.None) != x.Hash)
                 throw new InvalidDataException("Independent group Undo incomplete; do not record success");
             p.Detached.Add(actual.Identity);
+            p.ActiveStage = null;
+            p.ActivePhase = "";
             AtomicWrite(PathFor(root, id, "checkpoint"), p, overwrite: true);
             if (!Verify(x, p))
                 throw new InvalidDataException("Group Undo checkpoint failed full revalidation");

@@ -89,7 +89,21 @@ check('R1.5: no overwrite source', 'File.Delete(source)' not in optimizer and 'F
 check('R1.5: CRC structural check and unsafe metadata guard',
       'PngInspector.Inspect(candidate, ct)' in optimizer and 'KnownAncillary.Contains' in optimizer)
 check('R1.5: preview GUI wired', 'PngPreview_Click' in source and 'PngPreviewButton.IsEnabled' in source)
-check('R1.5: production merge hard-gated', '#if !CHAPPY_TESTING' in core and 'throw new NotSupportedException' in core)
+check('R1.5/B2: public product merge stays locked',
+      'public static long Run(' in core and
+      '#else\n        throw new NotSupportedException' in core and
+      'private static long RunCore(' in core)
+check('B2: normal Windows build contains only manifest-authorized internal Core',
+      'internal static long RunPreparedGroup(' in core and
+      'CompletedGroupLedger.AssertPreparedGroup(' in core and
+      'CompletedGroupLedger.AssertPreparedAlias(' in core and
+      'testOnlyPreparedGroupId: id' not in
+      (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
+check('B2: synthetic-only writer and Undo remain compile-gated',
+      'public static string MergeSynthetic(' in
+      (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8') and
+      '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in
+      (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
 check('R1.5: PNG test coverage included', 'TestR15PngPreview(root)' in test and 'WritePngChunk' in test)
 
 print(f'\nStatic checks: {len(errors)} failure(s). This does NOT test C# compilation or runtime safety.')

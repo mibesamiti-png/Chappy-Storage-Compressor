@@ -63,6 +63,21 @@
         </DataGrid>
       </TabItem>
       <TabItem Header="同名ファイル調査（読み取り専用）">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="3,0,3,8">
+            <TextBlock Text="調査優先度：" VerticalAlignment="Center" Foreground="#D8E8F4" Margin="0,0,6,0"/>
+            <ComboBox x:Name="CollisionPriorityFilter" Width="148" SelectedIndex="0"
+                      SelectionChanged="CollisionPriorityFilterChanged">
+              <ComboBoxItem Content="すべて" Tag="ALL"/>
+              <ComboBoxItem Content="P0 最優先" Tag="P0"/>
+              <ComboBoxItem Content="P1 未完了" Tag="P1"/>
+              <ComboBoxItem Content="P2 元未照合" Tag="P2"/>
+              <ComboBoxItem Content="U 未判定" Tag="U"/>
+            </ComboBox>
+            <TextBlock x:Name="CollisionPriorityCounts" VerticalAlignment="Center"
+                       Margin="12,0,0,0" Text="調査結果を確認中…"
+                       Foreground="#E1C581" FontSize="12" TextWrapping="Wrap"/>
+          </StackPanel>
         <DataGrid x:Name="CollisionGrid" AutoGenerateColumns="False" CanUserAddRows="False"
                   IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
                   SelectionChanged="CollisionSelectionChanged"
@@ -72,6 +87,7 @@
                   HorizontalGridLinesBrush="#35475A" HeadersVisibility="Column"
                   RowHeight="29" FontSize="12">
           <DataGrid.Columns>
+            <DataGridTextColumn Header="優先度" Binding="{Binding PriorityLabel}" Width="*"/>
             <DataGridTextColumn Header="種別" Binding="{Binding Kind}" Width="*"/>
             <DataGridTextColumn Header="判定" Binding="{Binding AttentionText}" Width="*"/>
             <DataGridTextColumn Header="状態" Binding="{Binding State}" Width="2*"/>
@@ -79,6 +95,7 @@
             <DataGridTextColumn Header="保存先・証拠" Binding="{Binding DisplayTarget}" Width="3*"/>
           </DataGrid.Columns>
         </DataGrid>
+        </DockPanel>
       </TabItem>
     </TabControl>
     <Border Grid.Row="3" Background="#172739" CornerRadius="9" Padding="12" Margin="0,0,0,12">

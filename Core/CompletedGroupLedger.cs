@@ -393,7 +393,9 @@ public static class CompletedGroupLedger
             throw new InvalidDataException("Only clean 2-33 independent exact duplicates supported");
         foreach (FileSnapshot s in group.Files)
         {
-            if (!Safe(root, s.Path) || !Safety.SameSnapshot(s) ||
+            if (!Safe(root, s.Path) ||
+                !Safety.ContainedRegularSource(root, s.Path) ||
+                !Safety.SameSnapshot(s) ||
                 Safety.ComputeSha256(s.Path, CancellationToken.None) != group.Hash ||
                 !Safety.ByteEqual(s.Path, group.Representative.Path, CancellationToken.None))
                 throw new InvalidDataException("Changed group source cannot be persisted");

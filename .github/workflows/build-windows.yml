@@ -1399,6 +1399,48 @@ jobs:
           "R2.17 Part36 WPF read-only collision evidence, 8 adversarial classification cases PASS"
           Get-Content $path
 
+      - name: Verify Part37 collision journal whole-run integrity and guided review
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part37-consistent-collision-triage.json"
+          if (-not (Test-Path $path)) { throw "Part37 collision consistency report missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part37-collision-evidence-consistency-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.scenarioCount -ne 7 -or
+              $r.generatedOnly -ne $true -or
+              $r.wholeOperationRedIfUnknownEvidence -ne $true -or
+              $r.selfConsistentForgedMemoStillFailsCanonicalIntent -ne $true -or
+              $r.nestedCollisionFolderPolicyBoundToIntent -ne $true -or
+              $r.orphanedReceiptAndCompletedMarkersRetained -ne $true -or
+              $r.safeUserReviewGuidanceIncluded -ne $true -or
+              $r.sourcePathNeverDereferencedByReader -ne $true -or
+              $r.releaseReadOnlyTabOnly -ne $true -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserCapacityRecoveredBytes -ne 0 -or
+              $r.physicalPowerCutProven -ne $false -or
+              $r.productionExtractionOrUndoEnabled -ne $false -or
+              $r.productionCollisionMutationEnabled -ne $false) {
+            throw "Part37 collision evidence/whole-run integrity gate failed"
+          }
+          $expected = @(
+            "canonical-memo-baseline",
+            "unknown-evidence-downgrades-whole-record",
+            "forged-self-consistent-memo-vs-intent",
+            "invalid-nested-collection-refused",
+            "contradictory-collision-flag-refused",
+            "unowned-complete-marker-manual-review",
+            "orphan-output-protective-guidance"
+          )
+          foreach ($name in $expected) {
+            if (@($r.scenarios | Where-Object { $_.name -eq $name -and $_.pass -eq $true }).Count -ne 1) {
+              throw "Part37 missing exact safety case: $name"
+            }
+          }
+          "R2.17 Part37 canonical report, unknown-journal whole-record refusal and guided manual review PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -1495,6 +1537,9 @@ jobs:
               $r.part30NeverEnabledApplyForHistory -ne $true -or
               $r.part30ReadOnlyInspectionNeverCreatedStore -ne $true -or
               $r.part30CrossLedgerDashboardProductionMutationDisabled -ne $true -or
+              $r.part37WpfReadOnlyTriageGuidanceRendered -ne $true -or
+              $r.part37WpfApplyNeverEnabledFromCollisionTab -ne $true -or
+              $r.part37WpfSourceShaAndNtfsIdentityPreserved -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

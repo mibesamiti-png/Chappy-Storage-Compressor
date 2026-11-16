@@ -259,6 +259,31 @@ internal static class UiInteractionSmoke
                 NativeFile.GetIdentity(right).SameFile(beforeRightId);
             Require(part36WpfReadOnly,
                 "R2.17 part36: real WPF read-only collision evidence tab has no apply, creates no journal and preserves existing file IDs");
+            // A deterministic *visualization row* validates the actual WPF
+            // selection and guidance display; it is not fake file evidence.
+            // Real NTFS evidence classification is covered by Part36/37 Core.
+            var triageRows = collisionGrid.ItemsSource as
+                System.Collections.ObjectModel.ObservableCollection<CollisionEvidenceReview.Row>
+                ?? throw new InvalidOperationException("Part37 WPF collision source missing");
+            var mockTriage = new CollisionEvidenceReview.Row(
+                "操作記録", "part37-generated-ui-row", "", "", "ManualReview",
+                "同じ台帳に不明な証拠があるため操作全体は未検証", true);
+            triageRows.Add(mockTriage);
+            collisionGrid.SelectedItem = mockTriage;
+            var detail = recoveryView.FindName("DetailText") as TextBlock ??
+                throw new InvalidOperationException("Part37 WPF details panel missing");
+            bool part37GuidanceShown = detail.Text.Contains("【確認するときの注意】",
+                    StringComparison.Ordinal) &&
+                detail.Text.Contains("台帳全体に未完了・不整合",
+                    StringComparison.Ordinal) &&
+                detail.Text.Contains("再開・削除・名前変更・自動修復はできません",
+                    StringComparison.Ordinal) &&
+                !recoveryApply.IsEnabled && collisionGrid.IsReadOnly &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId);
+            Require(part37GuidanceShown,
+                "R2.17 part37: actual WPF collision selection shows safe per-record guidance and cannot enable Apply");
             recoveryView.Close();
 
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with
@@ -802,6 +827,13 @@ internal static class UiInteractionSmoke
                         !Directory.Exists(Safety.StorePath(originals)),
                     part30CrossLedgerDashboardProductionMutationDisabled =
                         !RecoveryEvidenceOverview.ProductionMutationEnabled,
+                    part37WpfReadOnlyTriageGuidanceRendered = part37GuidanceShown,
+                    part37WpfApplyNeverEnabledFromCollisionTab =
+                        !recoveryApply.IsEnabled,
+                    part37WpfSourceShaAndNtfsIdentityPreserved =
+                        OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                        NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                        NativeFile.GetIdentity(right).SameFile(beforeRightId),
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

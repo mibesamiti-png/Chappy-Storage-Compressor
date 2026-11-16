@@ -211,7 +211,9 @@ internal static class R217PathSwapRaceTests
                     ? Journal.Pending().Single().BackupPath : "";
                 bool allNamesExist = File.Exists(relocated) &&
                     File.Exists(alias) && File.Exists(f.Master) &&
-                    File.Exists(expectedRecord);
+                    (scenario.Mode == "backup-swap-same-bytes"
+                        ? File.Exists(expectedRecord)
+                        : !File.Exists(expectedRecord));
                 bool originalPreserved = allNamesExist &&
                     NativeFile.GetIdentity(relocated).SameFile(f.OriginalAlias.Identity) &&
                     Hash(relocated) == f.Group.Hash &&

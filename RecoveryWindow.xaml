@@ -23,6 +23,8 @@
         <TextBlock x:Name="SummaryText" Text="状態を読み込んでいます…" Foreground="#C7E0EF" FontSize="13" TextWrapping="Wrap"/>
         <TextBlock x:Name="HistorySummaryText" Text="統合済み・Undo履歴：対象フォルダの読み取り専用検証待ち"
                    Foreground="#70DBC7" Margin="0,8,0,0" FontSize="12" TextWrapping="Wrap"/>
+        <TextBlock x:Name="CollisionSummaryText" Text="同名ファイル調査：対象フォルダの読み取り専用検証待ち"
+                   Foreground="#E1C581" Margin="0,5,0,0" FontSize="12" TextWrapping="Wrap"/>
       </StackPanel>
     </Border>
     <TabControl x:Name="RecoveryTabs" Grid.Row="2" Margin="0,0,0,12"
@@ -57,6 +59,24 @@
             <DataGridTextColumn Header="判定" Binding="{Binding AttentionText}" Width="*"/>
             <DataGridTextColumn Header="現在の状態" Binding="{Binding State}" Width="2*"/>
             <DataGridTextColumn Header="対象名・記録ID" Binding="{Binding Target}" Width="3*"/>
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
+      <TabItem Header="同名ファイル調査（読み取り専用）">
+        <DataGrid x:Name="CollisionGrid" AutoGenerateColumns="False" CanUserAddRows="False"
+                  IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow"
+                  SelectionChanged="CollisionSelectionChanged"
+                  Background="#182434" Foreground="#F1F6FC"
+                  RowBackground="#1C2A3A" AlternatingRowBackground="#223246"
+                  BorderThickness="0" GridLinesVisibility="Horizontal"
+                  HorizontalGridLinesBrush="#35475A" HeadersVisibility="Column"
+                  RowHeight="29" FontSize="12">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="種別" Binding="{Binding Kind}" Width="*"/>
+            <DataGridTextColumn Header="判定" Binding="{Binding AttentionText}" Width="*"/>
+            <DataGridTextColumn Header="状態" Binding="{Binding State}" Width="2*"/>
+            <DataGridTextColumn Header="元の相対パス" Binding="{Binding OriginalRelativePath}" Width="3*"/>
+            <DataGridTextColumn Header="保存先・証拠" Binding="{Binding DisplayTarget}" Width="3*"/>
           </DataGrid.Columns>
         </DataGrid>
       </TabItem>

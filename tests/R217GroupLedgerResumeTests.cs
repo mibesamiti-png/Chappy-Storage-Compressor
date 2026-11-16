@@ -89,6 +89,132 @@ internal static class R217GroupLedgerResumeTests
         return child.ExitCode;
     }
 
+    // B2: use the SAME durable group ledger and independent Undo for two
+    // names and for the older four-name crash fixture. The old pair-specific
+    // CompletedMergeLedger remains readable but must receive no new records.
+    private static void VerifyTwoNameUnifiedLedger(string parent,
+        Action<bool, string> check, Action<Action, string> expectThrows)
+    {
+        string root = Path.Combine(parent, "r217-b2-two-name-shared-ledger");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        GuardRoot(root);
+        Journal.TestFolderPath = Path.Combine(root, "r217-b2-journal");
+        string a = Path.Combine(root, "b2-pair-a.mp4");
+        string b = Path.Combine(root, "b2-pair-b.mp4");
+        File.WriteAllBytes(a, RandomNumberGenerator.GetBytes(288 * 1024));
+        File.Copy(a, b);
+        File.SetCreationTimeUtc(b, File.GetCreationTimeUtc(a));
+        File.SetLastWriteTimeUtc(b, File.GetLastWriteTimeUtc(a));
+        var scan = Scanner.Run(root, true, null, CancellationToken.None);
+        check(scan.Groups.Count == 1 && scan.Groups[0].Files.Count == 2 &&
+              scan.Groups[0].BlockReason(false) is null,
+            "B2: two independently identified equal-byte names are eligible for the common manifest");
+        // Reject a perfectly valid duplicate pair when its source is OUTSIDE
+        // the root selected for the transaction. Hash/ACL equality alone
+        // must never grant arbitrary pathname mutation authority.
+        string outside = Path.Combine(parent, "r217-b2-outside-selected-root");
+        Directory.CreateDirectory(outside);
+        string alienA = Path.Combine(outside, "alien-a.mp4");
+        string alienB = Path.Combine(outside, "alien-b.mp4");
+        File.Copy(a, alienA);
+        File.Copy(a, alienB);
+        File.SetCreationTimeUtc(alienA, File.GetCreationTimeUtc(a));
+        File.SetCreationTimeUtc(alienB, File.GetCreationTimeUtc(a));
+        File.SetLastWriteTimeUtc(alienA, File.GetLastWriteTimeUtc(a));
+        File.SetLastWriteTimeUtc(alienB, File.GetLastWriteTimeUtc(a));
+        var foreignScan = Scanner.Run(outside, true, null, CancellationToken.None);
+        check(foreignScan.Groups.Count == 1 &&
+              !Safety.ContainedRegularSource(root, alienA) &&
+              !Safety.ContainedRegularSource(root, alienB) &&
+              !Safety.ContainedRegularSource(root, Path.Combine(
+                  Safety.StorePath(root), "foreign.mp4")),
+            "B2: outside-root and reserved-store names are not allowed by shared admission policy");
+        string priorA = Hash(alienA), priorB = Hash(alienB);
+        var foreignIdA = NativeFile.GetIdentity(alienA);
+        var foreignIdB = NativeFile.GetIdentity(alienB);
+        expectThrows(() => DedupeEngine.Run(root, foreignScan.Groups, false,
+            null, CancellationToken.None),
+            "B2: real Core refuses foreign-root exact duplicates before any store/journal creation");
+        check(!Directory.Exists(Safety.StorePath(root)) &&
+              NativeFile.GetIdentity(alienA).SameFile(foreignIdA) &&
+              NativeFile.GetIdentity(alienB).SameFile(foreignIdB) &&
+              !NativeFile.SameFile(alienA, alienB) &&
+              Hash(alienA) == priorA && Hash(alienB) == priorB &&
+              Journal.Pending().Count == 0 &&
+              Journal.UnresolvedRecordFiles().Count == 0,
+            "B2: preflight rejection leaves every out-of-scope source independent and original");
+
+        var snapshots = scan.Groups.Single().Files.ToDictionary(x => x.Path,
+            StringComparer.OrdinalIgnoreCase);
+        string hash = scan.Groups.Single().Hash;
+        string id = CompletedGroupLedger.MergeSynthetic(root, scan.Groups.Single());
+        string master = Path.Combine(Safety.StorePath(root), hash + ".mp4");
+        var complete = CompletedGroupLedger.Inspect(root);
+        check(complete.VerifiedCompleted == 1 &&
+              complete.Entries.Single().AliasCount == 1 &&
+              complete.Entries.Single().DetachedCount == 0 &&
+              CompletedMergeLedger.Inspect(root).Entries.Count == 0 &&
+              NativeFile.GetIdentity(master).LinkCount == 3 &&
+              snapshots.Keys.All(path => NativeFile.SameFile(path, master) &&
+                  Hash(path) == hash) &&
+              Journal.Pending().Count == 0 &&
+              Journal.UnresolvedRecordFiles().Count == 0,
+            "B2: 2-file merge writes ONE durable group manifest and no parallel pair ledger");
+
+        string external = Path.Combine(root, "b2-test-owned-foreign-link.tmp");
+        NativeFile.NewHardLink(external, master);
+        string evidence = Path.Combine(root, "b2-undo-evidence");
+        Directory.CreateDirectory(evidence);
+        check(CompletedGroupLedger.Inspect(root).NeedsReview == 1,
+            "B2: unregistered hardlink blocks 2-file manifest exactly as it blocks 4-file manifests");
+        expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),
+            "B2: unregistered link prevents two-name Undo");
+        if (!NativeFile.SameFile(external, master))
+            throw new InvalidDataException("Generated external link identity changed");
+        File.Delete(external);
+
+        // Inject a recoverable exception AFTER the only alias checkpoint was
+        // flushed. The next invocation must finish idempotently from disk,
+        // even though no aliases remain to loop over.
+        expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence,
+            afterDurableAlias: n =>
+            {
+                if (n == 1) throw new IOException("generated-only interruption after checkpoint");
+            }), "B2: stop after first and only durable alias checkpoint");
+        var pending = CompletedGroupLedger.Inspect(root);
+        check(pending.ExplicitResumeRequired == 1 &&
+              pending.Entries.Single().DetachedCount == 1 &&
+              NativeFile.GetIdentity(master).LinkCount == 2 &&
+              CompletedMergeLedger.Inspect(root).Entries.Count == 0,
+            "B2: one-alias group interruption reopens as explicit resume, never auto-completed");
+        int resumed = CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence);
+        var restored = CompletedGroupLedger.Inspect(root);
+        bool unchanged = snapshots.Values.All(saved =>
+        {
+            var now = Safety.Capture(saved.Path);
+            return now.Length == saved.Length &&
+                now.CreationUtc == saved.CreationUtc &&
+                now.ModifiedUtc == saved.ModifiedUtc &&
+                now.Attributes == saved.Attributes &&
+                now.SecurityDescriptor.AsSpan().SequenceEqual(saved.SecurityDescriptor) &&
+                now.Identity.VolumeSerial == saved.Identity.VolumeSerial &&
+                now.Identity.LinkCount == (saved.Path ==
+                    scan.Groups.Single().Representative.Path ? 2u : 1u) &&
+                Hash(now.Path) == hash;
+        });
+        check(resumed == 1 && restored.VerifiedRestored == 1 &&
+              restored.NeedsReview == 0 &&
+              restored.Entries.Single().DetachedCount == 1 &&
+              !NativeFile.SameFile(a, b) &&
+              NativeFile.GetIdentity(master).LinkCount == 2 &&
+              unchanged && CompletedMergeLedger.Inspect(root).Entries.Count == 0,
+            "B2: common durable 2-file manifest safely resumes after interrupted final Undo and restores original metadata/independent IDs");
+        expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),
+            "B2: a fully restored two-name manifest cannot authorize a second Undo");
+    }
+
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)
     {
@@ -202,6 +328,10 @@ internal static class R217GroupLedgerResumeTests
                 "R2.17 part27: explicit restart completes remaining two Undo aliases; all original bytes/metadata and separate NTFS identities verified");
             expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),
                 "R2.17 part27: final restored group cannot be replayed as another Undo");
+
+            VerifyTwoNameUnifiedLedger(parent, check, expectThrows);
+            // The helper uses a separately guarded generated journal folder.
+            Journal.TestFolderPath = Path.Combine(root, "part27-journal");
 
             Directory.CreateDirectory("diagnostics");
             File.WriteAllText("diagnostics/r217-group-ledger-resume.json",

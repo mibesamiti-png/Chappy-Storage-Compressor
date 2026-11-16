@@ -288,6 +288,14 @@ A new generated-only Windows Core integration uses three **different two-file** 
 
 **Still outstanding:** a group-level manifest and restartable N-alias commit/Undo protocol, true power-loss durability/isolated VHDX capacity, external writers and arbitrary security metadata, and final production GUI user approval. The normal WPF app's original replacement/merge/Undo are still disabled, actual user capacity regained **0 B** and the historical **69.4%** source estimate remains unchanged. Require final PR-head Windows CI and a distinct postmerge main CI run.
 
+## R2.17 Part 27 — generated 3+ alias group ledger and verified restart between independent Undo checkpoints
+
+A separate `CompletedGroupLedger` records **all original alias identities and owner+DACL/timestamps before changing the first generated file**. The `CHAPPY_TESTING`-only group workflow invokes the real Core `DedupeEngine.Run` for a synthetic 4-filename MP4 group, validates the exact group master identity/link count, and persists one group-wide completed record. This addresses the Part26 v1 per-alias ledger count limitation **without weakening existing two-file evidence**. A new production-compatible inspector is read-only.
+
+Each synthetic independent Undo success is separately checkpointed with its exact resulting NTFS identity. An external unexpected alias makes the entire group ManualReview, while actual worker death **after the first durable per-alias checkpoint** permits explicit revalidation and continuation of the remaining two aliases after restart. The test uses a genuine killed child process and verifies all 4 original contents and metadata. CI requires a strict `r217-group-ledger-resume.json` report. [Design, safety boundaries and remaining work](R217_GROUP_LEDGER_RESUME.md).
+
+**Important nonclaim:** a crash *inside* one group alias's own `File.Replace`/metadata/callback window, a partial group merge, an actual power interruption, arbitrary file permissions or external writers still require separate safety gates. Interrupted uncheckpointed alias changes are ManualReview and are not automatically undone. Production hardlink merge/Undo/original replacement **remain disabled**, 0 B end-user capacity reclaimed; 69.4% remains historical source coverage, not product readiness. Require final PR-head and independent postmerge main CI.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

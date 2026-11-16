@@ -1,5 +1,6 @@
 #if CHAPPY_TESTING
 using System.ComponentModel;
+using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Text;
@@ -60,6 +61,18 @@ internal sealed class SyntheticPinnedNtfsFile : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFileInfo(SafeFileHandle handle,
         int infoClass, IntPtr data, uint bytes);
+
+    // The normal Safety.ComputeSha256 intentionally opens FileShare.Read
+    // (no delete sharing). That conflicts with our *own* intentional pinned
+    // DELETE-access handle. For the test-only pinned lab reopen with
+    // FileShare.Read | FileShare.Delete: still refuse concurrent writers.
+    private static string HashWhilePinned(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.Read | FileShare.Delete, 128 * 1024,
+            FileOptions.SequentialScan);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
 
     internal FileIdentity OpeningIdentity { get; }
     internal string OpeningHash => _openingHash;
@@ -164,8 +177,7 @@ internal sealed class SyntheticPinnedNtfsFile : IDisposable
             return CurrentHandleIdentity.SameFile(OpeningIdentity) &&
                 NativeFile.GetIdentity(_originalPath).SameFile(OpeningIdentity) &&
                 Safety.SameSnapshot(_openingSnapshot) &&
-                Safety.ComputeSha256(_originalPath, CancellationToken.None) ==
-                    _openingHash;
+                HashWhilePinned(_originalPath) == _openingHash;
         }
         catch { return false; }
     }
@@ -205,7 +217,7 @@ internal sealed class SyntheticPinnedNtfsFile : IDisposable
         }
         finally { Marshal.FreeHGlobal(native); }
         if (!NativeFile.GetIdentity(target).SameFile(OpeningIdentity) ||
-            Safety.ComputeSha256(target, CancellationToken.None) != OpeningHash)
+            HashWhilePinned(target) != OpeningHash)
             throw new InvalidDataException("Handle rename postcheck failed: retain evidence");
     }
 

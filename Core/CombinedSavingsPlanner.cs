@@ -19,6 +19,44 @@ public static class CombinedSavingsPlanner
         public IReadOnlyList<FormatEstimate> Formats { get; init; } = [];
     }
 
+    /// <summary>
+    /// G1-05: a read-only projection of the already independently verified
+    /// candidate report and overlap-corrected duplicate report. No second
+    /// calculation engine, no I/O and no production authorization.
+    /// An absent scan must never be presented as zero overlapping duplicates.
+    /// </summary>
+    public static string DescribeDashboard(CombinedCapacityReport.Summary preview,
+        Estimate? estimate, ScanResult? scan)
+    {
+        ArgumentNullException.ThrowIfNull(preview);
+        if (preview.ActualFreedBytes != 0 ||
+            (estimate is not null && estimate.ActualFreedBytes != 0))
+            throw new InvalidDataException("読み取り専用診断に実回復量が混入しています");
+        if (estimate is not null && scan is null)
+            throw new InvalidDataException("重複スキャンなしに補正済み集計を表示できません");
+
+        string scanLine = scan is null ?
+            "重複スキャン：未実施（重複との重なりは未評価）" :
+            $"スキャン履歴：対象 {scan.FileCount:N0}件／完全一致 {scan.Groups.Count:N0}組／" +
+            $"除外 {scan.Skipped:N0}件／検査エラー {scan.Errors:N0}件";
+        string previewLine =
+            $"PNG {preview.PngFiles:N0}件・JPG {preview.JpegFiles:N0}件／" +
+            $"採用候補 {preview.CandidateCount:N0}件・要確認 {preview.NeedsReview:N0}件";
+        string totalLine = estimate is null ?
+            $"候補見込 {GroupRow.HumanSize(preview.EstimatedSavingBytes)}。" +
+            " 重複との二重計上は未評価。補正合計は表示しません。" :
+            $"重複単独の見込 {GroupRow.HumanSize(estimate.DedupeOnlyBytes)} ＋ " +
+            $"画像候補の見込 {GroupRow.HumanSize(estimate.PreviewOnlyBytes)} − " +
+            $"二重計上の補正 {GroupRow.HumanSize(estimate.DoubleCountAvoidedBytes)} ＝ " +
+            $"重複補正後の合計見込 {GroupRow.HumanSize(estimate.CombinedHypotheticalBytes)}。" +
+            $" 再照合済み重複 {estimate.VerifiedDuplicateGroups:N0}組／" +
+            $"対象外・変更あり {estimate.SkippedDuplicateGroups:N0}組。";
+        return $"【読み取り専用・直近の照合結果】 {scanLine}\n" +
+            previewLine + "\n" + totalLine + "\n" +
+            "実際の空き容量回復：未実行（0 B、物理空き容量は未計測）。" +
+            " 原本・共有リンクは変更していません。ファイル変更前には再照合が必要です。";
+    }
+
     private static readonly string[] Order = ["MP4", "JPG", "PNG", "混合拡張子", "その他"];
 
     private sealed class Totals

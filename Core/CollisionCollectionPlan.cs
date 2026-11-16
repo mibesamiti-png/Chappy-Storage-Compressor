@@ -249,12 +249,16 @@ public static class CollisionCollectionPlan
             Directory.CreateDirectory(folder);
             if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("展開先がジャンクションへ変化しました");
-            using var read = new FileStream(source, FileMode.Open, FileAccess.Read,
-                FileShare.Read);
-            using var write = new FileStream(output, FileMode.CreateNew,
-                FileAccess.Write, FileShare.None);
-            read.CopyTo(write);
-            write.Flush(flushToDisk: true);
+            using (var read = new FileStream(source, FileMode.Open,
+                FileAccess.Read, FileShare.Read))
+            using (var write = new FileStream(output, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None))
+            {
+                read.CopyTo(write);
+                write.Flush(flushToDisk: true);
+            }
+            // Close the exclusive output writer before independently
+            // re-opening output bytes for the SHA-256 validation.
             if (Safety.ComputeSha256(source, CancellationToken.None) !=
                 Safety.ComputeSha256(output, CancellationToken.None))
                 throw new InvalidDataException("生成データの書き出し内容が不一致");

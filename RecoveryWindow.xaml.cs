@@ -9,6 +9,7 @@ public partial class RecoveryWindow : Window
 {
     private readonly ObservableCollection<RecoveryCase> _cases = new();
     private readonly ObservableCollection<RecoveryEvidenceOverview.Row> _history = new();
+    private readonly ObservableCollection<CollisionEvidenceReview.Row> _collision = new();
     private readonly string? _selectedRoot;
     private bool _busy;
 
@@ -18,6 +19,7 @@ public partial class RecoveryWindow : Window
         InitializeComponent();
         RecoveryGrid.ItemsSource = _cases;
         HistoryGrid.ItemsSource = _history;
+        CollisionGrid.ItemsSource = _collision;
         Loaded += async (_, _) => await RefreshAsync();
         Closing += (_, e) => { if (_busy) e.Cancel = true; };
     }
@@ -28,6 +30,7 @@ public partial class RecoveryWindow : Window
         RefreshButton.IsEnabled = !busy;
         RecoveryGrid.IsEnabled = !busy;
         HistoryGrid.IsEnabled = !busy;
+        CollisionGrid.IsEnabled = !busy;
         ApplyButton.IsEnabled = !busy && RecoveryTabs.SelectedIndex == 0 &&
             RecoveryGrid.SelectedItem is RecoveryCase c && c.CanApply;
     }
@@ -38,32 +41,40 @@ public partial class RecoveryWindow : Window
         Busy(true);
         _cases.Clear();
         _history.Clear();
+        _collision.Clear();
         DetailText.Text = "ファイル内容・実体の確認を実行しています。大量の動画がある場合は読み込みに時間がかかります。";
         SummaryText.Text = "読み取り専用の復旧状態検証中…";
         HistorySummaryText.Text = "統合済み・Undo履歴を読み取り専用で検証中…";
+        CollisionSummaryText.Text = "同名ファイルの保存先と記録を読み取り専用で検証中…";
         try
         {
             // Use background thread: hashing multiple large MP4s must not freeze WPF.
             var result = await Task.Run(() =>
             {
                 var pending = RecoveryService.InspectAll();
+                RecoveryEvidenceOverview.Summary? history = null;
+                CollisionEvidenceReview.Summary? collision = null;
+                string? historyError = null, collisionError = null;
                 if (string.IsNullOrWhiteSpace(_selectedRoot))
-                    return (Pending: pending,
-                        History: (RecoveryEvidenceOverview.Summary?)null,
-                        HistoryError: "対象フォルダが未指定です。統合・Undo履歴は未検証。");
-                try
                 {
-                    var history = RecoveryEvidenceOverview.Inspect(_selectedRoot, pending);
-                    return (Pending: pending,
-                        History: (RecoveryEvidenceOverview.Summary?)history,
-                        HistoryError: (string?)null);
+                    historyError = "対象フォルダが未指定です。統合・Undo履歴は未検証。";
+                    collisionError = "対象フォルダが未指定です。同名ファイル履歴は未検証。";
                 }
-                catch (Exception ex)
+                else
                 {
-                    return (Pending: pending,
-                        History: (RecoveryEvidenceOverview.Summary?)null,
-                        HistoryError: "対象フォルダの履歴検証失敗（未検証）: " + ex.Message);
+                    try { history = RecoveryEvidenceOverview.Inspect(_selectedRoot, pending); }
+                    catch (Exception ex)
+                    {
+                        historyError = "対象フォルダの履歴検証失敗（未検証）: " + ex.Message;
+                    }
+                    try { collision = CollisionEvidenceReview.Inspect(_selectedRoot); }
+                    catch (Exception ex)
+                    {
+                        collisionError = "同名ファイル証拠の検証失敗（未検証）: " + ex.Message;
+                    }
                 }
+                return (Pending: pending, History: history, HistoryError: historyError,
+                    Collision: collision, CollisionError: collisionError);
             });
             var inspected = result.Pending;
             foreach (var item in inspected) _cases.Add(item);
@@ -77,6 +88,14 @@ public partial class RecoveryWindow : Window
             else
                 HistorySummaryText.Text = result.HistoryError ??
                     "統合・Undo履歴の検証に失敗しました。手動確認が必要です。";
+            if (result.Collision is { } collision)
+            {
+                foreach (var item in collision.Rows) _collision.Add(item);
+                CollisionSummaryText.Text = collision.Describe();
+            }
+            else
+                CollisionSummaryText.Text = result.CollisionError ??
+                    "同名ファイル履歴の照合に失敗しました。手動確認が必要です。";
             int safe = inspected.Count(x => x.CanApply);
             int review = inspected.Count - safe;
             SummaryText.Text = inspected.Count == 0
@@ -90,6 +109,7 @@ public partial class RecoveryWindow : Window
         {
             SummaryText.Text = "復旧状態の読み込みに失敗しました。";
             HistorySummaryText.Text = "履歴は未検証です。ファイルは変更していません。";
+            CollisionSummaryText.Text = "同名ファイル履歴も未検証。データは変更していません。";
             DetailText.Text = ex.ToString();
         }
         finally { Busy(false); }
@@ -124,6 +144,17 @@ public partial class RecoveryWindow : Window
             DetailText.Text = $"証拠の種類：{h.Source}\n\n判定：{h.AttentionText} / {h.State}\n\n" +
                 $"対象：{h.Target}\n\n{h.Explanation}\n\n" +
                 "このタブには復元・修復・削除ボタンはありません。実データは一切変更されません。";
+    }
+
+    private void CollisionSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CollisionGrid?.SelectedItem is CollisionEvidenceReview.Row x &&
+            DetailText != null)
+            DetailText.Text = $"【同名ファイルの証拠：読み取り専用】\n\n" +
+                $"種類：{x.Kind}\n判定：{x.AttentionText} / {x.State}\n\n" +
+                $"操作ID：{x.RecordId}\n元の相対パス：{x.OriginalRelativePath}\n" +
+                $"保存先の相対パス：{x.DestinationRelativePath}\n\n" +
+                x.Explanation + "\n\nこの画面では再開・削除・名前変更・自動修復はできません。";
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)

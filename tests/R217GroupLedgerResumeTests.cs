@@ -135,6 +135,14 @@ internal static class R217GroupLedgerResumeTests
                     Hash(s.Path) == groupHash) &&
                 Journal.Pending().Count == 0 &&
                 Journal.UnresolvedRecordFiles().Count == 0;
+            if (!merged)
+                Console.WriteLine("PART27 GENERATED DIAGNOSTIC: entries=" +
+                    string.Join(",", completed.Entries.Select(e =>
+                        e.State + "/" + e.AliasCount + "/" + e.DetachedCount)) +
+                    ", master links=" + NativeFile.GetIdentity(master).LinkCount +
+                    ", journals=" + Journal.Pending().Count +
+                    ", allAliasesShared=" + scan.Groups.Single().Files.All(s =>
+                        NativeFile.SameFile(s.Path, master) && Hash(s.Path) == groupHash));
             check(merged,
                 "R2.17 part27: real Core consolidates four generated files with durable group-wide original metadata");
 

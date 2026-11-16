@@ -233,7 +233,8 @@ public static class CompletedGroupLedger
                         "VerifiedRestored",
                     _ => "ManualReview"
                 };
-                entries.Add(new Entry(id, state, x.Aliases.Count + 1, p.Detached.Count));
+                // AliasCount excludes the representative; original files = aliases + 1.
+                entries.Add(new Entry(id, state, x.Aliases.Count, p.Detached.Count));
             }
             catch (Exception ex)
             {

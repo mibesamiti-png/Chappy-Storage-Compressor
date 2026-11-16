@@ -827,6 +827,13 @@ internal static class UiInteractionSmoke
                         !Directory.Exists(Safety.StorePath(originals)),
                     part30CrossLedgerDashboardProductionMutationDisabled =
                         !RecoveryEvidenceOverview.ProductionMutationEnabled,
+                    part37WpfReadOnlyTriageGuidanceRendered = part37GuidanceShown,
+                    part37WpfApplyNeverEnabledFromCollisionTab =
+                        !recoveryApply.IsEnabled,
+                    part37WpfSourceShaAndNtfsIdentityPreserved =
+                        OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                        NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                        NativeFile.GetIdentity(right).SameFile(beforeRightId),
                     actualNativeDialogAutomationVerified = false,
                     actualPhysicalMouseClickVerified = false,
                     interactiveDesktopDisplayed = false,

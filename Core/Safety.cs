@@ -162,12 +162,13 @@ public static class Safety
     private const int HashProgressStepBytes = 4 * 1024 * 1024;
 
     public static string ComputeSha256(string path, CancellationToken ct,
-        Action<long, long>? onBytesRead = null)
+        Action<long, long>? onBytesRead = null, bool allowDeleteSharing = false)
     {
         ct.ThrowIfCancellationRequested();
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read,
-            FileShare.Read, 1, FileOptions.SequentialScan);
+            allowDeleteSharing ? FileShare.Read | FileShare.Delete : FileShare.Read,
+            1, FileOptions.SequentialScan);
         long totalBytes = file.Length;
         byte[] buffer = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
         long bytesRead = 0, lastReportedBytes = 0;
@@ -199,13 +200,15 @@ public static class Safety
         finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
     }
 
-    public static bool ByteEqual(string a, string b, CancellationToken ct)
+    public static bool ByteEqual(string a, string b, CancellationToken ct,
+        bool allowDeleteSharing = false)
     {
         ct.ThrowIfCancellationRequested();
+        var share = allowDeleteSharing ? FileShare.Read | FileShare.Delete : FileShare.Read;
         using var one = new FileStream(a, FileMode.Open, FileAccess.Read,
-            FileShare.Read, 1, FileOptions.SequentialScan);
+            share, 1, FileOptions.SequentialScan);
         using var two = new FileStream(b, FileMode.Open, FileAccess.Read,
-            FileShare.Read, 1, FileOptions.SequentialScan);
+            share, 1, FileOptions.SequentialScan);
         if (one.Length != two.Length) return false;
         byte[] left = ArrayPool<byte>.Shared.Rent(CompareBufferBytes);
         byte[]? right = null;

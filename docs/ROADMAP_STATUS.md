@@ -364,6 +364,14 @@ Eight generated-only NTFS tests and a routed real-WPF smoke test verify the dedi
 
 This feature adds **read-only UI only**. Part35 collision copy/restore test mutations are still `CHAPPY_TESTING` only; production archive extraction, original JPG/PNG replacement, hardlink consolidation and independent Undo remain disabled. Power-cut durability, malicious administrator proof, reparse race-free commits, source authorization and true recovery remain unproven. Actual end-user capacity recovered: **0 B**.
 
+## R2.17 Part 37 — fail whole-run green on any foreign evidence, show safe collision review guidance
+
+The read-only **同名ファイル調査** tab introduced in Part36 is now hardened against two false-positive display conditions: (1) when a verified intent/receipts coexist with unknown `.tmp` or other foreign evidence inside the same journal directory, the **parent operation** becomes ManualReview even if individual output files still have matching NTFS ID and SHA; (2) a modified `同名ファイル一覧.txt` plus a self-consistently updated report receipt SHA is still rejected, since Part37 reconstructs the exact canonical UTF-8 BOM report bytes from the original Part35 intent. Persisted collection names must follow the user's exact `同名ファイル/同名ファイル/...` nesting rule and the report/Collected/relative destination mapping must be consistent.
+
+The WPF detail pane now explains safe next actions per issue: preserve unknown `.tmp`, keep unreceipted outputs and originals intact, do not overwrite or automatically adopt an uncertain file. These are **recommendations only**; the third tab has no Apply or mutation controls. Seven generated-only NTFS scenarios cover canonical report, unknown evidence, self-consistently edited memo/receipt, invalid nested collection, contradictory `Collected` flag, orphan completion marker and unreceipted output. An actual routed WPF row selection test checks the displayed guidance and disabled Apply, while source SHA-256 and file identities remain unchanged. [Full Part37 evidence and limits](R217_PART37_COLLISION_EVIDENCE_TRIAGE.md).
+
+**Production extraction/Undo and hardlink merge remain disabled**, Part35 mutation methods still compile only under `CHAPPY_TESTING`. Actual end-user recovered capacity remains **0 B**. Multi-file atomic power-cut recovery, race-free directory rebinding and hostile administrator tampering are not proven. PR-head and postmerge main Windows CI must both be green.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

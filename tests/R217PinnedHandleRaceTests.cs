@@ -270,6 +270,26 @@ internal static class R217PinnedHandleRaceTests
                 foreignDataPreserved = true });
         }
 
+        // B2: same primitive as Core rollback removes ONLY one owned hardlink
+        // name. The original data-bearing master must remain untouched.
+        {
+            var f = Fixture(parent, "shared-alias-pinned-removal");
+            string extra = Path.Combine(f.Root, ExtraName);
+            NativeFile.NewHardLink(extra, f.Source);
+            using (var pinned = NativeFile.PinnedFile.Open(extra, f.Identity, f.Hash,
+                requireIndependent: false))
+                pinned.DeleteCurrent(requireIndependent: false);
+            bool valid = File.Exists(f.Source) && !File.Exists(extra) &&
+                NativeFile.GetIdentity(f.Source).SameFile(f.Identity) &&
+                NativeFile.GetIdentity(f.Source).LinkCount == 1 &&
+                Hash(f.Source) == f.Hash;
+            check(valid,
+                "B2: pinned Core rollback unlinks ONLY generated alias and retains the untouched master bytes and NTFS ID");
+            cases.Add(new { name = "shared-alias-pinned-removal", safe = valid,
+                separateProcess = false, originalDataPreserved = valid,
+                foreignDataPreserved = true });
+        }
+
         // Scenario 8: source/destination confinement rules enforce same
         // generated direct-child root, not user media or other NTFS volume.
         {
@@ -294,7 +314,9 @@ internal static class R217PinnedHandleRaceTests
                 schema = "chappy-r217-part33-pinned-handle-v1",
                 verdict = "PASS",
                 generatedOnly = true,
-                sourceCodeCompiledOutOfRelease = true,
+                generatedTestGuardCompiledOutOfRelease = true,
+                nativeKernelPrimitiveSharedWithCore = true,
+                shippedDedupeEntryStillLocked = true,
                 exactNativeApi = "SetFileInformationByHandle",
                 nativeRenameInformationClass = 3,
                 nativeDeleteInformationClass = 4,
@@ -302,7 +324,7 @@ internal static class R217PinnedHandleRaceTests
                 actualExternalChildProcesses = 4,
                 scenarioCount = cases.Count,
                 scenarios = cases,
-                noProductionCoreMergeChange = true,
+                corePinnedCutoverNowUsesSamePrimitive = true,
                 allCurrentUserMediaUnchanged = true,
                 realUserRecoveredBytes = 0,
                 physicalPowerCutProven = false,

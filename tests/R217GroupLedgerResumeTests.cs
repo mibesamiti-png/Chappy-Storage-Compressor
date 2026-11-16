@@ -177,6 +177,9 @@ internal static class R217GroupLedgerResumeTests
                 "B2: explicit restart-time promotion requires ALL alias IDs, metadata and bytes, with no pending journal");
             expectThrows(() => CompletedGroupLedger.ConfirmPreparedSynthetic(root, id),
                 "B2: committed group cannot be promoted twice");
+            expectThrows(() => DedupeEngine.RunPreparedGroup(root, group,
+                id, null, CancellationToken.None),
+                "B2: normal-compiled authorized Core cannot reuse a committed durable manifest");
 
             string evidence = Path.Combine(root, "part27-group-evidence");
             Directory.CreateDirectory(evidence);

@@ -110,8 +110,17 @@ internal static class R217PinnedHandleRaceTests
             NativeFile.GetIdentity(source));
     }
 
-    private static string Hash(string file) =>
-        Safety.ComputeSha256(file, CancellationToken.None);
+    private static string Hash(string file)
+    {
+        // Part33 probe holds a DELETE-access NTFS handle intentionally.
+        // Safety's normal read-only hash does not share DELETE and would
+        // fail before bytes could be inspected. The probe read also shares
+        // delete while denying concurrent WRITE access.
+        using var stream = new FileStream(file, FileMode.Open, FileAccess.Read,
+            FileShare.Read | FileShare.Delete, 128 * 1024,
+            FileOptions.SequentialScan);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
 
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)

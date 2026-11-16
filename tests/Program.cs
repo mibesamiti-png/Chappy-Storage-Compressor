@@ -1601,6 +1601,7 @@ static class Program
             R217CollisionCrashLedgerTests.Run(root, Check, ExpectThrows);
             R217CollisionEvidenceReviewTests.Run(root, Check, ExpectThrows);
             R217CollisionTriageIntegrityTests.Run(root, Check);
+            R217CollisionRecoveryChecklistTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

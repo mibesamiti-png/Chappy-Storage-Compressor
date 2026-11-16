@@ -372,6 +372,14 @@ The WPF detail pane now explains safe next actions per issue: preserve unknown `
 
 **Production extraction/Undo and hardlink merge remain disabled**, Part35 mutation methods still compile only under `CHAPPY_TESTING`. Actual end-user recovered capacity remains **0 B**. Multi-file atomic power-cut recovery, race-free directory rebinding and hostile administrator tampering are not proven. PR-head and postmerge main Windows CI must both be green.
 
+## R2.17 Part 38 — incident-level source-vs-output evidence and fail-closed restoration checklist
+
+The existing **同名ファイル調査（読み取り専用）** tab now displays a dedicated eight-point `CollisionRecoveryChecklist` in its root summary and selected-item detail panel. It separates output receipt/local ID+SHA+owner/DACL matches from **unverified current source identity, ACL, original path and physical power-cut behavior**. Decisions are `要確認（証拠に不整合）`, `未完了（自動再開不可）`, `保存先証拠のみ一致（本番復元不可）`, or `証拠なし/検査不能`. Even a fully valid output and root memo never grant production Undo/recovery. A foreign .tmp in the selected journal blocks all operation/individual selected-row evaluations; a stale selected diagnostic row fails closed. All `CanAutomaticallyResume`, `CanDeleteOrOverwrite` and `AuthorizesOriginalRestore` are always false.
+
+Nine synthetic NTFS tests exercise empty and failed inspection, intent-only, verified destination, foreign .tmp, orphaned flushed output, changed root report, changed original source, and stale displayed UI row. Real routed WPF smoke validates the actual selected-item checklist display and disabled Apply button. Strict CI requires the Part38 JSON report as well as all Part1–37 and win-x64 publish gates. [Detailed check list, decisions and boundaries](R217_PART38_COLLISION_CHECKLIST.md).
+
+No production archive extraction/Undo or hardlink consolidation is enabled. Part35 collision mutation still compiles only for `CHAPPY_TESTING`. Real user data changed **none**, real user recovered disk bytes **0 B**; crash-atomicity and physical power-cut durability unproven. Historical source implementation estimate 69.4% is not production readiness. Full PR and independent main CI are required before declaring complete.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

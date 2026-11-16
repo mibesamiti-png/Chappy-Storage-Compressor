@@ -1441,6 +1441,51 @@ jobs:
           "R2.17 Part37 canonical report, unknown-journal whole-record refusal and guided manual review PASS"
           Get-Content $path
 
+      - name: Verify Part38 collision recovery evidence checklist and no-authority decision gates
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part38-collision-checklist.json"
+          if (-not (Test-Path $path)) { throw "Part38 collision checklist report missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part38-checklist-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.scenarioCount -ne 9 -or
+              $r.syntheticNTFSOnly -ne $true -or
+              $r.noEmptyRootAllClear -ne $true -or
+              $r.noSourceValidationFromDestinationReceipt -ne $true -or
+              $r.noOutputFileAdoptionWithoutReceipt -ne $true -or
+              $r.unknownEvidenceBlocksSelectedVerifiedFile -ne $true -or
+              $r.eightReadOnlySafetyChecks -ne $true -or
+              $r.noUndoAuthorizationForOutputOnlyEvidence -ne $true -or
+              $r.staleSelectedRowFailsClosed -ne $true -or
+              $r.pendingVsCorruptVsDestinationMatchDistinct -ne $true -or
+              $r.noReleaseExtractResumeDelete -ne $true -or
+              $r.originalFilesAndNtfsIdsPreserved -ne $true -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserRecoveredBytes -ne 0 -or
+              $r.realPowerCutOrAtomicityProven -ne $false) {
+            throw "Part38 evidence checklist boundary contract failed"
+          }
+          $cases = @(
+            "no-evidence-does-not-authorize-recovery",
+            "unreadable-summary-fails-closed",
+            "intent-only-distinguished-from-manual-review",
+            "completed-destination-only-proof-is-not-undo-permission",
+            "unknown-evidence-blocks-selected-verified-file",
+            "unreceipted-orphan-never-auto-repaired",
+            "changed-root-memo-listed-as-blocker",
+            "changed-source-not-silently-approved",
+            "stale-displayed-row-requires-reinspection"
+          )
+          foreach ($case in $cases) {
+            if (@($r.scenarios | Where-Object { $_.name -eq $case -and $_.pass -eq $true }).Count -ne 1) {
+              throw "Part38 required checklist case is missing or failed: $case"
+            }
+          }
+          "R2.17 Part38 read-only, nine NTFS checklist decisions, no automatic resumption or file changes PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh
@@ -1540,6 +1585,9 @@ jobs:
               $r.part37WpfReadOnlyTriageGuidanceRendered -ne $true -or
               $r.part37WpfApplyNeverEnabledFromCollisionTab -ne $true -or
               $r.part37WpfSourceShaAndNtfsIdentityPreserved -ne $true -or
+              $r.part38WpfReadOnlyChecklistVisible -ne $true -or
+              $r.part38WpfNoRecoveryButtonFromEvidence -ne $true -or
+              $r.part38WpfOriginalShaAndFileIdPreserved -ne $true -or
               $r.actualNativeDialogAutomationVerified -ne $false -or
               $r.actualPhysicalMouseClickVerified -ne $false -or
               $r.interactiveDesktopDisplayed -ne $false -or

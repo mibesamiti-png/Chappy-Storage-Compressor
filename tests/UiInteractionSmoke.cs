@@ -284,6 +284,24 @@ internal static class UiInteractionSmoke
                 NativeFile.GetIdentity(right).SameFile(beforeRightId);
             Require(part37GuidanceShown,
                 "R2.17 part37: actual WPF collision selection shows safe per-record guidance and cannot enable Apply");
+            bool part38ChecklistShown =
+                detail.Text.Contains("【復旧可否の確認項目：読み取り専用】",
+                    StringComparison.Ordinal) &&
+                detail.Text.Contains("表示行が最新証拠と不一致",
+                    StringComparison.Ordinal) &&
+                detail.Text.Contains("本番ファイルへの変更：禁止",
+                    StringComparison.Ordinal) &&
+                detail.Text.Contains("自動修復・再開・復元許可は発行しません",
+                    StringComparison.Ordinal) &&
+                collisionStatus.Text.Contains("本番の再開・上書き・削除は禁止",
+                    StringComparison.Ordinal) &&
+                !recoveryApply.IsEnabled && collisionGrid.IsReadOnly &&
+                !Directory.Exists(Path.Combine(originals, ".chappy-collision-journal")) &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId);
+            Require(part38ChecklistShown,
+                "R2.17 part38: real WPF selected evidence displays checklist and never authorizes recovery, deletion or Apply");
             recoveryView.Close();
 
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with
@@ -831,6 +849,13 @@ internal static class UiInteractionSmoke
                     part37WpfApplyNeverEnabledFromCollisionTab =
                         !recoveryApply.IsEnabled,
                     part37WpfSourceShaAndNtfsIdentityPreserved =
+                        OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                        NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                        NativeFile.GetIdentity(right).SameFile(beforeRightId),
+                    part38WpfReadOnlyChecklistVisible = part38ChecklistShown,
+                    part38WpfNoRecoveryButtonFromEvidence =
+                        !recoveryApply.IsEnabled && collisionGrid.IsReadOnly,
+                    part38WpfOriginalShaAndFileIdPreserved =
                         OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
                         NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
                         NativeFile.GetIdentity(right).SameFile(beforeRightId),

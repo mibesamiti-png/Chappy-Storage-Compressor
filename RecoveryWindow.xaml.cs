@@ -11,6 +11,7 @@ public partial class RecoveryWindow : Window
     private readonly ObservableCollection<RecoveryEvidenceOverview.Row> _history = new();
     private readonly ObservableCollection<CollisionEvidenceReview.Row> _collision = new();
     private readonly string? _selectedRoot;
+    private CollisionEvidenceReview.Summary? _lastCollisionEvidence;
     private bool _busy;
 
     public RecoveryWindow(string? selectedRoot = null)
@@ -42,6 +43,7 @@ public partial class RecoveryWindow : Window
         _cases.Clear();
         _history.Clear();
         _collision.Clear();
+        _lastCollisionEvidence = null;
         DetailText.Text = "ファイル内容・実体の確認を実行しています。大量の動画がある場合は読み込みに時間がかかります。";
         SummaryText.Text = "読み取り専用の復旧状態検証中…";
         HistorySummaryText.Text = "統合済み・Undo履歴を読み取り専用で検証中…";
@@ -90,12 +92,18 @@ public partial class RecoveryWindow : Window
                     "統合・Undo履歴の検証に失敗しました。手動確認が必要です。";
             if (result.Collision is { } collision)
             {
+                _lastCollisionEvidence = collision;
                 foreach (var item in collision.Rows) _collision.Add(item);
-                CollisionSummaryText.Text = collision.Describe();
+                CollisionSummaryText.Text = collision.Describe() + "\n" +
+                    CollisionRecoveryChecklist.Analyze(collision).Describe();
             }
             else
+            {
                 CollisionSummaryText.Text = result.CollisionError ??
                     "同名ファイル履歴の照合に失敗しました。手動確認が必要です。";
+                CollisionSummaryText.Text += "\n" +
+                    CollisionRecoveryChecklist.Analyze(null).Describe();
+            }
             int safe = inspected.Count(x => x.CanApply);
             int review = inspected.Count - safe;
             SummaryText.Text = inspected.Count == 0
@@ -156,6 +164,9 @@ public partial class RecoveryWindow : Window
                 $"保存先の相対パス：{x.DestinationRelativePath}\n\n" +
                 x.Explanation + "\n\n【確認するときの注意】\n" +
                 x.ReviewGuidance +
+                "\n\n" +
+                CollisionRecoveryChecklist.Analyze(_lastCollisionEvidence, x)
+                    .DetailText() +
                 "\n\nこの画面では再開・削除・名前変更・自動修復はできません。";
     }
 

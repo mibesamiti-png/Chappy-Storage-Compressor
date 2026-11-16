@@ -65,8 +65,7 @@ public static class DedupeFirstWorkflowPlan
                 {
                     ct.ThrowIfCancellationRequested();
                     string full = Path.GetFullPath(item.Path);
-                    if (!full.StartsWith(root + Path.DirectorySeparatorChar,
-                            StringComparison.OrdinalIgnoreCase) ||
+                    if (!Safety.ContainedRegularSource(root, full) ||
                         !known.Add(full) ||
                         !Safety.SameSnapshot(item) ||
                         !string.Equals(Safety.ComputeSha256(full, ct), group.Hash,

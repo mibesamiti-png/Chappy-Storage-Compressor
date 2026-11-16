@@ -62,7 +62,8 @@ public static class RecoveryService
         return results.OrderBy(r => r.CanApply ? 1 : 0).ThenBy(r => r.OriginalPath).ToList();
     }
 
-    public static RecoveryCase Inspect(PendingOperation p, CancellationToken ct = default)
+    public static RecoveryCase Inspect(PendingOperation p, CancellationToken ct = default,
+        bool allowDeleteSharing = false)
     {
         RecoveryCase Make(RecoveryAction action, string explanation) => new()
         {
@@ -82,7 +83,7 @@ public static class RecoveryService
 
             if (!originalExists && backupExists)
             {
-                if (IndependentBackupMatches(p, ct))
+                if (IndependentBackupMatches(p, ct, allowDeleteSharing))
                     return Make(RecoveryAction.RestoreIndependentBackup,
                         "独立した退避ファイルのSHA-256が記録と一致しました。元パスが空なので退避名から復元できます。");
                 return Make(RecoveryAction.ManualReview,
@@ -93,9 +94,9 @@ public static class RecoveryService
             {
                 // This is either before the first rename, or after the backup has
                 // already been removed. Never delete any content in this case.
-                if (NormalFileMatches(p.OriginalPath, p.Sha256, ct))
+                if (ProvenOriginalForJournalClear(p, ct, allowDeleteSharing))
                     return Make(RecoveryAction.ClearVerifiedJournal,
-                        "元パスが存在し内容のSHA-256が一致します。ファイルには触れず、記録のみ完了扱いにできます。");
+                        "元パスの内容だけでなく、記録済みのNTFS IDとリンク状態も一致します。ファイルには触れず記録のみ整理できます。");
                 return Make(RecoveryAction.ManualReview,
                     "元パスは存在しますが記録された内容と一致しません。変更しません。");
             }
@@ -103,13 +104,16 @@ public static class RecoveryService
             // BOTH paths present after a crash: do not automatically delete the
             // independently preserved backup. A user may explicitly choose to
             // undo the *newly created link* once its identity is proven.
-            if (IndependentBackupMatches(p, ct) && File.Exists(p.MasterPath) &&
-                (p.MasterIdentity is null || NativeFile.GetIdentity(p.MasterPath).SameFile(p.MasterIdentity)) &&
-                NormalFileMatches(p.MasterPath, p.Sha256, ct) &&
-                NormalFileMatches(p.OriginalPath, p.Sha256, ct) &&
+            if (IndependentBackupMatches(p, ct, allowDeleteSharing) && File.Exists(p.MasterPath) &&
+                p.MasterIdentity is not null &&
+                NativeFile.GetIdentity(p.MasterPath).SameFile(p.MasterIdentity) &&
+                NativeFile.GetIdentity(p.MasterPath).LinkCount ==
+                    checked(p.MasterIdentity.LinkCount + 1) &&
+                NormalFileMatches(p.MasterPath, p.Sha256, ct, allowDeleteSharing) &&
+                NormalFileMatches(p.OriginalPath, p.Sha256, ct, allowDeleteSharing) &&
                 NativeFile.SameFile(p.OriginalPath, p.MasterPath) &&
                 !NativeFile.SameFile(p.BackupPath, p.MasterPath) &&
-                Safety.ByteEqual(p.BackupPath, p.MasterPath, ct))
+                Safety.ByteEqual(p.BackupPath, p.MasterPath, ct, allowDeleteSharing))
             {
                 return Make(RecoveryAction.UndoNewHardLink,
                     "元パスは統合先と同じ実体、退避ファイルは独立した完全一致データです。" +
@@ -157,27 +161,38 @@ public static class RecoveryService
             // writers for the duration of the path-replacement operation.
             if (expected == RecoveryAction.RestoreIndependentBackup)
             {
-                using var guard = File.Open(p.BackupPath, FileMode.Open,
-                    FileAccess.Read, FileShare.Read | FileShare.Delete);
-                RequireFresh(p, expected);
-                File.Move(p.BackupPath, p.OriginalPath); // Never overwrite an existing path.
+                if (p.IndependentIdentity is null)
+                    throw new InvalidDataException("元の独立NTFS IDのない旧記録は手動確認");
+                using var originalBackup = NativeFile.PinnedFile.Open(
+                    p.BackupPath, p.IndependentIdentity, p.Sha256);
+                RequireFresh(p, expected, allowDeleteSharing: true);
+                // The already-open independent NTFS ID is renamed, not
+                // whatever may currently occupy the pathname. No overwrite.
+                originalBackup.RenameNoReplace(p.OriginalPath);
                 Journal.Completed(p.OperationId);
                 return "退避ファイルを元パスへ復元しました。";
             }
 
             if (expected == RecoveryAction.UndoNewHardLink)
             {
-                using var backupGuard = File.Open(p.BackupPath, FileMode.Open,
-                    FileAccess.Read, FileShare.Read | FileShare.Delete);
+                if (p.IndependentIdentity is null || p.MasterIdentity is null)
+                    throw new InvalidDataException("元と統合先のNTFS IDのない旧記録は手動確認");
+                using var backupPin = NativeFile.PinnedFile.Open(
+                    p.BackupPath, p.IndependentIdentity, p.Sha256);
                 using var masterGuard = File.Open(p.MasterPath, FileMode.Open,
                     FileAccess.Read, FileShare.Read | FileShare.Delete);
-                RequireFresh(p, expected);
-                // Only the path known to be a link to master is removed.
-                // Failure between these two calls leaves the verified independent
-                // backup intact and the journal pending for a later restore.
-                File.Delete(p.OriginalPath);
+                if (!NativeFile.IdentityFromHandle(masterGuard.SafeFileHandle)
+                        .SameFile(p.MasterIdentity))
+                    throw new InvalidDataException("復旧先masterのNTFS IDが記録から変化");
+                using var aliasPin = NativeFile.PinnedFile.Open(
+                    p.OriginalPath, p.MasterIdentity, p.Sha256,
+                    requireIndependent: false);
+                RequireFresh(p, expected, allowDeleteSharing: true);
+                // Only the verified shared alias link is unlinked. This
+                // cannot delete a foreign path substituted after inspection.
+                aliasPin.DeleteCurrent(requireIndependent: false);
                 FaultInjection.Hit("recovery-link-removed"); // test-only simulated power loss
-                File.Move(p.BackupPath, p.OriginalPath);
+                backupPin.RenameNoReplace(p.OriginalPath);
                 Journal.Completed(p.OperationId);
                 return "共有リンクを解除し、独立した退避ファイルを元のパスに戻しました。";
             }
@@ -188,27 +203,62 @@ public static class RecoveryService
         }
     }
 
-    private static void RequireFresh(PendingOperation p, RecoveryAction wanted)
+    private static void RequireFresh(PendingOperation p, RecoveryAction wanted,
+        bool allowDeleteSharing = false)
     {
-        var inspected = Inspect(p, CancellationToken.None);
+        var inspected = Inspect(p, CancellationToken.None, allowDeleteSharing);
         if (inspected.Action != wanted)
             throw new InvalidOperationException("ファイルの状態が画面確認時から変化しました。" +
                 "操作は中止しました。状態を再取得してください。現在: " + inspected.ActionText);
     }
 
-    private static bool IndependentBackupMatches(PendingOperation p, CancellationToken ct)
+    private static bool IndependentBackupMatches(PendingOperation p, CancellationToken ct,
+        bool allowDeleteSharing)
     {
+        // A legacy/hash-only record is readable but cannot authorize a
+        // destructive action or automatic recovery of an unknown NTFS ID.
+        if (p.IndependentIdentity is null ||
+            p.IndependentIdentity.LinkCount != 1) return false;
         var file = Safety.Capture(p.BackupPath);
         return file.Identity.LinkCount == 1 &&
-            (p.IndependentIdentity is null || file.Identity.SameFile(p.IndependentIdentity)) &&
-            string.Equals(Safety.ComputeSha256(p.BackupPath, ct), p.Sha256, StringComparison.OrdinalIgnoreCase) &&
+            file.Identity.SameFile(p.IndependentIdentity) &&
+            string.Equals(Safety.ComputeSha256(p.BackupPath, ct,
+                allowDeleteSharing: allowDeleteSharing), p.Sha256, StringComparison.OrdinalIgnoreCase) &&
             Safety.SameSnapshot(file);
     }
 
-    private static bool NormalFileMatches(string path, string hash, CancellationToken ct)
+    private static bool ProvenOriginalForJournalClear(PendingOperation p,
+        CancellationToken ct, bool allowDeleteSharing)
+    {
+        if (!NormalFileMatches(p.OriginalPath, p.Sha256, ct,
+                allowDeleteSharing))
+            return false;
+        var actual = NativeFile.GetIdentity(p.OriginalPath);
+        // Crash before the first backup rename: the original is still the
+        // single-link independent file scanned for this operation.
+        if (p.IndependentIdentity is { } independent &&
+            independent.LinkCount == 1 &&
+            actual.SameFile(independent) && actual.LinkCount == 1)
+            return true;
+        // Crash after deleting the backup: the newly created alias is
+        // already a hardlink to the recorded master, with one extra link.
+        if (p.MasterIdentity is { } master &&
+            master.VolumeSerial != 0 && master.FileIndex != 0 &&
+            File.Exists(p.MasterPath) &&
+            NativeFile.GetIdentity(p.MasterPath).SameFile(master) &&
+            NativeFile.SameFile(p.OriginalPath, p.MasterPath) &&
+            actual.SameFile(master) &&
+            actual.LinkCount == checked(master.LinkCount + 1))
+            return true;
+        return false;
+    }
+
+    private static bool NormalFileMatches(string path, string hash, CancellationToken ct,
+        bool allowDeleteSharing)
     {
         var file = Safety.Capture(path);
-        return string.Equals(Safety.ComputeSha256(path, ct), hash, StringComparison.OrdinalIgnoreCase) &&
+        return string.Equals(Safety.ComputeSha256(path, ct,
+            allowDeleteSharing: allowDeleteSharing), hash, StringComparison.OrdinalIgnoreCase) &&
             Safety.SameSnapshot(file);
     }
 

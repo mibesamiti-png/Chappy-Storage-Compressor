@@ -102,9 +102,14 @@ public static class Journal
         return result;
     }
 
+    /// <summary>
+    /// Legacy scripted recovery now uses the same identity-checked
+    /// RecoveryService as WPF. No SHA-only moves, no pathname-based deletes.
+    /// A legacy journal with missing NTFS IDs is preserved for manual review.
+    /// Explicit UndoNewHardLink always remains a user-authorized UI action.
+    /// </summary>
     public static List<string> RecoverSafely()
     {
-        using var mutationLease = MutationLease.Acquire();
         var log = new List<string>();
         foreach (var file in UnresolvedRecordFiles())
             log.Add("要手動確認（不完全な操作記録。削除しないでください）: " + file);
@@ -112,47 +117,28 @@ public static class Journal
         {
             try
             {
-                // Only restore a verified backup. Never overwrite an existing path.
-                if (File.Exists(p.BackupPath) && !File.Exists(p.OriginalPath))
+                var plan = RecoveryService.Inspect(p);
+                if (plan.Action is RecoveryAction.RestoreIndependentBackup or
+                    RecoveryAction.ClearVerifiedJournal)
                 {
-                    if (!string.Equals(Safety.ComputeSha256(p.BackupPath, CancellationToken.None),
-                        p.Sha256, StringComparison.Ordinal))
-                    {
-                        log.Add("復旧保留（退避内容が記録と不一致）: " + p.BackupPath);
-                        continue;
-                    }
-                    File.Move(p.BackupPath, p.OriginalPath);
-                    Completed(p.OperationId);
-                    log.Add("退避ファイルを元の場所へ復元: " + p.OriginalPath);
-                }
-                else if (File.Exists(p.BackupPath) && File.Exists(p.OriginalPath))
-                {
-                    log.Add("要手動確認（元パスと退避パスが両方存在。どちらも削除しない）: " +
-                        p.OriginalPath + " / " + p.BackupPath);
-                }
-                else if (!File.Exists(p.BackupPath) && File.Exists(p.OriginalPath))
-                {
-                    // Two possible crash points: before the rename, or after successful
-                    // deletion. In either case, only clear a record when original bytes
-                    // match the recorded value. No irreversible changes are made here.
-                    if (string.Equals(Safety.ComputeSha256(p.OriginalPath, CancellationToken.None),
-                        p.Sha256, StringComparison.Ordinal))
-                    {
-                        Completed(p.OperationId);
-                        log.Add("元パスの内容一致を確認。復旧記録を完了扱い: " + p.OriginalPath);
-                    }
-                    else
-                        log.Add("要手動確認（元パスの内容が記録と不一致）: " + p.OriginalPath);
+                    log.Add(RecoveryService.Apply(p.OperationId, plan.Action,
+                        p.OriginalPath, p.MasterPath) + " : " + p.OriginalPath);
                 }
                 else
                 {
-                    log.Add("要手動確認（元パス・退避ファイルが両方見つからない）: " +
-                        p.OriginalPath + " / " + p.BackupPath);
+                    log.Add("要手動確認（ID・内容不一致、未知の共有リンク、または明示Undoが必要。"
+                        + "元/退避ファイルと記録を保持）: " + p.OriginalPath +
+                        " / " + plan.Explanation);
                 }
             }
-            catch (Exception e) { log.Add("復旧保留: " + p.OriginalPath + " — " + e.Message); }
+            catch (Exception ex)
+            {
+                log.Add("復旧保留（記録とNTFS IDの再確認が必要）: " +
+                    p.OriginalPath + " — " + ex.Message);
+            }
         }
         if (log.Count == 0) log.Add("復旧が必要な記録はありません。");
         return log;
     }
+
 }

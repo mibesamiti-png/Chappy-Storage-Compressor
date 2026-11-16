@@ -221,7 +221,12 @@ internal static class UiInteractionSmoke
                 throw new InvalidOperationException("Part30 WPF ApplyButton missing");
             var historyStatus = recoveryView.FindName("HistorySummaryText") as TextBlock ??
                 throw new InvalidOperationException("Part30 WPF history summary missing");
-            Require(historyTabs.Items.Count == 2 && historyGrid.IsReadOnly &&
+            var collisionGrid = recoveryView.FindName("CollisionGrid") as DataGrid ??
+                throw new InvalidOperationException("Part36 WPF read-only collision grid missing");
+            var collisionStatus = recoveryView.FindName("CollisionSummaryText") as TextBlock ??
+                throw new InvalidOperationException("Part36 WPF collision status missing");
+            Require(historyTabs.Items.Count == 3 && historyGrid.IsReadOnly &&
+                    collisionGrid.IsReadOnly &&
                     !recoveryApply.IsEnabled && !mergeButton.IsEnabled,
                 "R2.17 part30: real recovery XAML separates journal actions from immutable evidence history");
             recoveryView.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
@@ -240,6 +245,20 @@ internal static class UiInteractionSmoke
                 NativeFile.GetIdentity(right).SameFile(beforeRightId);
             Require(part30WpfHistoryReadOnly,
                 "R2.17 part30: recovery history tab routed Loaded refresh never enables Apply or mutates originals/store");
+            PumpUntil(() => collisionStatus.Text.Contains("同名ファイル調査",
+                StringComparison.Ordinal), TimeSpan.FromSeconds(25));
+            historyTabs.SelectedIndex = 2;
+            bool part36WpfReadOnly = collisionGrid.IsReadOnly &&
+                collisionGrid.Items.Count == 0 &&
+                collisionStatus.Text.Contains("別フォルダの記録は未検査",
+                    StringComparison.Ordinal) &&
+                !recoveryApply.IsEnabled && !mergeButton.IsEnabled &&
+                !Directory.Exists(Path.Combine(originals, ".chappy-collision-journal")) &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId);
+            Require(part36WpfReadOnly,
+                "R2.17 part36: real WPF read-only collision evidence tab has no apply, creates no journal and preserves existing file IDs");
             recoveryView.Close();
 
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with

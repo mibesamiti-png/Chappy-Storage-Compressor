@@ -1357,6 +1357,48 @@ jobs:
           "R2.17 Part35 durable per-file NTFS receipts, 3 killed processes, manual-review crash windows PASS"
           Get-Content $path
 
+      - name: Verify Part36 read-only collision review UI and adversarial NTFS evidence classification
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part36-collision-manual-review.json"
+          if (-not (Test-Path $path)) { throw "Part36 read-only collision review evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part36-collision-manual-review-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.scenarioCount -ne 8 -or
+              $r.includedInReleaseAsReadOnlyView -ne $true -or
+              $r.generatedOnlySourceMutations -ne $true -or
+              $r.noReleaseApplyResumeOrDelete -ne $true -or
+              $r.dedicatedWpfReadOnlyTab -ne $true -or
+              $r.sourcePathValuesNeverDereferencedByReviewer -ne $true -or
+              $r.destinationNtfsIdentityShaAclMetadataVerified -ne $true -or
+              $r.corruptJournalAndUnknownTempAreVisible -ne $true -or
+              $r.sameHashWrongNtfsIdentityRefused -ne $true -or
+              $r.pendingAndOrphanFilesNeverAutoAdopted -ne $true -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserCapacityRecoveredBytes -ne 0 -or
+              $r.physicalPowerCutProven -ne $false -or
+              $r.productionCollisionWritesEnabled -ne $false) {
+            throw "Part36 read-only collision UI contract failed"
+          }
+          $expected = @(
+            'empty-root-no-write',
+            'intent-only-pending-report',
+            'local-receipt-match-not-production-authorization',
+            'unreceipted-orphan-manual-review',
+            'corrupted-receipt-explained',
+            'same-sha-wrong-file-id-refused',
+            'unknown-temp-evidence-visible',
+            'malicious-journal-traversal-not-followed'
+          )
+          foreach ($name in $expected) {
+            $hits = @($r.scenarios | Where-Object { $_.name -eq $name -and $_.pass -eq $true })
+            if ($hits.Count -ne 1) { throw "Part36 missing exact NTFS evidence case: $name" }
+          }
+          "R2.17 Part36 WPF read-only collision evidence, 8 adversarial classification cases PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

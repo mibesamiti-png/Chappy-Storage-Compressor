@@ -356,6 +356,14 @@ The Windows suite kills **three actual child processes** after a durable first r
 
 **This is not yet production archive extraction or independent Undo.** Multi-file atomic power-loss behavior, hostile journal edits, arbitrary ACL/ADS/EFS, path race defense, signed off user consent and fully safe restoration remain release blockers. All Part35 write methods are compiled out of shipped builds; hardlink merge, original image replacement and Undo remain locked. **0 B real-user storage recovered**; historical 69.4% source estimate is not readiness.
 
+## R2.17 Part 36 — actionable *explanations*, not automatic recovery, for same-name crash evidence
+
+A third tab in the real `RecoveryWindow`, **「同名ファイル調査（読み取り専用）」**, displays precise per-file collision crash evidence (record ID, original relative path, intended destination, status and explanation) instead of only generic ManualReview text. The viewer independently compares generated Part35 receipts with destination file **NTFS ID, SHA-256, timestamps, attributes and owner/DACL**. It reports missing output, existing output without receipt, corrupted receipts, unknown .tmp journal, wrong-ID same-SHA file, incomplete outermost `同名ファイル一覧.txt` and path-traversal tampering. Successful destination checks say **「保存先証拠一致（元データは未照合）」**: they are *not* end-to-end source recovery guarantees or authorization to modify files. The reviewer **never dereferences SourcePath supplied by an untrusted journal** and has no mutation/Apply command.
+
+Eight generated-only NTFS tests and a routed real-WPF smoke test verify the dedicated read-only tab and no enabled Apply outside legacy recovery. No collision journal found in the selected root is explicitly **not** a claim that other roots have been inspected. [Full user-visible status contract](R217_PART36_COLLISION_REVIEW_UI.md).
+
+This feature adds **read-only UI only**. Part35 collision copy/restore test mutations are still `CHAPPY_TESTING` only; production archive extraction, original JPG/PNG replacement, hardlink consolidation and independent Undo remain disabled. Power-cut durability, malicious administrator proof, reparse race-free commits, source authorization and true recovery remain unproven. Actual end-user capacity recovered: **0 B**.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

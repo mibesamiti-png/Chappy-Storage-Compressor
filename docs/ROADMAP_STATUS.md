@@ -312,6 +312,14 @@ A separate `CHAPPY_TESTING`-only `CapacityGuard` observation override drives the
 
 **These tests are not a release permission:** no user-file consolidation, original replacement, or production Undo; real recovered user capacity stays **0 B**, historical 69.4% estimate stays a source coverage snapshot rather than current completion percentage. Still missing: physical power interruption/durability, concurrent writers and arbitrary owner/ACL/SACL/ADS/EFS, capacity reservation races, and a full opt-in WPF release safety contract. PR-head and independent postmerge main Windows CI both required.
 
+## R2.17 Part 30 — one read-only view of all durable recovery records
+
+The WPF Recovery Wizard now displays **legacy pending transactions, pair-level completed ledgers, group-wide 3+ alias manifests, and interrupted independent Undo records** in a separate, explicitly non-actionable history tab. `RecoveryEvidenceOverview` fails closed on unreadable families, exposes per-row manual-review status, and never interprets an empty legacy journal as whole-app safety. The target root comes from the selected folder; no root means `未検証`, not "OK". The legacy explicit journal-recovery actions remain on a distinct tab and cannot be activated from the new history view. Existing main-window completed-ledger inspection now includes group-history and in-alias interruption counts.
+
+The group inspector no longer silently ignores **orphaned checkpoint files**. Generated-only Windows tests cover clean empty inspection (no store creation), a real synthetic three-filename group, unknown hardlinks, a missing group manifest, corrupt pair and interrupted Undo records, malformed pending journal, and full explicit Undo interruption/resume; a routed WPF Loaded event checks history tab controls. Strict Core/WPF evidence gates are added. [Details and limitations](R217_PART30_RECOVERY_OVERVIEW.md).
+
+This part is **read-only UI + evidence safety**, not production file modification, physical device power-cut proof, arbitrary ACL/SACL/ADS/EFS, or a concurrency-safe capacity reservation. Production hardlink merge, original replacement and independent group Undo **remain disabled**; real-user capacity recovered **0 B**. 69.4% is a historical source estimate, not current release readiness. Full PR-head and separate main CI remain mandatory.
+
 ## Remaining risks / safeguards
 
 - The **two remaining CS0162 unreachable-code warnings** are from intentional user-facing and engine-level production mutation locks; these must not be removed to silence diagnostics.

@@ -1019,6 +1019,36 @@ jobs:
           "R2.17 Part26 three completed ledgers, one isolated tamper and safe independent Undo PASS"
           Get-Content $path
 
+      - name: Verify Part27 group-wide durable manifest and actual killed-worker Undo resume
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-group-ledger-resume.json"
+          if (-not (Test-Path $path)) { throw "Part27 group ledger and Undo evidence missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part27-group-ledger-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.generatedOnly -ne $true -or
+              $r.sourceFileCount -ne 4 -or
+              $r.realCoreGroupMerged -ne $true -or
+              $r.savedGroupLedgerVerifiedAfterRestart -ne $true -or
+              $r.unexpectedExtraLinkRefusedBeforeUndo -ne $true -or
+              $r.actualUndoWorkerProcessKilled -ne $true -or
+              $r.durableDetachedAliasesAtInterruption -ne 1 -or
+              $r.explicitResumeFinalDetachedAliases -ne 3 -or
+              $r.allBytesTimesOwnerDaclAndNtfsIdsVerified -ne $true -or
+              $r.completedHistoryRestored -ne $true -or
+              $r.productionMergeEnabled -ne $false -or
+              $r.productionUndoEnabled -ne $false -or
+              $r.actualUserFilesTouched -ne $false -or
+              $r.userCapacityFreedBytes -ne 0 -or
+              $r.insideAliasCrashRecoveryProven -ne $false -or
+              $r.powerCutDurabilityProven -ne $false) {
+            throw "Part27 group manifest / true killed-worker / Undo resume evidence failed"
+          }
+          "R2.17 Part27 four-file completed group, real worker death, explicit continued Undo PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

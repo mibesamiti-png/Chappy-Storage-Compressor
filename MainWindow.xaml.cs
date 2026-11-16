@@ -116,6 +116,7 @@ public partial class MainWindow : Window
         _lastScan = null;
         _rows.Clear();
         ScannedCountText.Text = GroupCountText.Text = SafeCountText.Text = SavingsText.Text = "—";
+        ReadOnlyDashboardText.Text = "直近の検証結果：未スキャン。画像候補と重複の合算は未評価。実際の空き容量回復は未実行です。";
         JobProgress.IsIndeterminate = false;
         JobProgress.Value = 0;
         ProgressText.Text = "待機中";
@@ -240,6 +241,15 @@ public partial class MainWindow : Window
         var safe = _rows.Where(x => x.Status == "統合可能").ToList();
         SafeCountText.Text = safe.Count.ToString("N0");
         SavingsText.Text = GroupRow.HumanSize(safe.Sum(x => x.Group.Savings));
+        ReadOnlyDashboardText.Text =
+            $"【直近スキャンのみ】完全一致 {_lastScan.Groups.Count:N0}組・" +
+            $"統合条件一致 {safe.Count:N0}組・対象外 {_rows.Count - safe.Count:N0}組。" +
+            $" 対象 {_lastScan.FileCount:N0}件／除外 {_lastScan.Skipped:N0}件／" +
+            $"検査エラー {_lastScan.Errors:N0}件。\n" +
+            $"重複単独の論理削減見込 {GroupRow.HumanSize(safe.Sum(x => x.Group.Savings))}。" +
+            " JPG/PNG候補と重複の二重計上は未評価（統合容量レポートで再照合）。\n" +
+            "実際の空き容量回復：未実行（0 B、物理空き容量は未計測）。" +
+            " 元データは変更していません。";
     }
 
     // Production reads completed-ledger files but NEVER repairs, promotes,
@@ -455,6 +465,13 @@ public partial class MainWindow : Window
                 "拡張子別の分類です。MP4の再エンコード・画質変更はしません。\n" +
                 "これは原本変更なしの見込み値です。統合機能は現在も無効です。\n" +
                 "グループ別のCSVを保存しますか？";
+            ReadOnlyDashboardText.Text =
+                $"【直近の再照合】重複条件一致 {report.EligibleGroups:N0}組／" +
+                $"対象外 {report.BlockedGroups:N0}組／変更あり {report.ChangedGroups:N0}組。" +
+                $" 重複単独の論理削減見込 {GroupRow.HumanSize(report.PotentialBytes)}。\n" +
+                "JPG/PNG候補との重なりはこの操作では未評価。" +
+                " 統合容量レポートで再照合してください。\n" +
+                "実際の空き容量回復：未実行（0 B、物理空き容量は未計測）。";
             Log($"拡張子別の重複検出: 条件一致 {report.EligibleGroups:N0}、再スキャン必要 {report.ChangedGroups:N0}、" +
                 $"理論削減 {GroupRow.HumanSize(report.PotentialBytes)}、実回復 0B。");
             if (MessageBox.Show(info, "JPG/PNG/MP4 重複容量レポート",
@@ -1163,6 +1180,9 @@ public partial class MainWindow : Window
                 overlapSummary + "\n" +
                 "計算値は論理バイトの仮定上の目安で、実空き容量ではありません。\n" +
                 "CSVに保存しますか？（重複スキャンがある場合は形式別補正表と候補詳細を選択可能）";
+            ReadOnlyDashboardText.Text =
+                CombinedSavingsPlanner.DescribeDashboard(report, combinedEstimate,
+                    combinedEstimate is null ? null : lastScan);
             Log(summary);
             if (MessageBox.Show(summary, "PNG/JPG統合候補レポート", MessageBoxButton.YesNo,
                 MessageBoxImage.Information, MessageBoxResult.Yes) != MessageBoxResult.Yes) return;

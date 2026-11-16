@@ -1585,6 +1585,7 @@ static class Program
             R217GroupLedgerResumeTests.Run(root, Check, ExpectThrows);
             R217GroupIntraAliasCrashTests.Run(root, Check, ExpectThrows);
             R217LowSpaceDedupeTests.Run(root, Check, ExpectThrows);
+            R217RecoveryEvidenceOverviewTests.Run(root, Check);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

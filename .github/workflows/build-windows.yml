@@ -1308,6 +1308,55 @@ jobs:
           "R2.17 Part34 central same-name collection, numbered files, nested folder and root memo PASS"
           Get-Content $path
 
+      - name: Verify Part35 durable same-name collision journal and real killed-process replay
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $path = "diagnostics/r217-part35-durable-collision-replay.json"
+          if (-not (Test-Path $path)) { throw "Part35 durable collision replay report missing" }
+          $r = Get-Content -Raw $path | ConvertFrom-Json
+          if ($r.schema -ne "chappy-r217-part35-collision-journal-v1" -or
+              $r.verdict -ne "PASS" -or
+              $r.syntheticOnly -ne $true -or
+              $r.trueKillCount -ne 3 -or
+              $r.scenarioCount -ne 7 -or
+              $r.durableIntentPrecedesFirstCopy -ne $true -or
+              $r.individualNtfsFileIdsAndShaReceipted -ne $true -or
+              $r.memoReceiptedBeforeFinalMarker -ne $true -or
+              $r.interruptedBeforeReceiptNeverAutoAdopted -ne $true -or
+              $r.incompleteUnknownEvidenceRequiresManualReview -ne $true -or
+              $r.nestedCollisionPolicyFromPart34Unchanged -ne $true -or
+              $r.productionCollisionWritesEnabled -ne $false -or
+              $r.productionExtractionOrUndoEnabled -ne $false -or
+              $r.realUserMediaTouched -ne $false -or
+              $r.realUserRecoveredBytes -ne 0 -or
+              $r.multiFileAtomicPowerCutProven -ne $false -or
+              $r.productionCrashSafeExtractionEnabled -ne $false) {
+            throw "Part35 collision durable-intent safety proof failed"
+          }
+          $expected = @(
+            'kill-after-first-durable-receipt',
+            'kill-between-file-flush-and-receipt',
+            'kill-after-root-memo-receipt',
+            'source-changed-after-intent',
+            'foreign-output-after-intent',
+            'tampered-durable-receipt',
+            'unknown-incomplete-evidence'
+          )
+          foreach ($name in $expected) {
+            $hits = @($r.scenarios | Where-Object {
+              $_.name -eq $name -and $_.pass -eq $true -and
+              $_.noUnsafeOverwrite -eq $true
+            })
+            if ($hits.Count -ne 1) { throw "Part35 missing exact fail-closed scenario: $name" }
+          }
+          $trueKills = @($r.scenarios | Where-Object { $_.trueProcessKill -eq $true })
+          if ($trueKills.Count -ne 3) {
+            throw "Part35 actual guarded child process kill count mismatch"
+          }
+          "R2.17 Part35 durable per-file NTFS receipts, 3 killed processes, manual-review crash windows PASS"
+          Get-Content $path
+
       - name: Verify R2.17 weighted PNG/JPG progress and fail-safe UI notification throttling
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

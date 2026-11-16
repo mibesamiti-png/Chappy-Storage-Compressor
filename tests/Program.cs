@@ -1399,6 +1399,8 @@ static class Program
             return R217InterruptedUndoReplayTests.RunChild(args);
         if (R217GroupLedgerResumeTests.IsChild(args))
             return R217GroupLedgerResumeTests.RunChild(args);
+        if (R217GroupIntraAliasCrashTests.IsChild(args))
+            return R217GroupIntraAliasCrashTests.RunChild(args);
         if (!OperatingSystem.IsWindows())
         {
             Console.Error.WriteLine("Windows NTFS only");
@@ -1581,6 +1583,7 @@ static class Program
             R217InterruptedUndoReplayTests.Run(root, Check, ExpectThrows);
             R217MultiGroupLedgerTests.Run(root, Check, ExpectThrows);
             R217GroupLedgerResumeTests.Run(root, Check, ExpectThrows);
+            R217GroupIntraAliasCrashTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

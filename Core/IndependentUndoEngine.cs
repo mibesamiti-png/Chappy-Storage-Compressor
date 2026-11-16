@@ -42,6 +42,7 @@ public static class IndependentUndoEngine
         , string? testOnlyCompletedOperationId = null
         , Action<string>? testOnlyCrashCheckpoint = null
         , Action<string, string>? testOnlyGroupPhase = null
+        , Action<string>? testOnlyAfterFinalValidation = null
 #endif
         )
     {
@@ -175,6 +176,30 @@ public static class IndependentUndoEngine
             !Safety.ByteEqual(alias, master, ct))
             throw new InvalidDataException(
                 "Undo stage, shared source bytes/identity or ACL/timestamps changed after durable intent; refused before cutover");
+
+        // Part32: deterministic TEST-ONLY adversary can rename/delete a
+        // pathname AFTER the preceding full verification. Re-open all three
+        // original identities immediately before replacing any alias.
+        // This narrows the detection window but does not provide an atomic
+        // compare-and-replace against arbitrary concurrent deleters.
+        if (testOnlyAfterFinalValidation is not null)
+        {
+            testOnlyAfterFinalValidation(stage);
+            if (!Safety.SameSnapshot(lateStage) ||
+                !Safety.SameSnapshot(shared) ||
+                !Safety.SameSnapshot(masterSnapshot) ||
+                !NativeFile.SameFile(alias, master) ||
+                NativeFile.GetIdentity(master).LinkCount != expectedSharedLinkCount ||
+                !string.Equals(Safety.ComputeSha256(stage, CancellationToken.None),
+                    expectedHash, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(Safety.ComputeSha256(alias, CancellationToken.None),
+                    expectedHash, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(Safety.ComputeSha256(master, CancellationToken.None),
+                    expectedHash, StringComparison.OrdinalIgnoreCase) ||
+                !Safety.ByteEqual(stage, alias, CancellationToken.None))
+                throw new InvalidDataException(
+                    "Pathname was renamed, deleted, replaced or modified after final Undo validation; no cutover performed");
+        }
 
         // This is a single test-owned alias, NOT the master. The independent
         // source and store link remain untouched by the replace operation.

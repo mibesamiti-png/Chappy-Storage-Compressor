@@ -1224,19 +1224,21 @@ jobs:
           if ($r.schema -ne "chappy-r217-part33-pinned-handle-v1" -or
               $r.verdict -ne "PASS" -or
               $r.generatedOnly -ne $true -or
-              $r.sourceCodeCompiledOutOfRelease -ne $true -or
+              $r.generatedTestGuardCompiledOutOfRelease -ne $true -or
+              $r.nativeKernelPrimitiveSharedWithCore -ne $true -or
+              $r.shippedDedupeEntryStillLocked -ne $true -or
               $r.exactNativeApi -ne "SetFileInformationByHandle" -or
               $r.nativeRenameInformationClass -ne 3 -or
               $r.nativeDeleteInformationClass -ne 4 -or
               $r.renameReplaceIfExists -ne $false -or
               $r.actualExternalChildProcesses -ne 4 -or
-              $r.scenarioCount -ne 8 -or
-              $r.noProductionCoreMergeChange -ne $true -or
+              $r.scenarioCount -ne 9 -or
+              $r.corePinnedCutoverNowUsesSamePrimitive -ne $true -or
               $r.allCurrentUserMediaUnchanged -ne $true -or
               $r.realUserRecoveredBytes -ne 0 -or
               $r.physicalPowerCutProven -ne $false -or
               $r.globalRaceFreeCommitProven -ne $false -or
-              $r.handleBasedRenameIntegratedIntoDedupe -ne $false -or
+              $r.handleBasedRenameIntegratedIntoDedupe -ne $true -or
               $r.arbitraryFileSystemOwnershipProven -ne $false) {
             throw "Part33 exact Win32 handle semantics/safety contract failed"
           }
@@ -1244,7 +1246,8 @@ jobs:
             'handle-pinned-postcheck-swap', 'guard-same-sha-different-id',
             'native-no-replace-target-race', 'guard-prerename-moved-source',
             'unopposed-pinned-rename', 'unopposed-pinned-delete',
-            'reject-hardlink-with-two-names', 'reject-nonowned-destination'
+            'reject-hardlink-with-two-names', 'reject-nonowned-destination',
+            'shared-alias-pinned-removal'
           )
           foreach ($name in $names) {
             $hits = @($r.scenarios | Where-Object {
@@ -1259,7 +1262,7 @@ jobs:
               $_.originalDataPreserved -eq $true
             }).Count -ne 1) { throw "Part33 missing real external child: $name" }
           }
-          "R2.17 Part33 pinned handle, 4 real child races, no-replace, and guarded disposition PASS"
+          "B2: Part33 and real Core share pinned NTFS ID primitive, 4 child races, no-replace, safe alias unlink PASS"
           Get-Content $path
 
       - name: Verify Part34 duplicate-name central collection, nested folders and top-level memo

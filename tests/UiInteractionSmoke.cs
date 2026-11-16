@@ -600,6 +600,42 @@ internal static class UiInteractionSmoke
                     "R2.17 part 16: real WPF restart resumes PNG/JPEG without new candidates or journal edits");
                 liveCombinedResumed = true;
 
+                // G1-05: route the REAL combined-report WPF Click through
+                // the same generated JPEG/PNG plans; select the already
+                // verified candidate folder without a native CI dialog.
+                // Only the optional CSV question is answered No in-process.
+                pathBox.Text = realInput;
+                RoutedClick(scanButton);
+                PumpUntil(() => scanButton.IsEnabled &&
+                    progressText.Text == "スキャン完了", TimeSpan.FromSeconds(30));
+                string reportPrompt = "";
+                SetPrivate(window, "_pickCombinedOutput",
+                    new Func<string?, string?>(_ => realOutput));
+                SetPrivate(window, "_confirmCombinedReportCsv",
+                    new Func<string, bool>(body =>
+                    {
+                        reportPrompt = body;
+                        return false;
+                    }));
+                var combinedReportButton = Named<Button>(window, "CombinedReportButton");
+                RoutedClick(combinedReportButton);
+                PumpUntil(() => combinedReportButton.IsEnabled &&
+                    progressText.Text == "統合候補レポート完了" &&
+                    reportPrompt.Length > 0, TimeSpan.FromSeconds(45));
+                Require(dashboardText.Text.Contains("二重計上の補正", StringComparison.Ordinal) &&
+                        dashboardText.Text.Contains("重複補正後の合計見込", StringComparison.Ordinal) &&
+                        dashboardText.Text.Contains("PNG", StringComparison.Ordinal) &&
+                        dashboardText.Text.Contains("JPG", StringComparison.Ordinal) &&
+                        dashboardText.Text.Contains("未実行（0 B、物理空き容量は未計測）",
+                            StringComparison.Ordinal) &&
+                        reportPrompt.Contains("計算値は論理バイト",
+                            StringComparison.Ordinal) &&
+                        originalsReal.All(x => OracleHash(x) == originalHashesReal[x]) &&
+                        savedCandidates.All(x => File.Exists(x.Key) &&
+                            OracleHash(x.Key) == x.Value) &&
+                        !mergeButton.IsEnabled,
+                    "G1-05: real WPF combined-report click presents validated JPEG/PNG and overlap-corrected scan savings without any original or candidate mutation");
+
                 // Part 17 uses a SECOND isolated output root, so the verified
                 // Part 16 complete/resume evidence is never modified by
                 // stop/restart tests. The real first PNG completion triggers

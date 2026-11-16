@@ -64,6 +64,30 @@ internal static class R215ReconciledCapacityTests
                   r.CombinedHypotheticalBytes == 790 &&
                   r.ActualFreedBytes == 0,
                 "R2.15: 削減見込150+700-60=790B、実回復0B");
+            // G1-05: the real combined report's existing arithmetic is the
+            // only source for the dashboard; no duplicated savings formula.
+            string dashboard = CombinedSavingsPlanner.DescribeDashboard(preview, r, scan);
+            string previewOnlyDashboard = CombinedSavingsPlanner.DescribeDashboard(
+                preview, null, null);
+            check(dashboard.Contains("二重計上の補正", StringComparison.Ordinal) &&
+                  dashboard.Contains("重複補正後の合計見込", StringComparison.Ordinal) &&
+                  dashboard.Contains("790", StringComparison.Ordinal) &&
+                  dashboard.Contains("150", StringComparison.Ordinal) &&
+                  dashboard.Contains("700", StringComparison.Ordinal) &&
+                  dashboard.Contains("60", StringComparison.Ordinal) &&
+                  dashboard.Contains("未実行（0 B、物理空き容量は未計測）",
+                      StringComparison.Ordinal) &&
+                  previewOnlyDashboard.Contains("二重計上は未評価",
+                      StringComparison.Ordinal) &&
+                  !previewOnlyDashboard.Contains("重複補正後の合計見込",
+                      StringComparison.Ordinal),
+                "G1-05: shared read-only WPF projection renders the exact 150+700-60=790 estimate without claiming actual disk savings");
+            expectThrows(() => CombinedSavingsPlanner.DescribeDashboard(preview, r, null),
+                "G1-05: combined savings cannot be presented without matching scan evidence");
+            check(CombinedSavingsPlanner.DescribeDashboard(preview, null, scan)
+                      .Contains("未評価", StringComparison.Ordinal),
+                "G1-05: a scan without cross-validated preview overlap remains explicitly unverified");
+
             check(r.VerifiedDuplicateGroups == 3 && r.SkippedDuplicateGroups == 0,
                 "R2.15: 重複3グループを改めて完全照合");
             var perFormat = r.Formats.ToDictionary(x => x.Format);

@@ -267,9 +267,9 @@ public static class CollisionCollectionPlan
         {
             using var report = new FileStream(Full(plan.Root, plan.ReportRelativePath),
                 FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            byte[] utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true)
-                .GetBytes(ReportText(plan));
-            report.Write(utf8);
+            var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+            report.Write(encoding.GetPreamble());
+            report.Write(encoding.GetBytes(ReportText(plan)));
             report.Flush(flushToDisk: true);
         }
     }

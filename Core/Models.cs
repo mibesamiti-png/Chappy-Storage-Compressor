@@ -26,6 +26,46 @@ public sealed class DuplicateGroup
     public FileSnapshot Representative => Files[0];
     public long Savings => Representative.Length * (Files.Count - 1);
 
+    /// <summary>
+    /// B1: preserve a byte-exact scan group but partition its *hypothetical*
+    /// merge candidates by metadata constraints. A third file with different
+    /// owner/DACL or timestamps must not prevent two compatible independent
+    /// names from being reported. Singleton/unsafe partitions remain visible
+    /// as blocked rows, never as silent deletions. Does no IO or mutations.
+    /// Callers must still revalidate every eligible subset immediately before
+    /// relying on any estimate. Production merge remains disabled.
+    /// </summary>
+    public IReadOnlyList<DuplicateGroup> PartitionForSafeMerge(bool allowTimestampDifference)
+    {
+        var parts = new List<List<FileSnapshot>>();
+        foreach (FileSnapshot file in Files)
+        {
+            List<FileSnapshot>? matching = null;
+            if (file.Identity.LinkCount == 1)
+            {
+                matching = parts.FirstOrDefault(part =>
+                {
+                    FileSnapshot first = part[0];
+                    return first.Identity.LinkCount == 1 &&
+                        first.Identity.VolumeSerial == file.Identity.VolumeSerial &&
+                        !part.Any(x => x.Identity.SameFile(file.Identity)) &&
+                        first.Attributes == file.Attributes &&
+                        first.SecurityDescriptor.AsSpan().SequenceEqual(file.SecurityDescriptor) &&
+                        (allowTimestampDifference ||
+                            (first.CreationUtc == file.CreationUtc &&
+                             first.ModifiedUtc == file.ModifiedUtc));
+                });
+            }
+            if (matching is null) parts.Add([file]);
+            else matching.Add(file);
+        }
+        return parts.Select(part => new DuplicateGroup
+        {
+            Hash = Hash,
+            Files = part
+        }).ToArray();
+    }
+
     public string? BlockReason(bool allowTimestampDifference)
     {
         if (Files.Count < 2) return "重複なし";

@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace ChappyStorageCompressor.Core;
 
 /// <summary>
-/// Group-level, generated-NTFS-only integration for 3+ duplicate filenames.
+/// Group-level, generated-NTFS-only integration for 2+ duplicate filenames.
 /// The normal product has read-only inspection; no production merge/Undo API.
 /// </summary>
 public static class CompletedGroupLedger
@@ -87,7 +87,7 @@ public static class CompletedGroupLedger
         if (x.Schema != 1 || x.Id != id || !Guid.TryParseExact(id, "N", out _) ||
             x.Hash.Length != 64 || !x.Hash.All(Uri.IsHexDigit) ||
             x.Representative is null || x.Aliases is null ||
-            x.Aliases.Count is < 2 or > 32 ||
+            x.Aliases.Count is < 1 or > 32 ||
             !Safe(root, x.Representative.Path) ||
             !Safe(root, x.Master, store: true) ||
             !Under(Safety.StorePath(root), x.Master) ||
@@ -387,10 +387,10 @@ public static class CompletedGroupLedger
     public static string MergeSynthetic(string input, DuplicateGroup group)
     {
         string root = RequireSynthetic(input);
-        if (group.Files.Count is < 3 or > 33 ||
+        if (group.Files.Count is < 2 or > 33 ||
             group.BlockReason(false) is not null ||
             Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any())
-            throw new InvalidDataException("Only clean 3-33 independent exact duplicates supported");
+            throw new InvalidDataException("Only clean 2-33 independent exact duplicates supported");
         foreach (FileSnapshot s in group.Files)
         {
             if (!Safe(root, s.Path) || !Safety.SameSnapshot(s) ||
@@ -420,8 +420,9 @@ public static class CompletedGroupLedger
         Validate(root, x, id);
         AtomicWrite(PathFor(root, id, "prepared"), x);
         // Use the REAL Core engine, not a synthetic prelinked imitation.
-        // The old per-alias ledger is incompatible with changing link counts,
-        // so the group-level manifest is the sole completed-operation proof.
+        // One group manifest covers both a single duplicate alias and 3+
+        // names. Older CompletedMergeLedger entries remain read-only legacy
+        // evidence; do not write another per-alias ledger for new operations.
         long expected = group.Savings;
         long actual = DedupeEngine.Run(root, [group], false, null,
             CancellationToken.None, testOnlyRecordCompletedMerges: false);

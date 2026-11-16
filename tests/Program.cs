@@ -1405,6 +1405,8 @@ static class Program
             return R217ConcurrentWriterAclTests.RunChild(args);
         if (R217PathSwapRaceTests.IsChild(args))
             return R217PathSwapRaceTests.RunChild(args);
+        if (R217PinnedHandleRaceTests.IsChild(args))
+            return R217PinnedHandleRaceTests.RunChild(args);
         if (!OperatingSystem.IsWindows())
         {
             Console.Error.WriteLine("Windows NTFS only");
@@ -1592,6 +1594,7 @@ static class Program
             R217RecoveryEvidenceOverviewTests.Run(root, Check);
             R217ConcurrentWriterAclTests.Run(root, Check, ExpectThrows);
             R217PathSwapRaceTests.Run(root, Check, ExpectThrows);
+            R217PinnedHandleRaceTests.Run(root, Check, ExpectThrows);
             Console.WriteLine($"All {_checks} safety checks passed.");
             return 0;
         }

@@ -148,6 +148,21 @@ public static class DedupeEngine
                             !Safety.SameRenamedSnapshot(duplicate, backup))
                             throw new IOException("退避ファイルの最終照合に失敗。削除しません");
                         FaultInjection.Hit("pre-backup-delete");
+                        // Part32: a DIFFERENT process may move the proven
+                        // backup and plant a new, byte-identical file at the
+                        // same pathname between the earlier proof and delete.
+                        // Hash alone does not authorize deleting a pathname:
+                        // re-open the exact scanned NTFS identity immediately
+                        // before irreversible backup deletion.
+                        if (!Safety.SameRenamedSnapshot(duplicate, backup) ||
+                            !string.Equals(Safety.ComputeSha256(backup,
+                                CancellationToken.None), group.Hash,
+                                StringComparison.OrdinalIgnoreCase) ||
+                            !Safety.ByteEqual(backup, masterPath,
+                                CancellationToken.None) ||
+                            !NativeFile.SameFile(duplicate.Path, masterPath))
+                            throw new InvalidDataException(
+                                "Backup path or original NTFS identity changed before irreversible delete; retain evidence");
 #if CHAPPY_TESTING
                         // Durable original metadata BEFORE irreversible backup
                         // deletion. Test-only opt-in; normal product code NEVER
@@ -176,13 +191,26 @@ public static class DedupeEngine
                     {
                         if (backupCreated)
                         {
-                            // Remove only OUR hard link (identified by file ID),
-                            // and then attempt to put the independent file back.
-                            if (File.Exists(duplicate.Path) &&
-                                NativeFile.SameFile(duplicate.Path, masterPath))
-                                File.Delete(duplicate.Path);
-                            if (!File.Exists(duplicate.Path) && File.Exists(backup))
-                                File.Move(backup, duplicate.Path);
+                            // Part32: rollback is only safe when the backup is
+                            // STILL the precise pre-scan independent file.
+                            // A moved/replaced pathname (even same SHA) is
+                            // external evidence, never ours to clean up.
+                            // Leave the pending journal and both names for
+                            // explicit manual review instead of deleting a
+                            // possible foreign file or hiding the original.
+                            bool exactBackup = File.Exists(backup) &&
+                                Safety.SameRenamedSnapshot(duplicate, backup) &&
+                                string.Equals(Safety.ComputeSha256(backup,
+                                    CancellationToken.None), group.Hash,
+                                    StringComparison.OrdinalIgnoreCase);
+                            if (exactBackup)
+                            {
+                                if (File.Exists(duplicate.Path) &&
+                                    NativeFile.SameFile(duplicate.Path, masterPath))
+                                    File.Delete(duplicate.Path);
+                                if (!File.Exists(duplicate.Path))
+                                    File.Move(backup, duplicate.Path);
+                            }
                         }
                         // Do not silently erase a journal during exception handling.
                         // Recovery must verify the actual file before clearing it.

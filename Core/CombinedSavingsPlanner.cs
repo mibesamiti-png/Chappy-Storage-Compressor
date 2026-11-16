@@ -70,7 +70,9 @@ public static class CombinedSavingsPlanner
         long dedupeOnly = 0, overlap = 0;
         int verified = 0, skipped = 0, processed = 0;
         var globallySeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in scan.Groups)
+        var partitions = scan.Groups.SelectMany(g =>
+            g.PartitionForSafeMerge(allowTimestampDifference)).ToArray();
+        foreach (var group in partitions)
         {
             ct.ThrowIfCancellationRequested();
             string type = GroupFormat(group);
@@ -135,7 +137,7 @@ public static class CombinedSavingsPlanner
                 skipped++;
                 bucket.Skipped++;
             }
-            progress?.Report((++processed, scan.Groups.Count));
+            progress?.Report((++processed, partitions.Length));
         }
 
         long combined = checked(checked(previewOnly + dedupeOnly) - overlap);

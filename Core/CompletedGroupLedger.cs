@@ -601,13 +601,17 @@ public static class CompletedGroupLedger
                 "Group merge incomplete: retain prepared manifest for manual review");
         // A process can stop between the completed physical merge and the
         // durable phase change. On restart this remains ManualReview until
-        // explicit full-ID, metadata, and byte verification.
+        // explicit full-ID, metadata, and byte verification. These two
+        // checkpoints are inert in normal Windows builds; synthetic workers
+        // use them to prove both sides of the durable phase transition.
+        FaultInjection.Hit("group-core-verified");
 #if CHAPPY_TESTING
         testOnlyAfterVerifiedCore?.Invoke();
 #endif
         ct.ThrowIfCancellationRequested();
         parents.AssertUnchanged();
         ConfirmPreparedGroup(root, id);
+        FaultInjection.Hit("group-completed");
         return id;
     }
 

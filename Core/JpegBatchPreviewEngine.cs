@@ -46,7 +46,8 @@ public static class JpegBatchPreviewEngine
     public sealed record Summary(int Done, int Total, int Completed, int Skipped, int Failed,
         int NeedsReview, int Deferred, long EstimatedSavingBytes, int ScanErrors, string PlanPath);
     public sealed record ReportRow(string RelativePath, string Status, long SourceBytes,
-        long CandidateBytes, long VerifiedSavingBytes, string CandidatePath, string Note);
+        long CandidateBytes, long VerifiedSavingBytes, string CandidatePath, string Note,
+        string? SourceSha256 = null, string? CandidateSha256 = null);
     public sealed record Audit(IReadOnlyList<ReportRow> Rows, long VerifiedSavingBytes, int NeedsReview);
 
     public static Summary Run(string inputRoot, string outputRoot, string jpegtranExe,
@@ -230,7 +231,8 @@ public static class JpegBatchPreviewEngine
             long delta = good ? e.SourceBytes - e.CandidateBytes : 0;
             saving = checked(saving + delta);
             rows.Add(new ReportRow(e.RelativePath, status, e.SourceBytes,
-                e.CandidateBytes, delta, e.CandidatePath ?? "", e.Message));
+                e.CandidateBytes, delta, e.CandidatePath ?? "", e.Message,
+                e.SourceSha256, e.CandidateSha256));
         }
         return new Audit(rows, saving, needsReview);
     }

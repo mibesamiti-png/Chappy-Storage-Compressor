@@ -1003,6 +1003,94 @@ static class Program
                 x.PreviewSha256 == Safety.ComputeSha256(
                     x.PreviewPath, CancellationToken.None)),
             "G4-03: PNG候補と当時の原本SHAを独立ジャーナルから再読し全バイト照合");
+        // G4-03: The real WPF-facing Core entry point is journal-bound and
+        // COPY-ONLY, even when an arbitrary UI asks to prepare a local file.
+        // Use the EXISTING batch PNG fixture and its creation-time SHA ledger.
+        if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true")
+        {
+            string? remoteParent = new[]
+                {
+                    Environment.GetEnvironmentVariable("RUNNER_TEMP"),
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+                }
+                .Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x))
+                .FirstOrDefault(x =>
+                    !Path.GetPathRoot(Path.GetFullPath(x!))!.Equals(
+                        Path.GetPathRoot(a), StringComparison.OrdinalIgnoreCase) &&
+                    new DriveInfo(Path.GetPathRoot(x!)!).DriveFormat.Equals(
+                        "NTFS", StringComparison.OrdinalIgnoreCase));
+            Check(remoteParent is not null,
+                "G4-03: WPFコピー準備は異なるNTFSバックアップドライブが必要");
+            if (remoteParent is not null)
+            {
+                string remoteRoot = Path.Combine(remoteParent,
+                    "ChappyStorageSmoke_G4UiBackup_" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(remoteRoot);
+                string sentinel = Path.Combine(remoteRoot, ".chappy-g4-ui-test-only");
+                File.WriteAllText(sentinel, "CHAPPY-G4-UI-TEST-ONLY\n");
+                try
+                {
+                    string prepStage = Path.Combine(root, "g4-wpf-journal-stage");
+                    string prepBackup = Path.Combine(remoteRoot, "empty-backup");
+                    Directory.CreateDirectory(prepStage);
+                    Directory.CreateDirectory(prepBackup);
+                    var report = CombinedCapacityReport.Inspect(input, previews);
+                    var ready = ReplacementReadiness.Inspect(
+                        report, input, previews, prepBackup);
+                    Check(ready.Rows.Any(x => x.VerifiedOriginalPath == a &&
+                        x.VerifiedCandidatePath is not null &&
+                        x.SourceSha256 == ah &&
+                        x.CandidateSha256 is { Length: 64 } &&
+                        x.SpaceRequirementsMet),
+                        "G4-03: 既存PNG/JPG生成時台帳からWPF対象1枚のSHA/実候補を取得");
+                    var sourceBefore = Safety.Capture(a);
+                    var preparedOne = ReplacementReadiness.PrepareOneVerifiedPreview(
+                        input, previews, a, prepStage, prepBackup);
+                    Check(File.Exists(preparedOne.StagedPath) &&
+                        File.Exists(preparedOne.BackupPath) &&
+                        File.Exists(preparedOne.ReceiptPath) &&
+                        !preparedOne.ProductionReplacementAuthorized &&
+                        preparedOne.ActualFreedBytes == 0 &&
+                        ReplacementReadiness.InspectPreparedCopies(
+                            a, preparedOne.CandidatePath, prepStage, prepBackup).Complete &&
+                        Safety.ByteEqual(a, preparedOne.BackupPath, CancellationToken.None) &&
+                        Safety.SameSnapshot(sourceBefore),
+                        "G4-03: WPF経路は保存済み原本SHAから独立コピーを作成、元ID/DACL不変・実回復0B");
+
+                    string secondStage = Path.Combine(root, "g4-wpf-unlisted-stage");
+                    string secondBackup = Path.Combine(remoteRoot, "unlisted-backup");
+                    Directory.CreateDirectory(secondStage);
+                    Directory.CreateDirectory(secondBackup);
+                    ExpectThrows(() => ReplacementReadiness.PrepareOneVerifiedPreview(
+                            input, previews, corrupt, secondStage, secondBackup),
+                        "G4-03: WPFから未承認・破損原本を指定してもコピーを作らず拒否");
+                    Check(!Directory.EnumerateFileSystemEntries(secondStage).Any() &&
+                        !Directory.EnumerateFileSystemEntries(secondBackup).Any() &&
+                        Safety.SameSnapshot(sourceBefore),
+                        "G4-03: 未承認原本の拒否は出力先も元画像も無変更");
+                    ExpectThrows(() => ReplacementReadiness.PrepareOneVerifiedPreview(
+                            input, previews, a, secondStage, secondStage),
+                        "G4-03: WPF経路でも別NTFSバックアップがない場合は拒否");
+                    Check(!Directory.EnumerateFileSystemEntries(secondStage).Any(),
+                        "G4-03: 同じボリュームを指定してもコピー作成0件");
+
+                    File.WriteAllText(Path.Combine(secondStage, "unknown.txt"), "foreign");
+                    ExpectThrows(() => ReplacementReadiness.PrepareOneVerifiedPreview(
+                            input, previews, a, secondStage, secondBackup),
+                        "G4-03: WPF経路でもstage異物を上書きせず拒否");
+                    Check(File.ReadAllText(Path.Combine(secondStage, "unknown.txt")) ==
+                        "foreign" && !Directory.EnumerateFileSystemEntries(secondBackup).Any(),
+                        "G4-03: WPF stageの既存異物と元画像を保全");
+                    Check(Safety.SameSnapshot(sourceBefore),
+                        "G4-03: 全拒否ケース後の原本ID・権限・内容は変わらない");
+                }
+                finally
+                {
+                    if (File.ReadAllText(sentinel) == "CHAPPY-G4-UI-TEST-ONLY\n")
+                        Directory.Delete(remoteRoot, recursive: true);
+                }
+            }
+        }
         string generatedProgress = Path.Combine(previews, ".chappy-png-batch-r16.progress.jsonl");
         byte[] progressOriginal = File.ReadAllBytes(generatedProgress);
         try

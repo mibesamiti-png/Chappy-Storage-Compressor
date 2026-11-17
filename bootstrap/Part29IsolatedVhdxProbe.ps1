@@ -222,14 +222,16 @@ try {
     $backup0 = [IO.Path]::Combine($mount, 'batch0-b.saved')
     $backup1 = [IO.Path]::Combine($mount, 'batch1-b.saved')
     $payload = [byte[]]::new(4MB)
-    foreach ($pair in @(@($g0a, @($g0b)), @($g1a, @($g1b, $g1c)),
-            @($g2a, @($g2b)))) {
-        [Security.Cryptography.RandomNumberGenerator]::Fill($payload)
-        [IO.File]::WriteAllBytes([string]$pair[0], $payload)
-        foreach ($alias in $pair[1]) {
-            [IO.File]::Copy([string]$pair[0], [string]$alias)
-        }
-    }
+    [Security.Cryptography.RandomNumberGenerator]::Fill($payload)
+    [IO.File]::WriteAllBytes($g0a, $payload)
+    [IO.File]::Copy($g0a, $g0b)
+    [Security.Cryptography.RandomNumberGenerator]::Fill($payload)
+    [IO.File]::WriteAllBytes($g1a, $payload)
+    [IO.File]::Copy($g1a, $g1b)
+    [IO.File]::Copy($g1a, $g1c)
+    [Security.Cryptography.RandomNumberGenerator]::Fill($payload)
+    [IO.File]::WriteAllBytes($g2a, $payload)
+    [IO.File]::Copy($g2a, $g2b)
     $names = [string[]]@($g0a, $g0b, $g1a, $g1b, $g1c, $g2a, $g2b)
     $beforeGroup = UniqueAllocation $names
     $freeGroupBaseline = Free $mountRoot

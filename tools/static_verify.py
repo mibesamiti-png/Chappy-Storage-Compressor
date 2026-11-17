@@ -545,16 +545,27 @@ for token in ['EvaluateCapacity(', 'AvailableFreeSpace', 'Safety.Capture(path)',
 for destructive in ['File.Move(', 'File.Delete(', 'File.Replace(', 'File.Copy(', 'File.WriteAllBytes(',
                     'Directory.CreateDirectory(', 'NativeFile.NewHardLink(']:
     check('R2.2 preflight never mutates: '+destructive, destructive not in r22)
-# Read-only handles prevent a cooperating writer from racing the same NTFS
-# file. Forbid Create/Write/OpenOrCreate instead of forbidding FileStream
-# entirely, which would incorrectly reject the safer G4 pre-Apply design.
+# Read-only inspection and copy-only preparation are distinct methods.
+# Hold the original/candidate under FileShare.Read, but allow the G4-03
+# preparation helper to CreateNew files only in isolated stage/backup roots.
+# Still ban writes in the read-only inspection methods themselves.
+read_only_r22 = r22.split('    // G4-03: the preparation phase is intentionally COPY-ONLY:')[0]
+preparation_r22 = r22.split('    // G4-03: the preparation phase is intentionally COPY-ONLY:')[1]
 check('R2.2/G4 read-only source and candidate FileStream locks',
-      'new FileStream(original, FileMode.Open,' in r22 and
-      'new FileStream(candidate, FileMode.Open,' in r22 and
-      'FileAccess.Read, FileShare.Read' in r22 and
-      not any(x in r22 for x in ['FileAccess.Write', 'FileAccess.ReadWrite',
+      'new FileStream(original, FileMode.Open,' in read_only_r22 and
+      'new FileStream(candidate, FileMode.Open,' in read_only_r22 and
+      'FileAccess.Read, FileShare.Read' in read_only_r22 and
+      not any(x in read_only_r22 for x in ['FileAccess.Write', 'FileAccess.ReadWrite',
            'FileMode.Create', 'FileMode.Append', 'FileMode.OpenOrCreate',
            'FileMode.Truncate']))
+check('G4-03: only CreateNew on stage/backup, never mutate source',
+      'new FileStream(destination, FileMode.CreateNew,' in preparation_r22 and
+      'FileAccess.Write, FileShare.None' in preparation_r22 and
+      'FileMode.Open,\n            FileAccess.Read, FileShare.Read' in preparation_r22 and
+      not any(x in preparation_r22 for x in [
+           'FileMode.Create,', 'FileMode.OpenOrCreate', 'FileMode.Truncate',
+           'FileMode.Append', 'FileAccess.ReadWrite', 'File.Replace(',
+           'File.Delete(', 'File.Move(', 'File.Copy(']))
 check('R2.2 GUI event wired', 'ReplacementReadiness_Click' in source and
       'ReplacementReadinessButton.IsEnabled' in source and
       'ReplacementReadiness_Click' in (root/'MainWindow.xaml').read_text(encoding='utf-8'))

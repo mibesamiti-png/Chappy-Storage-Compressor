@@ -2431,6 +2431,7 @@ static class Program
             R217PathSwapRaceTests.Run(root, Check, ExpectThrows);
             R217PinnedHandleRaceTests.Run(root, Check, ExpectThrows);
             R217CollisionCollectionTests.Run(root, Check, ExpectThrows);
+            DuplicateCleanupBatchTests.Run(root, Check, ExpectThrows);
             R217CollisionCrashLedgerTests.Run(root, Check, ExpectThrows);
             R217CollisionEvidenceReviewTests.Run(root, Check, ExpectThrows);
             R217CollisionTriageIntegrityTests.Run(root, Check);

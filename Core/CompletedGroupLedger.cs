@@ -610,7 +610,7 @@ public static class CompletedGroupLedger
     // The same strict generated-only guard protects the INTERNAL replay
     // engine in normal Windows builds. Neither a WPF row nor a manifest can
     // bypass this root/sentinel check to mutate ordinary user files.
-    private static string RequireSynthetic(string input)
+    internal static string RequireSynthetic(string input)
     {
         string root = Safety.ValidateRoot(input);
         string temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
@@ -766,7 +766,9 @@ public static class CompletedGroupLedger
     // any future UI path into RunPreparedGroup.
     internal static string PrepareVerifiedGroup(string input, DuplicateGroup group)
     {
-        string root = Safety.ValidateRoot(input);
+        // G2-07: the shared internal transaction itself is still restricted
+        // to disposable generated NTFS, not just its new WPF caller.
+        string root = RequireSynthetic(input);
         using var mutationLease = MutationLease.Acquire();
         // Keep parent identities stable while writing the durable intent too,
         // even when the internal prepare function is invoked by itself.
@@ -822,7 +824,7 @@ public static class CompletedGroupLedger
 #endif
         )
     {
-        string root = Safety.ValidateRoot(input);
+        string root = RequireSynthetic(input);
         ct.ThrowIfCancellationRequested();
         // One hierarchy lease spans prepare -> real Core -> verification ->
         // durable completed record. It cannot be released between phases.
@@ -862,7 +864,9 @@ public static class CompletedGroupLedger
     internal static IReadOnlyList<string> MergeVerifiedGroups(string input,
         IEnumerable<DuplicateGroup> groups, CancellationToken ct)
     {
-        string root = Safety.ValidateRoot(input);
+        // Recheck even when the caller is an internal WPF handler. Production
+        // never obtains mutation authority from a scanned row or a Yes click.
+        string root = RequireSynthetic(input);
         var batches = groups.ToList();
         if (batches.Count == 0)
             throw new InvalidDataException("No authenticated duplicate groups selected");

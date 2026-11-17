@@ -804,6 +804,108 @@ static class Program
                                 File.Exists(prepared.BackupPath) &&
                                 Safety.SameSnapshot(originalSnapshot),
                                 "G4-03: レシート作成前のプロセス死はバックアップ/stageを保全し停止");
+
+                            // G4-04: REAL OS process termination across the
+                            // rename boundaries, strictly on disposable PNGs.
+                            // Each scenario gets fresh independent copies and
+                            // a new permanent receipt, never a user-file path.
+                            foreach (string checkpoint in new[] {
+                                "g4-after-original-rename",
+                                "g4-after-stage-rename",
+                                "g4-after-candidate-quarantine",
+                                "g4-after-original-restored"
+                            })
+                            {
+                                bool killDuringRecovery = checkpoint is
+                                    "g4-after-candidate-quarantine" or
+                                    "g4-after-original-restored";
+                                string scenario = checkpoint.Replace("g4-after-", "");
+                                string testStage = Path.Combine(root, "g4-cutover-" + scenario);
+                                string testBackup = Path.Combine(g4Backup, "cutover-" + scenario);
+                                Directory.CreateDirectory(testStage);
+                                Directory.CreateDirectory(testBackup);
+                                var startSnapshot = Safety.Capture(source);
+                                var image = ReplacementReadiness.PrepareVerifiedCopies(
+                                    source, preview.PreviewPath!, testStage,
+                                    testBackup, hash, fidelity.CandidateSha256);
+                                Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                    source, preview.PreviewPath!, testStage,
+                                    testBackup) == "Prepared",
+                                    "G4-04: 実PNGの2-volume準備後は元IDのまま: " + checkpoint);
+                                using (var writer = new FileStream(source,
+                                    FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                                    ExpectThrows(() =>
+                                        ReplacementReadiness.CutoverGeneratedPngSynthetic(
+                                            source, preview.PreviewPath!, testStage,
+                                            testBackup),
+                                        "G4-03: 原本writer競合中はID固定切替を拒否: " + checkpoint);
+                                Check(Safety.SameSnapshot(startSnapshot) &&
+                                    File.Exists(image.StagedPath),
+                                    "G4-03: 直前競合があっても原本/候補を保存: " + checkpoint);
+                                if (killDuringRecovery)
+                                    ReplacementReadiness.CutoverGeneratedPngSynthetic(
+                                        source, preview.PreviewPath!, testStage, testBackup);
+
+                                var childProcess = new System.Diagnostics.ProcessStartInfo("dotnet")
+                                {
+                                    UseShellExecute = false,
+                                    RedirectStandardOutput = true,
+                                    RedirectStandardError = true
+                                };
+                                foreach (string arg in new[] {
+                                    typeof(Program).Assembly.Location,
+                                    killDuringRecovery ? "--g4-pinned-restore-child" :
+                                        "--g4-pinned-cutover-child",
+                                    source, preview.PreviewPath!, testStage,
+                                    testBackup, checkpoint })
+                                    childProcess.ArgumentList.Add(arg);
+                                using (var child = System.Diagnostics.Process.Start(childProcess)
+                                    ?? throw new IOException("G4 cutover child failed"))
+                                {
+                                    if (!child.WaitForExit(120_000))
+                                    {
+                                        child.Kill(entireProcessTree: true);
+                                        throw new TimeoutException("G4 pinned child timed out");
+                                    }
+                                    string error = child.StandardError.ReadToEnd();
+                                    Check(child.ExitCode == 94,
+                                        "G4-04: NTFSリネーム境界で実OSプロセス停止: " +
+                                        checkpoint + " / " + error);
+                                }
+                                string interrupted = ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                    source, preview.PreviewPath!, testStage, testBackup);
+                                string expectedInterrupted = checkpoint switch {
+                                    "g4-after-original-rename" => "OriginalSetAside",
+                                    "g4-after-stage-rename" => "CandidateAtOriginal",
+                                    "g4-after-candidate-quarantine" => "CandidateQuarantined",
+                                    _ => "OriginalRestored"
+                                };
+                                Check(interrupted == expectedInterrupted,
+                                    "G4-04: 実プロセス死の原本ID・候補ID状態を判定: " +
+                                    checkpoint + " -> " + interrupted);
+                                string restored = ReplacementReadiness.RestoreGeneratedPngSynthetic(
+                                    source, preview.PreviewPath!, testStage, testBackup);
+                                Check(restored is "Prepared" or "OriginalRestored" &&
+                                    Safety.SameSnapshot(startSnapshot) &&
+                                    Safety.ComputeSha256(source, CancellationToken.None) == hash &&
+                                    Safety.ByteEqual(source, image.BackupPath,
+                                        CancellationToken.None) &&
+                                    NativeFile.GetIdentity(source).SameFile(
+                                        startSnapshot.Identity) &&
+                                    new FileInfo(source).Length == startSnapshot.Length,
+                                    "G4-04: 本物のプロセス死→原本ID/ACL/時刻/全バイト復元: " +
+                                    checkpoint);
+                                Check(ReplacementReadiness.RestoreGeneratedPngSynthetic(
+                                        source, preview.PreviewPath!, testStage,
+                                        testBackup) is "OriginalUnchanged" or "OriginalRestored",
+                                    "G4-04: 二重リカバリーは冪等かつ元画像未変更: " + checkpoint);
+                                Check(File.Exists(image.BackupPath) &&
+                                    File.Exists(image.ReceiptPath) &&
+                                    Safety.SameSnapshot(startSnapshot),
+                                    "G4-04: 復元後も独立原本backupとレシートは自動削除しない: " +
+                                    checkpoint);
+                            }
+
                         }
                         finally
                         {
@@ -1843,6 +1945,33 @@ static class Program
                 args[1], args[2], args[3], args[4]);
             Console.WriteLine("G4-03 child receipt state: " + inspection.State);
             return inspection.Complete ? 0 : 23;
+        }
+        if (args.Length == 6 && args[0] is
+            ("--g4-pinned-cutover-child" or "--g4-pinned-restore-child"))
+        {
+            if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
+                return 81;
+            string stopAt = args[5];
+            FaultInjection.OnCheckpoint = name =>
+            {
+                if (name == stopAt)
+                    Environment.Exit(94); // real OS process death, no finally/rollback
+            };
+            try
+            {
+                if (args[0] == "--g4-pinned-cutover-child")
+                    ReplacementReadiness.CutoverGeneratedPngSynthetic(
+                        args[1], args[2], args[3], args[4]);
+                else
+                    ReplacementReadiness.RestoreGeneratedPngSynthetic(
+                        args[1], args[2], args[3], args[4]);
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("G4 child rejected: " + ex);
+                return 95;
+            }
         }
         if (R217PreviewCrashTests.IsCrashChild(args))
             return R217PreviewCrashTests.RunCrashChild(args);

@@ -252,6 +252,36 @@ check('G4-04: all image source mutation remains absent from release build',
       'public const bool ProductionMutationEnabled = false;' in
         (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
 
+# G4-03: product WPF can prepare exactly one journal-backed PNG/JPG image
+# as independent new copies only. The trusted source/candidate SHA comes
+# from a FRESH read of the saved batch journal, never a user-supplied path,
+# a stale UI row, or synthetic-only cutover. No source mutation UI allowed.
+wpf_main_xaml = (root/'MainWindow.xaml').read_text(encoding='utf-8')
+check('G4-03: production WPF one-image copy-only handler is wired',
+      'CopyOnlyPreparationButton' in wpf_main_xaml and
+      'CopyOnlyPreparation_Click' in wpf_main_xaml and
+      'private async void CopyOnlyPreparation_Click(' in source and
+      'CopyOnlyPreparationButton.IsEnabled = !busy;' in source and
+      'ReplacementReadiness.PrepareOneVerifiedPreview(' in source and
+      'MessageBoxButton.YesNo' in source and
+      '実際に回復した容量は0 B' in source)
+check('G4-03: WPF-to-Core fresh journal re-read binds one original/candidate SHA',
+      'internal static PreparedCopies PrepareOneVerifiedPreview(' in replacement_readiness and
+      'var combined = CombinedCapacityReport.Inspect(root, output, ct);' in replacement_readiness and
+      'var review = Inspect(combined, root, output, independentBackupDirectory, ct);' in replacement_readiness and
+      'matching.Length != 1' in replacement_readiness and
+      'matching[0].SourceSha256 is not { Length: 64 }' in replacement_readiness and
+      'matching[0].CandidateSha256 is not { Length: 64 }' in replacement_readiness and
+      'return PrepareVerifiedCopies(original, accepted.VerifiedCandidatePath,' in replacement_readiness and
+      'G4-03: WPF経路は保存済み原本SHAから独立コピーを作成、元ID/DACL不変・実回復0B' in test)
+check('G4-03: WPF path refuses foreign source/volume/destination without source mutation',
+      'G4-03: WPFから未承認・破損原本を指定してもコピーを作らず拒否' in test and
+      'G4-03: WPF経路でも別NTFSバックアップがない場合は拒否' in test and
+      'G4-03: WPF経路でもstage異物を上書きせず拒否' in test and
+      'G4-03: 全拒否ケース後の原本ID・権限・内容は変わらない' in test and
+      'CopyOnlyPreparationButton' in source and
+      'ProductionReplacementAuthorized => false;' in replacement_readiness)
+
 # G4-02: official pinned JPEG executable provenance must be enforced by
 # the actual WinExe native execution path (not only by the CI test helper).
 wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')

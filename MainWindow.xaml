@@ -83,6 +83,8 @@
         <Button x:Name="JpegBatchReportButton" Content="JPG候補の容量レポート／CSV" Click="JpegBatchReport_Click"/>
         <Button x:Name="CombinedReportButton" Content="PNG/JPG統合容量レポート／CSV" Click="CombinedReport_Click"/>
         <Button x:Name="ReplacementReadinessButton" Content="容量回復の事前安全診断" Click="ReplacementReadiness_Click"/>
+        <Button x:Name="CopyOnlyPreparationButton" Content="画像1枚の独立バックアップ準備（原本変更なし）" Click="CopyOnlyPreparation_Click"
+                ToolTip="既存のPNG/JPG一括候補台帳を再検証し、別ドライブに原本全バイトコピー／元ドライブにstageコピーを新規作成。画像Applyは無効。"/>
         <Button x:Name="JpegRepairButton" Content="JPGログ末尾診断・復旧" Click="JpegRepair_Click"/>
         <Button x:Name="JpegPreviewButton" Content="JPG無劣化プレビュー" Click="JpegPreview_Click"/>
         <Button x:Name="JpegInspectButton" Content="JPG読み取り診断" Click="JpegInspect_Click"/>

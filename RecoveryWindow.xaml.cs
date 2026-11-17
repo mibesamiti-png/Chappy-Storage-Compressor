@@ -43,6 +43,65 @@ public partial class RecoveryWindow : Window
         return picker.ShowDialog(owner) == true ? picker.FileName : null;
     };
 
+    private bool _allowGeneratedImageTest;
+    private string? _reviewedImageReceipt;
+    private string? _reviewedImageState;
+    private Func<string, bool> _confirmGeneratedImage = message =>
+        MessageBox.Show(message, "生成データ検証", MessageBoxButton.YesNo,
+            MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+
+    private void UpdateGeneratedImageControls()
+    {
+        bool available = _allowGeneratedImageTest &&
+            Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";
+        GeneratedImageControls.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+        GeneratedImageApply.IsEnabled = available && !_busy && _reviewedImageState == "Prepared";
+        GeneratedImageRetire.IsEnabled = available && !_busy && _reviewedImageState == "Applied";
+        GeneratedImageRestore.IsEnabled = available && !_busy && _reviewedImageState is
+            ("Applied" or "AppliedWithoutRollback" or "BackupRestorePrepared" or
+             "OriginalSetAside" or "CandidateAtOriginal" or "CandidateQuarantined" or
+             "BackupCandidateQuarantined");
+    }
+
+    private async void GeneratedImageAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_allowGeneratedImageTest || _busy ||
+            !ReferenceEquals(RecoveryTabs.SelectedItem, ImageRecoveryTab) ||
+            _reviewedImageReceipt is not { } receipt ||
+            sender is not Button { IsEnabled: true, Tag: string tag } ||
+            !Enum.TryParse<ReplacementReadiness.GeneratedImageAction>(tag, out var action))
+            return;
+        string prompt = action switch
+        {
+            ReplacementReadiness.GeneratedImageAction.Apply =>
+                "生成画像の候補を適用します。退避原本と別ドライブのバックアップを保持します。",
+            ReplacementReadiness.GeneratedImageAction.RetireRollback =>
+                "照合した生成退避原本だけを整理します。別ドライブの独立バックアップは保持します。",
+            _ => "生成画像を復元します。別ドライブから戻す場合は元ドライブの容量を消費します。"
+        };
+        if (!_confirmGeneratedImage(prompt)) return;
+
+        Busy(true);
+        try
+        {
+            var result = await Task.Run(() => ReplacementReadiness.RunGeneratedImageAction(receipt, action));
+            _reviewedImageState = result.Review.State;
+            ImageReceiptReviewText.Text =
+                $"生成データ操作完了: {result.Review.State}\n" +
+                $"元ドライブの観測変化 {result.ObservedSourceFreeDelta:N0} B\n" +
+                (action == ReplacementReadiness.GeneratedImageAction.Apply ?
+                    "退避原本を保管中。回復として計上 0 B\n" : "") +
+                "観測値は他の書き込みを含む場合があります。\n" +
+                $"独立バックアップ: {result.Review.BackupPath}";
+        }
+        catch (Exception ex)
+        {
+            _reviewedImageState = null;
+            ImageReceiptReviewText.Text = "要手動確認。操作を停止しました。\n" + ex.Message;
+        }
+        finally { Busy(false); }
+    }
+
     private bool SyntheticUndoSelectionAllowed()
     {
         if (!_allowGeneratedOnlyUndoTest || _busy ||
@@ -102,6 +161,7 @@ public partial class RecoveryWindow : Window
         UndoExecuteButton.IsEnabled = !busy && SyntheticUndoSelectionAllowed();
         UndoCancelButton.IsEnabled = busy &&
             _undoWork is { IsCancellationRequested: false };
+        UpdateGeneratedImageControls();
     }
 
     private async void ImageReceiptReview_Click(object sender, RoutedEventArgs e)
@@ -111,11 +171,15 @@ public partial class RecoveryWindow : Window
         string? receipt = _pickImageReceipt(this);
         if (receipt is null) return;
 
+        _reviewedImageReceipt = null;
+        _reviewedImageState = null;
         Busy(true);
         ImageReceiptReviewText.Text = "原本名・候補・独立バックアップの証拠を照合中…";
         try
         {
             var review = await Task.Run(() => ReplacementReadiness.InspectImageTransaction(receipt));
+            _reviewedImageReceipt = receipt;
+            _reviewedImageState = review.State;
             string state = review.State switch
             {
                 "Prepared" => "準備済み・元のファイルが原本名にあります",

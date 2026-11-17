@@ -30,6 +30,12 @@ $image = [IO.Path]::Combine($sandbox, 'synthetic.vhdx')
 $createScript = [IO.Path]::Combine($sandbox, 'create-isolated.txt')
 $detachScript = [IO.Path]::Combine($sandbox, 'detach-isolated.txt')
 $detachSucceeded = $false
+$assigned = [IO.DriveInfo]::GetDrives().Name
+$directLetter = @('Z', 'Y', 'X', 'W', 'V') | Where-Object {
+    $assigned -notcontains ("${_}:\")
+} | Select-Object -First 1
+if (-not $directLetter) { throw 'No unused letter for the disposable VHDX' }
+
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -156,6 +162,7 @@ try {
         'create partition primary',
         'format fs=ntfs quick label=ChappyPart29',
         "assign mount=""$mount""",
+        "assign letter=$directLetter",
         'exit'
     ) -join ([Environment]::NewLine)
     RunDiskpart $create $createScript
@@ -369,6 +376,35 @@ try {
         nativeReplayOnIsolatedVhdx = $true
     }
 
+    # Reuse the same VHDX under its verified direct drive letter so the
+    # actual WPF/Core path is exercised without following a mount junction.
+    $direct = "${directLetter}:\"
+    Assert ((VolumeName $direct) -eq $testVolume) 'Direct letter does not address the generated VHDX'
+    $isolatedTemp = [IO.Path]::Combine($direct, 'v1-generated-temp')
+    [IO.Directory]::CreateDirectory($isolatedTemp) | Out-Null
+    $uiDll = [IO.Path]::GetFullPath('tests/bin/Release/net10.0-windows/ChappyStorageCompressor.UiSmokeTests.dll')
+    Assert ([IO.File]::Exists($uiDll)) 'Authoritative WPF test binary was not built'
+    $start = [Diagnostics.ProcessStartInfo]::new('dotnet')
+    $start.UseShellExecute = $false
+    $start.ArgumentList.Add($uiDll)
+    $start.ArgumentList.Add('--v1-isolated')
+    $start.Environment['TEMP'] = $isolatedTemp
+    $start.Environment['TMP'] = $isolatedTemp
+    $start.Environment['CHAPPY_V1_VHDX_TEMP'] = $isolatedTemp
+    $worker = [Diagnostics.Process]::Start($start)
+    try {
+        if (-not $worker.WaitForExit(300000)) {
+            $worker.Kill($true)
+            $worker.WaitForExit()
+            throw 'Isolated WPF acceptance timed out'
+        }
+        Assert ($worker.ExitCode -eq 0) "Isolated WPF acceptance exit: $($worker.ExitCode)"
+    } finally { $worker.Dispose() }
+    $wpf = Get-Content -Raw -LiteralPath 'diagnostics/v1-isolated-wpf.json' | ConvertFrom-Json
+    Assert ($wpf.rollbackRemovalObservedGainBytes -gt 0 -and
+        $wpf.backupRestoreObservedCostBytes -gt 0 -and
+        $wpf.realUserCapacityRecoveredBytes -eq 0) 'Isolated WPF allocation proof failed'
+
     # Fill ONLY the 512-MiB generated volume to cross the 4-MiB reserve.
     $filler = [IO.Path]::Combine($mount, 'generated-only-filler.bin')
     $chunk = [byte[]]::new(1MB)
@@ -412,6 +448,7 @@ try {
         generatedFillerBytes = $fillBytes
         groupedPartialAllocation = $batchReport
         imageReplacementAllocation = $jpegReport
+        actualWpfCoreIsolatedVolume = $wpf
         allSourceHashesAndIndependentIdsPreserved = $true
         productionDedupeEnabled = $false
         productionUndoEnabled = $false

@@ -251,9 +251,11 @@ check('G4-04: synthetic cutover is limited to the generated PNG/JPG smoke files'
 check('G4-04: release build refuses both image mutation entry points',
       'internal bool ProductionReplacementAuthorized => false;' in replacement_readiness and
       'internal bool ReadyForCutover => false;' in replacement_readiness and
-      replacement_readiness.count(
-          'RequireImageMutationScope(original, candidate, stageRoot, backupRoot);\n'
-          '        using var lease = MutationLease.Acquire();') == 2 and
+      'RequireImageMutationScope(original, candidate, stageRoot, backupRoot);\n'
+      '        ApplyImageCore(original, candidate, stageRoot, backupRoot);' in replacement_readiness and
+      'RequireImageMutationScope(original, candidate, stageRoot, backupRoot);\n'
+      '        return RestoreImageCore(original, candidate, stageRoot, backupRoot);' in replacement_readiness and
+      'RequireGeneratedImageScope(paths.Original, paths.Candidate, paths.Stage, paths.Backup);' in replacement_readiness and
       '#else\n        throw new NotSupportedException("画像原本の置換・復元は' in replacement_readiness and
       'public const bool ProductionMutationEnabled = false;' in
         (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))

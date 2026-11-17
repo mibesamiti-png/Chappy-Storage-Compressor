@@ -103,6 +103,14 @@
                   Content="画像準備レシートを開く（読み取り専用）"
                   HorizontalAlignment="Left" Margin="0,0,0,10" Padding="9,5"
                   Click="ImageReceiptReview_Click"/>
+          <WrapPanel x:Name="GeneratedImageControls" DockPanel.Dock="Bottom" Visibility="Collapsed">
+            <Button x:Name="GeneratedImageApply" Content="生成画像を適用" Tag="Apply"
+                    Click="GeneratedImageAction_Click" Margin="4"/>
+            <Button x:Name="GeneratedImageRetire" Content="生成した退避原本を整理" Tag="RetireRollback"
+                    Click="GeneratedImageAction_Click" Margin="4"/>
+            <Button x:Name="GeneratedImageRestore" Content="生成画像を復元" Tag="Restore"
+                    Click="GeneratedImageAction_Click" Margin="4"/>
+          </WrapPanel>
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <TextBlock x:Name="ImageReceiptReviewText"
                        Text="独立バックアップ先の .chappy-g4-preparation.json を選択してください。"

@@ -786,7 +786,6 @@ public static class ReplacementReadiness
         WriteImageEvidence(Path.Combine(directory, name),
             System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(progress));
 
-#if CHAPPY_TESTING
     private static void RequireGeneratedImageScope(string original, string candidate,
         string stageRoot, string backupRoot)
     {
@@ -808,7 +807,9 @@ public static class ReplacementReadiness
                 Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
             candidate.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
         bool jpeg = Eq(original, Path.Combine(root, "g4-jpeg-input", "g4.jpg")) &&
-            Eq(Path.GetDirectoryName(candidate)!, Path.Combine(root, "g4-jpeg-output")) &&
+            (Eq(Path.GetDirectoryName(candidate)!, Path.Combine(root, "g4-jpeg-output")) ||
+                Eq(Path.GetDirectoryName(candidate)!, Path.Combine(root, "g4-jpeg-output",
+                    JpegBatchPreviewEngine.PreviewName))) &&
             candidateName.StartsWith(jpegPrefix, StringComparison.Ordinal) &&
             candidateName.EndsWith(".jpg", StringComparison.Ordinal) &&
             Guid.TryParseExact(candidateName[jpegPrefix.Length..^4], "N", out _);
@@ -838,8 +839,6 @@ public static class ReplacementReadiness
         Safety.ValidateRoot(backupRoot);
     }
 
-#endif
-
     private static PreparationReceipt ReadImagePreparationReceipt(FileStream receiptLock)
     {
         if (!Safety.EligibleAttributes(File.GetAttributes(receiptLock.Name)) ||
@@ -866,7 +865,8 @@ public static class ReplacementReadiness
         internal long ActualFreedBytes => 0;
     }
 
-    internal static ImageTransactionReview InspectImageTransaction(string receiptPath)
+    private static (string Original, string Candidate, string Stage, string Backup)
+        ReadImageTransactionPaths(string receiptPath)
     {
         string path = Path.GetFullPath(receiptPath);
         if (!Path.GetFileName(path).Equals(G4ReceiptName, StringComparison.OrdinalIgnoreCase))
@@ -882,8 +882,13 @@ public static class ReplacementReadiness
             !Path.IsPathFullyQualified(candidate.Path) ||
             !Path.IsPathFullyQualified(stage.Path))
             throw new InvalidDataException("画像準備レシートのパスを確認できません");
-        return WithImageEvidence(original.Path, candidate.Path, Path.GetDirectoryName(stage.Path)!,
-            backupRoot, (inspect, _) =>
+        return (original.Path, candidate.Path, Path.GetDirectoryName(stage.Path)!, backupRoot);
+    }
+
+    internal static ImageTransactionReview InspectImageTransaction(string receiptPath)
+    {
+        var paths = ReadImageTransactionPaths(receiptPath);
+        return WithImageEvidence(paths.Original, paths.Candidate, paths.Stage, paths.Backup, (inspect, _) =>
             {
                 var phase = inspect();
                 string state = phase.State == "AppliedWithoutRollback" && phase.RestoreIdentity is not null ?
@@ -1114,6 +1119,12 @@ public static class ReplacementReadiness
         string stageRoot, string backupRoot)
     {
         RequireImageMutationScope(original, candidate, stageRoot, backupRoot);
+        ApplyImageCore(original, candidate, stageRoot, backupRoot);
+    }
+
+    private static void ApplyImageCore(string original, string candidate,
+        string stageRoot, string backupRoot)
+    {
         using var lease = MutationLease.Acquire();
         AssertImageDedupeHistoryClean(original);
         var ready = InspectPreparedCopies(original, candidate, stageRoot, backupRoot);
@@ -1163,6 +1174,12 @@ public static class ReplacementReadiness
         string stageRoot, string backupRoot)
     {
         RequireImageMutationScope(original, candidate, stageRoot, backupRoot);
+        return RestoreImageCore(original, candidate, stageRoot, backupRoot);
+    }
+
+    private static string RestoreImageCore(string original, string candidate,
+        string stageRoot, string backupRoot)
+    {
         using var lease = MutationLease.Acquire();
         AssertImageDedupeHistoryClean(original);
         return WithImageEvidence(original, candidate, stageRoot, backupRoot, (inspect, backup) =>
@@ -1199,6 +1216,59 @@ public static class ReplacementReadiness
             if (final.State is not ("Prepared" or "OriginalRestored"))
                 throw new InvalidDataException("G4 original restoration proof failed");
             return FinishImageRestore(phase, final.State);
+        });
+    }
+
+    internal enum GeneratedImageAction { Apply, RetireRollback, Restore }
+
+    internal sealed record GeneratedImageResult(ImageTransactionReview Review, long ObservedSourceFreeDelta);
+
+    internal static GeneratedImageResult RunGeneratedImageAction(string receiptPath,
+        GeneratedImageAction action)
+    {
+        var paths = ReadImageTransactionPaths(receiptPath);
+        RequireGeneratedImageScope(paths.Original, paths.Candidate, paths.Stage, paths.Backup);
+        var drive = new DriveInfo(Path.GetPathRoot(paths.Original)!);
+        long before = drive.AvailableFreeSpace;
+        switch (action)
+        {
+            case GeneratedImageAction.Apply:
+                ApplyImageCore(paths.Original, paths.Candidate, paths.Stage, paths.Backup);
+                break;
+            case GeneratedImageAction.RetireRollback:
+                RetireGeneratedImageRollback(paths.Original, paths.Candidate, paths.Stage, paths.Backup);
+                break;
+            case GeneratedImageAction.Restore:
+                RestoreImageCore(paths.Original, paths.Candidate, paths.Stage, paths.Backup);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(action));
+        }
+        return new(InspectImageTransaction(receiptPath), drive.AvailableFreeSpace - before);
+    }
+
+    // This entry is reachable only through the generated fixture guard above.
+    // A verified independent backup remains on the other volume throughout.
+    private static void RetireGeneratedImageRollback(string original, string candidate,
+        string stageRoot, string backupRoot)
+    {
+        using var lease = MutationLease.Acquire();
+        AssertImageDedupeHistoryClean(original);
+        WithImageEvidence(original, candidate, stageRoot, backupRoot, (inspect, _) =>
+        {
+            var phase = inspect();
+            if (phase.State != "Applied")
+                throw new InvalidDataException("退避原本の整理には適用済みの復旧記録が必要です");
+            using var result = NativeFile.PinnedFile.Open(phase.Original,
+                phase.Receipt.Stage!.Identity, phase.Receipt.CandidateSha256, denyDeleteSharing: true);
+            using var rollback = NativeFile.PinnedFile.Open(phase.Rollback,
+                phase.Receipt.Original!.Identity, phase.Receipt.OriginalSha256, denyDeleteSharing: true);
+            if (inspect().State != "Applied")
+                throw new InvalidDataException("退避原本の証拠が確認後に変化しました");
+            rollback.DeleteCurrent(requireIndependent: true);
+            if (inspect().State != "AppliedWithoutRollback")
+                throw new InvalidDataException("独立バックアップを保持した整理を検証できません");
+            return true;
         });
     }
 

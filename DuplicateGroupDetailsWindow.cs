@@ -319,8 +319,9 @@ internal sealed class DuplicateGroupDetailsWindow : Window
             _preview.Visibility = Visibility.Visible;
             _previewMessage.Visibility = Visibility.Collapsed;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
-            NotSupportedException or InvalidOperationException or ArgumentException)
+        // Image decoders may throw FileFormatException or a WIC COMException for
+        // malformed input. A failed thumbnail must never crash the inspector.
+        catch (Exception ex)
         {
             if (sequence != _previewSequence) return;
             _previewMessage.Text = "この画像はプレビューできません。\n" + ex.Message +

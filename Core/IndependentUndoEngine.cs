@@ -31,6 +31,83 @@ public static class IndependentUndoEngine
         uint BeforeLinks, long OriginalLength, long CreationTicks,
         long ModifiedTicks, string StageSha256);
 
+    // G3-06: validate the EXISTING per-alias Undo evidence sidecars.
+    // These are diagnostic receipts, NOT an alternative resume authority:
+    // CompletedGroupLedger's durable manifest/checkpoint remains authoritative.
+    // Reject unknown .tmp, orphan files, forged IDs and symlinks without
+    // deleting or adopting any evidence. Shared by normal/synthetic Core.
+    internal static void AssertUndoReceiptDirectory(string root, string evidence,
+        CancellationToken ct = default)
+    {
+        string fullRoot = Safety.ValidateRoot(root);
+        string full = Path.GetFullPath(evidence);
+        if (!full.StartsWith(fullRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) ||
+            !Directory.Exists(full) ||
+            (File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Undo evidence folder is untrusted");
+        int count = 0;
+        foreach (string path in Directory.EnumerateFileSystemEntries(full))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (++count > 128)
+                throw new InvalidDataException("Too many Undo receipts");
+            string name = Path.GetFileName(path);
+            const string suffix = ".part23-undo.json";
+            string id = name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                ? name[..^suffix.Length] : "";
+            if (!Guid.TryParseExact(id, "N", out _) || !File.Exists(path) ||
+                (File.GetAttributes(path) & (FileAttributes.ReparsePoint |
+                    FileAttributes.Directory | FileAttributes.System |
+                    FileAttributes.Offline)) != 0 ||
+                new FileInfo(path).Length is <= 0 or > 4096 ||
+                NativeFile.GetIdentity(path).LinkCount != 1 ||
+                NativeFile.HasNamedDataStreams(path))
+                throw new InvalidDataException(
+                    "Unknown, linked or malformed Undo evidence file");
+            Evidence rec;
+            try
+            {
+                rec = JsonSerializer.Deserialize<Evidence>(File.ReadAllBytes(path)) ??
+                    throw new InvalidDataException("Empty Undo evidence");
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidDataException("Malformed Undo evidence JSON", ex);
+            }
+            string alias = Path.GetFullPath(rec.Alias ?? "");
+            string master = Path.GetFullPath(rec.Master ?? "");
+            string stage = Path.GetFullPath(rec.Stage ?? "");
+            string expectedStage = Path.Combine(Path.GetDirectoryName(alias)!,
+                ".chappy-part23-undo-" + id + ".stage");
+            if (rec.Schema != 1 || rec.Sha256?.Length != 64 ||
+                !rec.Sha256.All(Uri.IsHexDigit) ||
+                !string.Equals(rec.Sha256, rec.StageSha256,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !alias.StartsWith(fullRoot + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !master.StartsWith(Safety.StorePath(fullRoot) +
+                    Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                !stage.Equals(expectedStage, StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(alias) || !File.Exists(master) ||
+                rec.OriginalLength <= 0 || rec.OriginalVolume == 0 ||
+                rec.OriginalIndex == 0 || rec.BeforeLinks is < 3 or > 34)
+                throw new InvalidDataException("Undo receipt has foreign path or metadata");
+            var masterId = NativeFile.GetIdentity(master);
+            if (masterId.VolumeSerial != rec.OriginalVolume ||
+                masterId.FileIndex != rec.OriginalIndex ||
+                new FileInfo(alias).Length != rec.OriginalLength ||
+                Safety.ComputeSha256(alias, ct) != rec.Sha256 ||
+                Safety.ComputeSha256(master, ct) != rec.Sha256)
+                throw new InvalidDataException("Undo receipt identity/content mismatch");
+            if (File.Exists(stage) &&
+                (NativeFile.GetIdentity(stage).LinkCount != 1 ||
+                    new FileInfo(stage).Length != rec.OriginalLength ||
+                    Safety.ComputeSha256(stage, ct) != rec.StageSha256))
+                throw new InvalidDataException("Undo receipt stage was replaced");
+        }
+    }
+
     public static Result Restore(string testRoot, FileSnapshot originalIndependent,
         string masterPath, string expectedHash, uint expectedSharedLinkCount,
         string evidenceDirectory, CancellationToken ct = default

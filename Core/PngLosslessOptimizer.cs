@@ -1,6 +1,9 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace ChappyStorageCompressor.Core;
 
@@ -135,6 +138,79 @@ public static class PngLosslessOptimizer
                 catch { /* Do not obscure original exception; show leftover in docs/UI. */ }
             }
         }
+    }
+
+    // G4-01: use the SAME CRC, ancillary allow-list, raw scanline and
+    // non-IDAT metadata contracts a second time immediately before any future
+    // image cutover. This checks persisted previews, not just newly written
+    // candidates. A true result is fidelity evidence, NEVER Apply permission.
+    internal static bool EquivalentForReplacement(string original, string candidate,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var source = PngInspector.Inspect(original, ct);
+        var preview = PngInspector.Inspect(candidate, ct);
+        if (!source.CandidateForFutureLosslessOptimization ||
+            !preview.CandidateForFutureLosslessOptimization ||
+            source.Width != preview.Width || source.Height != preview.Height ||
+            (long)source.Width * source.Height > 24_000_000)
+            return false;
+        using (var input = new FileStream(original, FileMode.Open, FileAccess.Read,
+                   FileShare.Read, IoBufferSize, FileOptions.SequentialScan))
+        using (var optimized = new FileStream(candidate, FileMode.Open, FileAccess.Read,
+                   FileShare.Read, IoBufferSize, FileOptions.SequentialScan))
+        {
+            var src = IndexChunks(input, ct);
+            var dst = IndexChunks(optimized, ct);
+            if (src.Any(x => x.Name.Length != 4 ||
+                    (char.IsLower(x.Name[0]) && char.IsUpper(x.Name[3]) &&
+                     !KnownAncillary.Contains(x.Name))) ||
+                dst.Any(x => x.Name.Length != 4 ||
+                    (char.IsLower(x.Name[0]) && char.IsUpper(x.Name[3]) &&
+                     !KnownAncillary.Contains(x.Name))) ||
+                ExpectedInflatedLength(input, src[0]) > MaximumInflatedBytes ||
+                ExpectedInflatedLength(optimized, dst[0]) > MaximumInflatedBytes)
+                return false;
+        }
+        if (!SameNonIdatChunks(original, candidate, ct) ||
+            !SameInflatedData(original, candidate, ct))
+            return false;
+        // WIC is deliberately independent of the zlib/PNG-chunk comparison.
+        // Compare decoded BGRA, not JPEG's BGR24: transparency, palette, and
+        // channel values must all survive. Reject unsupported decodes.
+        using var left = new FileStream(original, FileMode.Open, FileAccess.Read,
+            FileShare.Read, IoBufferSize);
+        using var right = new FileStream(candidate, FileMode.Open, FileAccess.Read,
+            FileShare.Read, IoBufferSize);
+        var originalImage = BitmapDecoder.Create(left,
+            BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var previewImage = BitmapDecoder.Create(right,
+            BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        if (originalImage.Frames.Count != 1 || previewImage.Frames.Count != 1)
+            return false;
+        var a = new FormatConvertedBitmap(originalImage.Frames[0],
+            PixelFormats.Bgra32, null, 0);
+        var b = new FormatConvertedBitmap(previewImage.Frames[0],
+            PixelFormats.Bgra32, null, 0);
+        if (a.PixelWidth != b.PixelWidth || a.PixelHeight != b.PixelHeight ||
+            a.PixelWidth != source.Width || a.PixelHeight != source.Height)
+            return false;
+        int stride = checked(a.PixelWidth * 4);
+        int rows = Math.Max(1, Math.Min(16, (4 * 1024 * 1024) / stride));
+        byte[] aa = new byte[checked(stride * rows)];
+        byte[] bb = new byte[aa.Length];
+        for (int y = 0; y < a.PixelHeight; y += rows)
+        {
+            ct.ThrowIfCancellationRequested();
+            int count = Math.Min(rows, a.PixelHeight - y);
+            var rect = new Int32Rect(0, y, a.PixelWidth, count);
+            a.CopyPixels(rect, aa, stride, 0);
+            b.CopyPixels(rect, bb, stride, 0);
+            if (!aa.AsSpan(0, count * stride).SequenceEqual(
+                bb.AsSpan(0, count * stride)))
+                return false;
+        }
+        return true;
     }
 
     private static List<Chunk> IndexChunks(FileStream stream, CancellationToken ct)

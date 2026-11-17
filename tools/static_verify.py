@@ -89,6 +89,38 @@ check('R1.5: no overwrite source', 'File.Delete(source)' not in optimizer and 'F
 check('R1.5: CRC structural check and unsafe metadata guard',
       'PngInspector.Inspect(candidate, ct)' in optimizer and 'KnownAncillary.Contains' in optimizer)
 check('R1.5: preview GUI wired', 'PngPreview_Click' in source and 'PngPreviewButton.IsEnabled' in source)
+
+# G4-01/02: the existing WPF readiness report must independently recheck
+# persisted PNG/JPEG bytes and image fidelity, not rely on preview-plan counts.
+replacement_readiness = (root/'Core/ReplacementReadiness.cs').read_text(encoding='utf-8')
+png_optimizer = (root/'Core/PngLosslessOptimizer.cs').read_text(encoding='utf-8')
+jpeg_engine = (root/'Core/JpegLosslessPreviewEngine.cs').read_text(encoding='utf-8')
+jpeg_audit = (root/'Core/JpegMarkerAudit.cs').read_text(encoding='utf-8')
+jpeg_metadata_tests = (root/'tests/R217JpegMetadataSimdProfile.cs').read_text(encoding='utf-8')
+check('G4-01: old saved PNGs rechecked with CRC, full filtered scanlines, non-IDAT metadata, WIC BGRA alpha',
+      'internal static bool EquivalentForReplacement(' in png_optimizer and
+      'PngInspector.Inspect(original, ct)' in png_optimizer and
+      'SameNonIdatChunks(original, candidate, ct)' in png_optimizer and
+      'SameInflatedData(original, candidate, ct)' in png_optimizer and
+      'PixelFormats.Bgra32' in png_optimizer and
+      'G4-01: 5種類のPNGで画素/透明度/非IDATチャンクを再確認:' in test and
+      'G4-01: 候補のPNGメタデータ/CRCを後から改ざんした場合は拒否' in test)
+check('G4-02/03/05: saved candidate must be rechecked with whole bytes, NTFS ID/ADS/link and JPEG metadata+WIC',
+      'public static FidelityDecision InspectCandidatePair(' in replacement_readiness and
+      'Safety.Capture(original)' in replacement_readiness and
+      'FileShare.Read' in replacement_readiness and
+      'Safety.ComputeSha256(original, ct)' in replacement_readiness and
+      'NativeFile.GetIdentity(candidate).LinkCount != 1' in replacement_readiness and
+      'JpegMarkerAudit.Inspect(original, ct)' in replacement_readiness and
+      'JpegLosslessPreviewEngine.EquivalentDecodedPixels(' in replacement_readiness and
+      'PngLosslessOptimizer.EquivalentForReplacement(original, candidate, ct)' in replacement_readiness and
+      'PngBatchJournalTools.ReadAudit(input, output, ct)' in replacement_readiness and
+      'JpegBatchPreviewEngine.Inspect(' in replacement_readiness and
+      'var fidelity = InspectCandidatePair(path, saved.Path, ct);' in replacement_readiness and
+      'candidate = JpegLosslessPreviewEngine.CreatePreview(original, output, tool);' in jpeg_metadata_tests and
+      'var fidelity = ReplacementReadiness.InspectCandidatePair(' in jpeg_metadata_tests and
+      'G4-03: 書込み可能な排他ハンドルが開いた原本では置換直前の検査を拒否' in test)
+
 check('R1.5/B2: public product merge stays locked',
       'public static long Run(' in core and
       '#else\n        throw new NotSupportedException' in core and
@@ -424,8 +456,18 @@ for token in ['EvaluateCapacity(', 'AvailableFreeSpace', 'Safety.Capture(path)',
               'MinimumReserveBytes', 'differentVolume', 'SourceBytes']:
     check('R2.2 preflight guard: '+token, token in r22)
 for destructive in ['File.Move(', 'File.Delete(', 'File.Replace(', 'File.Copy(', 'File.WriteAllBytes(',
-                    'FileStream(', 'Directory.CreateDirectory(', 'NativeFile.NewHardLink(']:
+                    'Directory.CreateDirectory(', 'NativeFile.NewHardLink(']:
     check('R2.2 preflight never mutates: '+destructive, destructive not in r22)
+# Read-only handles prevent a cooperating writer from racing the same NTFS
+# file. Forbid Create/Write/OpenOrCreate instead of forbidding FileStream
+# entirely, which would incorrectly reject the safer G4 pre-Apply design.
+check('R2.2/G4 read-only source and candidate FileStream locks',
+      'new FileStream(original, FileMode.Open,' in r22 and
+      'new FileStream(candidate, FileMode.Open,' in r22 and
+      'FileAccess.Read, FileShare.Read' in r22 and
+      not any(x in r22 for x in ['FileAccess.Write', 'FileAccess.ReadWrite',
+           'FileMode.Create', 'FileMode.Append', 'FileMode.OpenOrCreate',
+           'FileMode.Truncate']))
 check('R2.2 GUI event wired', 'ReplacementReadiness_Click' in source and
       'ReplacementReadinessButton.IsEnabled' in source and
       'ReplacementReadiness_Click' in (root/'MainWindow.xaml').read_text(encoding='utf-8'))

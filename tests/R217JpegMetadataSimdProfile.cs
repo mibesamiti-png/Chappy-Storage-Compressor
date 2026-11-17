@@ -232,6 +232,14 @@ internal static class R217JpegMetadataSimdProfile
             byte[] markers = ProtectedMetadataBytes(original);
             var candidate = JpegLosslessPreviewEngine.CreatePreview(original, output, tool);
             if (candidate.Candidate is null) continue;
+            // G4-02: read the persisted jpegtran result again through the
+            // common pre-Apply gate, rather than trusting preview creation.
+            var fidelity = ReplacementReadiness.InspectCandidatePair(
+                original, candidate.Candidate);
+            if (!fidelity.Verified || fidelity.ProductionReplacementAuthorized)
+                throw new InvalidDataException(
+                    "G4-02: persisted JPEG marker/WIC/source identity recheck rejected: " +
+                    fidelity.Reason);
             accepted++;
             candidateBytes += candidate.CandidateBytes;
             saving += candidate.EstimatedSavingBytes;
@@ -239,6 +247,24 @@ internal static class R217JpegMetadataSimdProfile
                 throw new InvalidDataException("Protected header/quantization mismatch for " + mode);
             if (!ProtectedMetadataBytes(candidate.Candidate).AsSpan().SequenceEqual(markers))
                 throw new InvalidDataException("Exif/XMP/ICC/APP13/COM segment bytes changed for " + mode);
+            // The candidate is already fully verified. Copy it to a disposable
+            // path and corrupt only that copy; the original and real preview
+            // must stay immutable and the pre-Apply gate must fail closed.
+            if (accepted == 2 && mode == "baseline")
+            {
+                string tampered = Path.Combine(output, "g4-corrupt-metadata.jpg");
+                byte[] changed = File.ReadAllBytes(candidate.Candidate);
+                int marker = System.Text.Encoding.ASCII.GetString(changed)
+                    .IndexOf("http://ns.adobe.com/xap", StringComparison.Ordinal);
+                if (marker < 0) throw new InvalidDataException(
+                    "G4-02 fixture missing protected XMP data");
+                changed[marker] ^= 0x01;
+                File.WriteAllBytes(tampered, changed);
+                if (ReplacementReadiness.InspectCandidatePair(
+                        original, tampered).Verified)
+                    throw new InvalidDataException(
+                        "G4-02 tampered XMP passed fresh pre-Apply fidelity check");
+            }
             var a = Decode(original);
             var b = Decode(candidate.Candidate);
             if (a.Width != b.Width || a.Height != b.Height ||

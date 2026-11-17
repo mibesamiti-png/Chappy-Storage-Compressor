@@ -516,6 +516,44 @@ static class Program
             var preview = PngLosslessOptimizer.CreatePreview(source, output);
             Check(preview.PreviewPath != null && preview.SavedBytes > 0,
                 "R1.6: 可逆候補生成: " + testCase.Name);
+            // G4-01: fresh pre-Apply recheck traverses the exact existing
+            // PNG IDAT/non-IDAT contract AND independent WIC BGRA pixels.
+            // RGBA alpha, Adam7, 16-bit gray, indexed4, and 1-bit are tested.
+            var fidelity = ReplacementReadiness.InspectCandidatePair(
+                source, preview.PreviewPath!);
+            Check(fidelity.Verified && !fidelity.ProductionReplacementAuthorized &&
+                fidelity.OriginalSha256 == hash,
+                "G4-01: 5種類のPNGで画素/透明度/非IDATチャンクを再確認: " +
+                testCase.Name);
+            if (testCase.Name == "rgba-multi.png")
+            {
+                string tampered = Path.Combine(output, "g4-tampered.png");
+                byte[] payload = File.ReadAllBytes(preview.PreviewPath!);
+                payload[50] ^= 0x01; // alter PNG metadata without correcting CRC
+                File.WriteAllBytes(tampered, payload);
+                Check(!ReplacementReadiness.InspectCandidatePair(
+                        source, tampered).Verified,
+                    "G4-01: 候補のPNGメタデータ/CRCを後から改ざんした場合は拒否");
+                string shared = Path.Combine(output, "g4-shared.png");
+                NativeFile.NewHardLink(shared, preview.PreviewPath!);
+                Check(!ReplacementReadiness.InspectCandidatePair(
+                        source, preview.PreviewPath!).Verified,
+                    "G4-05: 候補に外部ハードリンクを追加したら独立でなくなり拒否");
+                File.Delete(shared);
+                Check(ReplacementReadiness.InspectCandidatePair(
+                        source, preview.PreviewPath!).Verified,
+                    "G4-01: 既知の別名解消後は生成候補が再度独立と認証される");
+                using (var writer = new FileStream(source, FileMode.Open,
+                           FileAccess.ReadWrite, FileShare.None))
+                {
+                    Check(!ReplacementReadiness.InspectCandidatePair(
+                            source, preview.PreviewPath!).Verified,
+                        "G4-03: 書込み可能な排他ハンドルが開いた原本では置換直前の検査を拒否");
+                }
+                Check(ReplacementReadiness.InspectCandidatePair(
+                        source, preview.PreviewPath!).Verified,
+                    "G4-03: 外部ハンドル解放後の再検証は同じ元ID/SHAのみ合格");
+            }
             Check(Safety.ComputeSha256(source, CancellationToken.None) == hash,
                 "R1.6: 元ファイルの全バイト維持: " + testCase.Name);
         }

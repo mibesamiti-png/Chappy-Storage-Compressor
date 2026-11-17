@@ -702,7 +702,8 @@ static class Program
                                 old.CreationUtc == fresh.CreationUtc &&
                                 old.ModifiedUtc == fresh.ModifiedUtc &&
                                 old.Attributes == fresh.Attributes &&
-                                old.SecurityDescriptor.SequenceEqual(fresh.SecurityDescriptor);
+                                NativeFile.SameOwnerGroupDacl(
+                                    old.SecurityDescriptor, fresh.SecurityDescriptor);
                             Check(SameMetadata(originalSnapshot, metadataStage) &&
                                 SameMetadata(originalSnapshot, metadataBackup) &&
                                 !originalSnapshot.Identity.SameFile(metadataStage.Identity) &&

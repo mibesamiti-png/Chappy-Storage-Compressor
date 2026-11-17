@@ -543,6 +543,16 @@ static class Program
                 Check(ReplacementReadiness.InspectCandidatePair(
                         source, preview.PreviewPath!).Verified,
                     "G4-01: 既知の別名解消後は生成候補が再度独立と認証される");
+                using (var writer = new FileStream(source, FileMode.Open,
+                           FileAccess.ReadWrite, FileShare.None))
+                {
+                    Check(!ReplacementReadiness.InspectCandidatePair(
+                            source, preview.PreviewPath!).Verified,
+                        "G4-03: 書込み可能な排他ハンドルが開いた原本では置換直前の検査を拒否");
+                }
+                Check(ReplacementReadiness.InspectCandidatePair(
+                        source, preview.PreviewPath!).Verified,
+                    "G4-03: 外部ハンドル解放後の再検証は同じ元ID/SHAのみ合格");
             }
             Check(Safety.ComputeSha256(source, CancellationToken.None) == hash,
                 "R1.6: 元ファイルの全バイト維持: " + testCase.Name);

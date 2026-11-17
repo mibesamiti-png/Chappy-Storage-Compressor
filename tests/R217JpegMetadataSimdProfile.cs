@@ -250,7 +250,7 @@ internal static class R217JpegMetadataSimdProfile
             // The candidate is already fully verified. Copy it to a disposable
             // path and corrupt only that copy; the original and real preview
             // must stay immutable and the pre-Apply gate must fail closed.
-            if (accepted == 1 && mode == "baseline")
+            if (accepted == 2 && mode == "baseline")
             {
                 string tampered = Path.Combine(output, "g4-corrupt-metadata.jpg");
                 byte[] changed = File.ReadAllBytes(candidate.Candidate);

@@ -207,17 +207,18 @@ check('G4-03: exact original NTFS metadata is copied to both independent files',
       'IdentityFromHandle(handle)' in native and
       'SameSid(sourceOwner, targetOwner)' in native and
       'CopyOwnerGroupDaclToNewFile(original, target, before.Identity)' in replacement_readiness and
-      'ApplyOriginalMetadataToNewCopy(original, backedUp, originalSnapshot);' in replacement_readiness and
       'ApplyOriginalMetadataToNewCopy(original, staged, originalSnapshot);' in replacement_readiness and
+      'Do not force source DACL onto the independent backup filesystem' in replacement_readiness and
       'File.SetCreationTimeUtc(target, source.CreationUtc);' in replacement_readiness and
       'File.SetLastWriteTimeUtc(target, source.ModifiedUtc);' in replacement_readiness and
       'File.SetAttributes(target, source.Attributes);' in replacement_readiness)
 check('G4-03: stored/reloaded stage and backup refuse changed NTFS metadata',
       'staged.CreationUtc != old.CreationUtc' in replacement_readiness and
       '!NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
-      '!NativeFile.SameOwnerGroupDacl(backup.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
+      '!NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
+      'Safety.SameSnapshot(backup)' in replacement_readiness and
       'ConvertSecurityDescriptorToStringSecurityDescriptorW(' in native and
-      'G4-03: 新規stage/別volumeバックアップとも元owner/group/DACL/日時/属性が完全一致' in test and
+      'G4-03: stageの元owner/group/DACL/日時/属性一致、別volumeバックアップの独立IDと原権限レシート保全' in test and
       'G4-03: stageの画素全バイトが正しくても元日時相違を再起動後拒否' in test)
 
 # G4-02: official pinned JPEG executable provenance must be enforced by

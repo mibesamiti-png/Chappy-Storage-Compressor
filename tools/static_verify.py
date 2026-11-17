@@ -198,7 +198,7 @@ check('B2 G2-07: default WPF selected risk review is read-only; generated fixtur
       'CompletedGroupLedger.RequireSynthetic(root)' in source and
       'CompletedGroupLedger.MergeVerifiedGroups(root, groups, token)' in source and
       'string root = RequireSynthetic(input);' in group_ledger and
-      'root = CompletedGroupLedger.RequireSynthetic(root);' in dedupe_engine and
+      'root = CompletedGroupLedger.RequireSynthetic(root);' in core and
       'b2GeneratedOnlySelectedMergeRoutedTwoConsentAndPersistedCore = ' in ui_test and
       'b2NonSentinelWpfAndInternalCoreStillLocked = ' in ui_test and
       'b2GeneratedSelectionNoConsentKeepsOriginalNtfsIds = ' in ui_test)

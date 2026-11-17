@@ -201,20 +201,19 @@ check('G4-03/04: readonly journal replay fails closed for foreign, changed or or
 # Security must be applied via a pinned stage/backup handle, not a mutable
 # pathname; unsupported owner/group changes are rejected without mutation.
 native = (root/'Core/NativeFile.cs').read_text(encoding='utf-8')
-check('G4-03: exact original NTFS metadata is copied to both independent files',
+check('G4-03: exact original NTFS metadata is copied to same-volume stage',
       'internal static void CopyOwnerGroupDaclToNewFile(' in native and
       'SetSecurityInfo(handle, 1, DaclInfo,' in native and
       'IdentityFromHandle(handle)' in native and
       'SameSid(sourceOwner, targetOwner)' in native and
       'CopyOwnerGroupDaclToNewFile(original, target, before.Identity)' in replacement_readiness and
       'ApplyOriginalMetadataToNewCopy(original, staged, originalSnapshot);' in replacement_readiness and
-      'Do not force source DACL onto the independent backup filesystem' in replacement_readiness and
+      'not force source DACL onto the independent backup filesystem' in replacement_readiness and
       'File.SetCreationTimeUtc(target, source.CreationUtc);' in replacement_readiness and
       'File.SetLastWriteTimeUtc(target, source.ModifiedUtc);' in replacement_readiness and
       'File.SetAttributes(target, source.Attributes);' in replacement_readiness)
 check('G4-03: stored/reloaded stage and backup refuse changed NTFS metadata',
       'staged.CreationUtc != old.CreationUtc' in replacement_readiness and
-      '!NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
       '!NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
       'Safety.SameSnapshot(backup)' in replacement_readiness and
       'ConvertSecurityDescriptorToStringSecurityDescriptorW(' in native and

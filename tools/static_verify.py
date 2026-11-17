@@ -220,6 +220,38 @@ check('G4-03: stored/reloaded stage and backup refuse changed NTFS metadata',
       'G4-03: stageの元owner/group/DACL/日時/属性一致、別volumeバックアップの独立IDと原権限レシート保全' in test and
       'G4-03: stageの画素全バイトが正しくても元日時相違を再起動後拒否' in test)
 
+# G4-03/04: production cutover must stay impossible until verified
+# release transaction. The CI synthetic-only implementation MUST use the
+# existing NTFS pinned-ID no-replace primitive and a durable preparation
+# receipt, with real process-death recovery and byte-exact original-ID proof.
+check('G4-04: generated PNG cutover/restore use pinned IDs, not File.Replace',
+      '#if CHAPPY_TESTING' in replacement_readiness and
+      'internal static void CutoverGeneratedPngSynthetic(' in replacement_readiness and
+      'internal static string RestoreGeneratedPngSynthetic(' in replacement_readiness and
+      'NativeFile.PinnedFile.Open(p.Original,' in replacement_readiness and
+      'NativeFile.PinnedFile.Open(p.Stage,' in replacement_readiness and
+      'sourcePinned.RenameNoReplace(p.Rollback);' in replacement_readiness and
+      'stagePinned.RenameNoReplace(p.Original);' in replacement_readiness and
+      'candidatePinned.RenameNoReplace(p.Quarantine);' in replacement_readiness and
+      'oldPinned.RenameNoReplace(p.Original);' in replacement_readiness and
+      'File.Replace(' not in replacement_readiness and
+      'File.Move(' not in replacement_readiness)
+check('G4-04: synthetic cutover can only touch generated exact PNG smoke files',
+      'RequireGeneratedImageScope(' in replacement_readiness and
+      'Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"' in replacement_readiness and
+      'Guid.TryParseExact(name[' in replacement_readiness and
+      '"r16-variants", "rgba-multi.png"' in replacement_readiness and
+      '"ChappyStorageSmoke_G4Backup_"' in replacement_readiness and
+      'G4-04: 実プロセス死の原本ID・候補ID状態を判定:' in test and
+      'G4-04: 本物のプロセス死→原本ID/ACL/時刻/全バイト復元:' in test and
+      'G4-04: 二重リカバリーは冪等かつ元画像未変更:' in test)
+check('G4-04: all image source mutation remains absent from release build',
+      'internal bool ProductionReplacementAuthorized => false;' in replacement_readiness and
+      'internal bool ReadyForCutover => false;' in replacement_readiness and
+      '#if CHAPPY_TESTING' in replacement_readiness and
+      'public const bool ProductionMutationEnabled = false;' in
+        (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
+
 # G4-02: official pinned JPEG executable provenance must be enforced by
 # the actual WinExe native execution path (not only by the CI test helper).
 wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')

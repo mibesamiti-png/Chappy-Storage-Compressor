@@ -82,7 +82,8 @@ public static class DuplicateCleanupWorkflow
                 snap.Attributes == expected.Attributes &&
                 Convert.ToHexString(SHA256.HashData(snap.SecurityDescriptor)) ==
                     expected.SecurityHash &&
-                string.Equals(Safety.ComputeSha256(path, CancellationToken.None),
+                string.Equals(Safety.ComputeSha256(path, CancellationToken.None,
+                    allowDeleteSharing: true),
                     expected.Sha256, StringComparison.OrdinalIgnoreCase) &&
                 Safety.SameSnapshot(snap);
         }
@@ -315,7 +316,7 @@ public static class DuplicateCleanupWorkflow
                 $"modified={got.ModifiedUtc == c.Original.ModifiedUtc}, " +
                 $"attributes={got.Attributes == c.Original.Attributes}, " +
                 $"security={Convert.ToHexString(SHA256.HashData(got.SecurityDescriptor)) == c.Original.SecurityHash}, " +
-                $"sha={Safety.ComputeSha256(got.Path, CancellationToken.None) == c.Original.Sha256}, " +
+                $"sha={Safety.ComputeSha256(got.Path, CancellationToken.None, allowDeleteSharing: true) == c.Original.Sha256}, " +
                 $"keeper={Matches(x.Keeper, x.Keeper.Path)}";
             throw new InvalidDataException(why);
         }

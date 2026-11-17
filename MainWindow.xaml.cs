@@ -187,7 +187,7 @@ public partial class MainWindow : Window
     {
         using var dialog = new Forms.FolderBrowserDialog
         {
-            Description = "写真・動画の親フォルダを選択してください（ドライブ全体はR1対象外）",
+            Description = "重複を探したいフォルダを選択してください（すべての通常ファイル形式に対応）",
             ShowNewFolderButton = false,
         };
         if (dialog.ShowDialog() == Forms.DialogResult.OK) PathBox.Text = dialog.SelectedPath;
@@ -733,37 +733,39 @@ public partial class MainWindow : Window
         }
     }
 
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        MainTabs.SelectedIndex = 0;
+        AdvancedExpander.IsExpanded = true;
+    }
+
+    private void GroupDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (_busy || e.OriginalSource is not DependencyObject source) return;
+        for (DependencyObject? current = source; current is not null;
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current))
+        {
+            if (current is DataGridRow)
+            {
+                Details_Click(sender, e);
+                return;
+            }
+            if (ReferenceEquals(current, GroupsGrid)) break;
+        }
+    }
+
     private void Details_Click(object sender, RoutedEventArgs e)
     {
-        if (GroupsGrid.SelectedItem is not GroupRow item) return;
-        var panel = new DockPanel { Margin = new Thickness(14) };
-        var caption = new TextBlock
-        {
-            Text = $"SHA-256: {item.Group.Hash}\n1ファイル: {item.FileSizeText} / {item.Count}件\n統合条件: {item.Status}\n\n下の全パスを確認してください。",
-            Foreground = System.Windows.Media.Brushes.WhiteSmoke, Margin = new Thickness(0, 0, 0, 12), TextWrapping = TextWrapping.Wrap
-        };
-        DockPanel.SetDock(caption, Dock.Top);
-        panel.Children.Add(caption);
-        var copyButton = new Button { Content = "全パスをコピー", Margin = new Thickness(0, 12, 0, 0) };
-        copyButton.Click += (_, _) => System.Windows.Clipboard.SetText(string.Join(Environment.NewLine, item.Group.Files.Select(f => f.Path)));
-        DockPanel.SetDock(copyButton, Dock.Bottom);
-        panel.Children.Add(copyButton);
-        var paths = new ListBox
-        {
-            ItemsSource = item.Group.Files.Select(f => f.Path).ToList(),
-            Foreground = System.Windows.Media.Brushes.WhiteSmoke,
-            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(24, 36, 52)),
-            BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(50, 68, 85)),
-        };
-        panel.Children.Add(paths);
-        var dialog = new Window
-        {
-            Owner = this, Title = "完全一致グループ内の全ファイル", Width = 850, Height = 490,
-            MinWidth = 550, MinHeight = 330, Content = panel,
-            Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(14, 23, 36)),
-            WindowStartupLocation = WindowStartupLocation.CenterOwner
-        };
-        dialog.ShowDialog();
+        if (_busy || GroupsGrid.SelectedItem is not GroupRow row) return;
+        // The list is partitioned for hard-link safety. A duplicate inspector
+        // must show ALL byte-equal paths, including different metadata,
+        // volumes and dates, instead of silently hiding the residual names.
+        var complete = _lastScan?.Groups.FirstOrDefault(group =>
+            group.Hash == row.Group.Hash &&
+            group.Files.Any(file => row.Group.Files.Any(selected =>
+                string.Equals(file.Path, selected.Path, StringComparison.OrdinalIgnoreCase))))
+            ?? row.Group;
+        new DuplicateGroupDetailsWindow(complete) { Owner = this }.ShowDialog();
     }
 
     private async void PngPreview_Click(object sender, RoutedEventArgs e)

@@ -1051,7 +1051,14 @@ internal static class UiInteractionSmoke
                 int liveToolPicks = 0, liveFolderPicks = 0, liveConsents = 0, liveResults = 0;
                 string liveResultBody = "", liveFailureBody = "";
                 SetPrivate(window, "_showCombinedFailure",
-                    new Action<string>(body => liveFailureBody = body));
+                    new Action<string>(body =>
+                    {
+                        liveFailureBody = body;
+                        // Keep the Part15/21/22 shared WPF failure probe
+                        // alive for all subsequent race/safety regressions.
+                        errorCount++;
+                        errorMessage = body;
+                    }));
                 SetPrivate(window, "_pickCombinedTool", new Func<string?, string?>(_ =>
                 {
                     liveToolPicks++;

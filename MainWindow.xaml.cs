@@ -148,7 +148,7 @@ public partial class MainWindow : Window
     {
         _lastScan = null;
         _rows.Clear();
-        ScannedCountText.Text = GroupCountText.Text = SafeCountText.Text = SavingsText.Text = "—";
+        ScannedCountText.Text = DuplicateFileCountText.Text = GroupCountText.Text = SafeCountText.Text = SavingsText.Text = "—";
         ReadOnlyDashboardText.Text = "直近の検証結果：未スキャン。画像候補と重複の合算は未評価。実際の空き容量回復は未実行です。";
         JobProgress.IsIndeterminate = false;
         JobProgress.Value = 0;
@@ -273,6 +273,7 @@ public partial class MainWindow : Window
             });
         }
         ScannedCountText.Text = _lastScan.FileCount.ToString("N0");
+        DuplicateFileCountText.Text = _lastScan.Groups.Sum(g => g.Files.Count).ToString("N0");
         // GroupCount always means byte-exact groups, not the safety partitions.
         GroupCountText.Text = _lastScan.Groups.Count.ToString("N0");
         var safe = _rows.Where(x => x.Status == "統合可能").ToList();

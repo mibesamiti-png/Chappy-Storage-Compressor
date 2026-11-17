@@ -113,6 +113,22 @@ check('B2: shared internal full-group commit remains gated from WPF',
       'public static void ConfirmPreparedSynthetic(' in group_ledger and
       'public static bool ProductionMutationEnabled = true' not in group_ledger and
       'MergeVerifiedGroup(' not in source)
+directory_core = (root/'Core/NativeFile.cs').read_text(encoding='utf-8')
+parent_race = (root/'tests/R217PathSwapRaceTests.cs').read_text(encoding='utf-8')
+check('B2 G2-03: production Core pins parent directory IDs without delete sharing',
+      'internal sealed class PinnedDirectories : IDisposable' in directory_core and
+      'BackupSemantics | OpenReparsePoint' in directory_core and
+      'denyDelete ? ShareReadWrite : ShareReadWriteDelete' in directory_core and
+      'internal void AssertUnchanged()' in directory_core and
+      'using var sourceParents = NativeFile.PinnedDirectories.Open(' in core and
+      'using var storeParents = NativeFile.PinnedDirectories.Open(' in core and
+      'sourceParents.AssertUnchanged();' in core and
+      'storeParents.AssertUnchanged();' in core and
+      'using var parents = NativeFile.PinnedDirectories.Open(' in group_ledger and
+      'parents.AssertUnchanged();' in group_ledger and
+      'parent-dir-move' in parent_race and
+      'VerifyPinnedParentAgainstExternalMove(parent, check, expectThrows);' in parent_race and
+      'MergeVerifiedGroup(' not in source)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

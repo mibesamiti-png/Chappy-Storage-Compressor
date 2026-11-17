@@ -33,6 +33,8 @@ internal sealed class DuplicateGroupDetailsWindow : Window
     private static readonly Brush Muted = new SolidColorBrush(Color.FromRgb(178, 178, 178));
     private static readonly Brush Panel = new SolidColorBrush(Color.FromRgb(27, 27, 27));
 
+    private readonly DuplicateGroup _group;
+    private readonly string? _scanRoot;
     private readonly IReadOnlyList<DisplayFile> _files;
     private readonly DataGrid _grid;
     private readonly Image _preview;
@@ -43,8 +45,12 @@ internal sealed class DuplicateGroupDetailsWindow : Window
     private DisplayFile? _selected;
     private long _previewSequence;
 
-    internal DuplicateGroupDetailsWindow(DuplicateGroup group)
+    internal DuplicateGroupDetailsWindow(DuplicateGroup group) : this(group, null) { }
+
+    internal DuplicateGroupDetailsWindow(DuplicateGroup group, string? scanRoot)
     {
+        _group = group;
+        _scanRoot = scanRoot;
         if (group.Files.Count == 0) throw new ArgumentException("Empty duplicate group", nameof(group));
         _files = group.Files.Select(file => new DisplayFile(file)).ToArray();
         _keeper = _files[0];
@@ -197,6 +203,10 @@ internal sealed class DuplicateGroupDetailsWindow : Window
         var right = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         right.Children.Add(MakeButton("残すファイルに指定（予定）", (_, _) => ChooseKeeper(),
             "この画面内の選択だけを変更します。削除・ごみ箱への移動は行いません。"));
+        var reviewButton = MakeButton("整理先・削除候補を確認", (_, _) => ReviewCleanupPlan(),
+            "一番上の親フォルダに『同名ファイル』を作る予定と元パス一覧を確認します。ファイル変更は未実行。");
+        reviewButton.IsEnabled = !string.IsNullOrWhiteSpace(_scanRoot);
+        right.Children.Add(reviewButton);
         right.Children.Add(MakeButton("閉じる", (_, _) => Close(), "確認画面を閉じます。"));
         DockPanel.SetDock(right, Dock.Right);
         footer.Children.Add(right);
@@ -265,6 +275,100 @@ internal sealed class DuplicateGroupDetailsWindow : Window
     {
         _keeperLabel.Text = "残す予定: " + _keeper.FullPath +
             $"  （削除候補は {_files.Count - 1} 件・未実行）";
+    }
+
+    private void ReviewCleanupPlan()
+    {
+        if (string.IsNullOrWhiteSpace(_scanRoot)) return;
+        DuplicateCleanupPreview.Result plan;
+        try
+        {
+            plan = DuplicateCleanupPreview.Inspect(_scanRoot, _group, _keeper.FullPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+            InvalidOperationException or ArgumentException or OverflowException)
+        {
+            MessageBox.Show(this, ex.Message + "\nスキャン結果と実際のファイル状態を確認してください。",
+                "整理先の確認を中止しました", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = "重複ファイルの整理予定・削除前確認（未実行）",
+            Width = 900,
+            Height = 620,
+            MinWidth = 680,
+            MinHeight = 430,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Background,
+            Foreground = Light,
+            FontFamily = FontFamily
+        };
+        var content = new DockPanel { Margin = new Thickness(18), LastChildFill = true };
+        var header = new TextBlock
+        {
+            Text = "残すファイルを固定し、元ディレクトリを記録した整理先を確認します。\n" +
+                   "同名ファイル/元フォルダ構造/連番と、最上位の同名ファイル一覧.txtの方式を再利用します。",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Light,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        DockPanel.SetDock(header, Dock.Top);
+        content.Children.Add(header);
+
+        var status = new TextBlock
+        {
+            Text = "未確認：削除は実行できません。",
+            Foreground = Muted,
+            Margin = new Thickness(0, 8, 0, 6)
+        };
+        var consent = new CheckBox
+        {
+            Content = "残す1件・削除候補・元のパス・フォルダ分け予定を確認した",
+            Foreground = Light,
+            IsChecked = false,
+            ToolTip = "確認済みの印はこの画面限り。削除の許可や実行ではありません。"
+        };
+        consent.Checked += (_, _) => status.Text =
+            "確認済み（計画のみ）。削除機能は別途安全性を検証するまで無効です。";
+        consent.Unchecked += (_, _) => status.Text = "未確認：削除は実行できません。";
+
+        var footer = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+        footer.Children.Add(consent);
+        footer.Children.Add(status);
+        var buttons = new WrapPanel();
+        buttons.Children.Add(MakeButton("一覧メモをコピー", (_, _) =>
+        {
+            try { Clipboard.SetText(plan.Describe()); }
+            catch (Exception ex) { ShowError(ex); }
+        }, "保存先と元パスを含む、未実行の整理予定表をコピーします。"));
+        var delete = MakeButton("確認後にごみ箱へ移動（未解禁）", (_, _) => { },
+            "実装・復元確認・競合検証・実機受入・明示承認が済むまで操作できません。");
+        delete.IsEnabled = false;
+        buttons.Children.Add(delete);
+        buttons.Children.Add(MakeButton("閉じる", (_, _) => dialog.Close(),
+            "対象ファイルは一切変更されません。"));
+        footer.Children.Add(buttons);
+        DockPanel.SetDock(footer, Dock.Bottom);
+        content.Children.Add(footer);
+
+        var memo = new TextBox
+        {
+            Text = plan.Describe(),
+            IsReadOnly = true,
+            Background = Panel,
+            Foreground = Light,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(12),
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
+        content.Children.Add(memo);
+        dialog.Content = content;
+        dialog.ShowDialog();
     }
 
     private static bool IsImage(string path)

@@ -119,6 +119,44 @@ internal static class UiInteractionSmoke
                     OracleHash(textFile) == OracleHash(binaryFile),
                 "UI: read-only duplicate inspector preserves both original files");
 
+            // Duplicate cleanup planning reuses the proven collision-folder
+            // path/nesting/memo naming rules but must not move/delete anything.
+            string originalTextSha = OracleHash(textFile), originalBinSha = OracleHash(binaryFile);
+            var plannedCleanup = DuplicateCleanupPreview.Inspect(
+                allFileRoot, allFileResult.Groups[0], textFile);
+            Require(plannedCleanup.KeeperPath == textFile &&
+                    plannedCleanup.DeleteCandidates.Count == 1 &&
+                    plannedCleanup.DeleteCandidates[0].OriginalPath == binaryFile &&
+                    plannedCleanup.DeleteCandidates[0].ProposedCollectionRelativePath ==
+                        Path.Combine("同名ファイル", "document-copy (1).bin") &&
+                    plannedCleanup.CollectionRelativePath == "同名ファイル" &&
+                    plannedCleanup.ReportRelativePath == "同名ファイル一覧.txt" &&
+                    plannedCleanup.Describe().Contains("元の相対パス", StringComparison.Ordinal) &&
+                    plannedCleanup.Describe().Contains("残すファイル", StringComparison.Ordinal) &&
+                    !plannedCleanup.CanModifyUserFiles &&
+                    !Directory.Exists(Path.Combine(allFileRoot, "同名ファイル")) &&
+                    !File.Exists(Path.Combine(allFileRoot, "同名ファイル一覧.txt")),
+                "UI: existing folder/memo policy projects duplicate removal without writing");
+
+            string existingCollection = Path.Combine(allFileRoot, "同名ファイル");
+            Directory.CreateDirectory(existingCollection);
+            string existingReport = Path.Combine(allFileRoot, "同名ファイル一覧.txt");
+            File.WriteAllText(existingReport, "Existing user memo: do not overwrite.");
+            var nestedCleanup = DuplicateCleanupPreview.Inspect(
+                allFileRoot, allFileResult.Groups[0], textFile);
+            Require(nestedCleanup.CollectionRelativePath ==
+                        Path.Combine("同名ファイル", "同名ファイル") &&
+                    nestedCleanup.DeleteCandidates.Single().ProposedCollectionRelativePath ==
+                        Path.Combine("同名ファイル", "同名ファイル", "document-copy (1).bin") &&
+                    nestedCleanup.ReportRelativePath == "同名ファイル一覧 (1).txt" &&
+                    File.ReadAllText(existingReport) == "Existing user memo: do not overwrite." &&
+                    !Directory.Exists(Path.Combine(existingCollection, "同名ファイル")) &&
+                    !File.Exists(Path.Combine(allFileRoot, "同名ファイル一覧 (1).txt")) &&
+                    OracleHash(textFile) == originalTextSha &&
+                    OracleHash(binaryFile) == originalBinSha,
+                "UI: duplicate cleanup preview preserves existing nested collection, memo and source hashes");
+
+
             string originals = Path.Combine(testRoot, "synthetic-originals");
             Directory.CreateDirectory(originals);
             string left = Path.Combine(originals, "test-a.mp4");

@@ -775,7 +775,7 @@ public partial class MainWindow : Window
             group.Files.Any(file => row.Group.Files.Any(selected =>
                 string.Equals(file.Path, selected.Path, StringComparison.OrdinalIgnoreCase))))
             ?? row.Group;
-        new DuplicateGroupDetailsWindow(complete) { Owner = this }.ShowDialog();
+        new DuplicateGroupDetailsWindow(complete, _lastScan!.Root) { Owner = this }.ShowDialog();
     }
 
     private async void PngPreview_Click(object sender, RoutedEventArgs e)

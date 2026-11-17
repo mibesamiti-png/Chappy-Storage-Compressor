@@ -381,10 +381,6 @@ public static class ReplacementReadiness
                 staged.ModifiedUtc != old.ModifiedUtc ||
                 staged.Attributes != old.Attributes ||
                 !NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor) ||
-                backup.CreationUtc != old.CreationUtc ||
-                backup.ModifiedUtc != old.ModifiedUtc ||
-                backup.Attributes != old.Attributes ||
-                !NativeFile.SameOwnerGroupDacl(backup.SecurityDescriptor, old.SecurityDescriptor) ||
                 !Safety.SameSnapshot(old) || !Safety.SameSnapshot(c) ||
                 !Safety.SameSnapshot(staged) || !Safety.SameSnapshot(backup) ||
                 !Eq(Safety.ComputeSha256(original, ct), record.OriginalSha256) ||
@@ -549,10 +545,13 @@ public static class ReplacementReadiness
             output.Flush(flushToDisk: true);
         }
         FlushVerifiedCopy(sourceLock, backedUp, ct);
-        // Preserve source owner/group/DACL, attributes and timestamps on the
-        // independent FULL backup as a second recovery proof besides the
-        // already-persisted JSON receipt. A permission failure is a hard stop.
-        ApplyOriginalMetadataToNewCopy(original, backedUp, originalSnapshot);
+        // Different NTFS volumes can have DIFFERENT inheritable ACLs. Do
+        // not force source DACL onto the independent backup filesystem: doing
+        // so could change backup access protections or leave the wrong
+        // inherited rights. Record its actual ID/DACL/metadata, plus the
+        // ORIGINAL owner/group/DACL/timestamps in the durable receipt. The
+        // copy is byte-identical, and replay checks both separate snapshots.
+        // Only the same-volume cutover stage must match original metadata.
         // Verify the independent copy before even starting to stage candidate.
         var copy = Safety.Capture(backedUp);
         if (copy.Length != originalSnapshot.Length || copy.Identity.LinkCount != 1 ||

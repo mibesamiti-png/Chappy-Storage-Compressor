@@ -127,6 +127,7 @@ wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8'
 diagnostics_batch = (root/'RUN_DIAGNOSTICS.bat').read_text(encoding='utf-8')
 pinned_profile = (root/'tests/R217PinnedJpegtranProfile.cs').read_text(encoding='utf-8')
 jpeg_batch_source = (root/'Core/JpegBatchPreviewEngine.cs').read_text(encoding='utf-8')
+workflow = (root/'.github/workflows/build-windows.yml').read_text(encoding='utf-8')
 check('G4-02: compiled SHA pin is in WPF assembly metadata, not runtime config or writable sidecar',
       'Chappy.TrustedJpegtranSha256' in wpf_project and
       'ChappyTrustedJpegtranSha256' in wpf_project and

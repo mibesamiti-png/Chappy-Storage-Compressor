@@ -164,13 +164,68 @@ public static class CollisionRecoveryLedger
     private static string RequireSource(string testRoot, string source)
     {
         string full = Path.GetFullPath(source);
-        string allowed = Path.Combine(testRoot, "part35-incoming");
-        if (!full.StartsWith(allowed + Path.DirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase) ||
-            !File.Exists(full))
-            throw new InvalidDataException("Part35 only copies synthetic input source bytes");
+        string legacy = Path.Combine(testRoot, "part35-incoming");
+        bool generatedIncoming = full.StartsWith(legacy + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+        if (!File.Exists(full) ||
+            !full.StartsWith(testRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Part35 source outside generated test root");
         ParentsNotLinked(testRoot, full, create: false);
+        if (!generatedIncoming)
+        {
+            // G3-05: a second allowed source is an already INDEPENDENT alias
+            // authenticated from this root's completed->restored group ledger.
+            // A shared master, prepared alias, unverified foreign path or
+            // replaced source is never treated as a collision export source.
+            var current = Safety.Capture(full);
+            var entry = CompletedGroupLedger.InspectOriginals(testRoot)
+                .SingleOrDefault(x => x.State == "VerifiedRestored" &&
+                    !x.Representative && x.Path.Equals(full,
+                        StringComparison.OrdinalIgnoreCase));
+            if (entry is null || current.Identity.LinkCount != 1 ||
+                current.Length != entry.Length ||
+                current.CreationUtc != entry.CreationUtc ||
+                current.ModifiedUtc != entry.ModifiedUtc ||
+                current.Attributes != entry.Attributes ||
+                Convert.ToHexString(SHA256.HashData(current.SecurityDescriptor)) !=
+                    entry.OwnerDaclFingerprint ||
+                Safety.ComputeSha256(full, CancellationToken.None) != entry.Sha256)
+                throw new InvalidDataException(
+                    "Only verified independently restored group aliases may be exported");
+        }
         return full;
+    }
+
+    // G3-05 synthetic integration: the existing group Undo restores every
+    // alias FIRST. Only then can the existing collision collection transaction
+    // copy independently restored files to a separate destination, without
+    // touching another file that occupies the requested output name.
+    // The collision journal remains the one already used by Part35.
+    public static string BeginRestoredUndoExportSynthetic(string testRoot,
+        string operationId, string outputRoot)
+    {
+        string root = RequireOwnedRoot(testRoot);
+        string output = OwnedOutput(root, outputRoot);
+        var groups = CompletedGroupLedger.Inspect(root);
+        if (!Guid.TryParseExact(operationId, "N", out _) ||
+            groups.Entries.Count(x => x.OperationId == operationId &&
+                x.State == "VerifiedRestored") != 1 ||
+            groups.Entries.Any(x => x.State == "ManualReview"))
+            throw new InvalidDataException(
+                "Unverified or incomplete group Undo cannot be collision-exported");
+        var aliases = CompletedGroupLedger.InspectOriginals(root)
+            .Where(x => x.OperationId == operationId &&
+                x.State == "VerifiedRestored" && !x.Representative)
+            .ToArray();
+        if (aliases.Length is < 1 or > 32)
+            throw new InvalidDataException("No complete independent group aliases");
+        var sources = aliases.Select(x =>
+            (Source: RequireSource(root, x.Path),
+             Relative: Path.GetRelativePath(root, x.Path))).ToArray();
+        var plan = CollisionCollectionPlan.Inspect(output,
+            sources.Select(x => x.Relative));
+        return BeginSynthetic(root, plan, sources);
     }
 
     private static Intent Read(string testRoot, string output, string id)

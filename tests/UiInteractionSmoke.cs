@@ -284,6 +284,8 @@ internal static class UiInteractionSmoke
                 throw new InvalidOperationException("Part30 WPF ApplyButton missing");
             var undoReviewButton = recoveryView.FindName("UndoReviewButton") as Button ??
                 throw new InvalidOperationException("G3 WPF UndoReviewButton missing");
+            var undoExecuteButton = recoveryView.FindName("UndoExecuteButton") as Button ??
+                throw new InvalidOperationException("G3-07 WPF generated-only UndoExecuteButton missing");
             var historyStatus = recoveryView.FindName("HistorySummaryText") as TextBlock ??
                 throw new InvalidOperationException("Part30 WPF history summary missing");
             var collisionGrid = recoveryView.FindName("CollisionGrid") as DataGrid ??
@@ -312,6 +314,8 @@ internal static class UiInteractionSmoke
                 "R2.17 part30: recovery history tab routed Loaded refresh never enables Apply or mutates originals/store");
             Require(!undoReviewButton.IsEnabled,
                 "G3-01: absent authenticated completed history cannot enable Undo identification");
+            Require(!undoExecuteButton.IsEnabled,
+                "G3-07: normal product always locks Undo execution even with WPF history selected");
             // Simulate a stale UI row, NOT a fabricated disk receipt.
             // The actual routed click MUST reopen the persisted folder and
             // refuse the row; no previous scan object may authorize Undo.
@@ -420,6 +424,131 @@ internal static class UiInteractionSmoke
                     detail.Text.Contains("U 未判定", StringComparison.Ordinal),
                 "R2.17 part38 + B1 Part39: selected evidence displays checklist and conservative triage guidance without enabling Apply");
             recoveryView.Close();
+
+            // G3-07: REAL production WPF XAML routed click to the SAME
+            // internal Undo Core, BUT ONLY with an explicitly test-owned
+            // generated TEMP+sentinel root and a private default-OFF test
+            // flag. No real user file can be selected here.
+            string undoRoot = Path.Combine(testRoot, "ChappyStorageSmoke_UndoWpfGroup");
+            Directory.CreateDirectory(undoRoot);
+            File.WriteAllText(Path.Combine(undoRoot, ".chappy-part23-generated-only"),
+                "Part23 synthetic data only");
+            string a = Path.Combine(undoRoot, "group-a.mp4");
+            File.WriteAllBytes(a, new byte[512 * 1024]);
+            foreach (string name in new[] { "group-b.mp4", "group-c.mp4" })
+            {
+                string path = Path.Combine(undoRoot, name);
+                File.Copy(a, path);
+                File.SetCreationTimeUtc(path, File.GetCreationTimeUtc(a));
+                File.SetLastWriteTimeUtc(path, File.GetLastWriteTimeUtc(a));
+            }
+            var undoScan = Scanner.Run(undoRoot, true, null, CancellationToken.None);
+            Require(undoScan.Groups.Count == 1 && undoScan.Groups.Single().Files.Count == 3,
+                "G3-07: WPF fixture uses genuine scanner group with 3 independent generated files");
+            var originalUndo = undoScan.Groups.Single().Files.ToDictionary(x => x.Path,
+                StringComparer.OrdinalIgnoreCase);
+            string originalUndoHash = OracleHash(a);
+            // Internal Core is normal-compiled, not a duplicate test engine.
+            var internalMerge = typeof(CompletedGroupLedger).GetMethod(
+                "MergeVerifiedGroup", BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException("G3-07 common internal Core merge unavailable");
+            string undoOperationId = (string)(internalMerge.Invoke(null,
+                [undoRoot, undoScan.Groups.Single(), CancellationToken.None]) ??
+                    throw new InvalidOperationException("G3-07 generated group merge failed"));
+            Require(CompletedGroupLedger.Inspect(undoRoot).VerifiedCompleted == 1,
+                "G3-07: actual compiled Core created a durable completed group before WPF Undo");
+            Directory.CreateDirectory(Path.Combine(undoRoot, "g3-wpf-undo-evidence"));
+            var undoView = new RecoveryWindow(undoRoot);
+            var uiFlag = typeof(RecoveryWindow).GetField("_allowGeneratedOnlyUndoTest",
+                BindingFlags.NonPublic | BindingFlags.Instance) ??
+                throw new InvalidOperationException("G3-07 WPF synthetic test gate missing");
+            uiFlag.SetValue(undoView, true);
+            string routedUndoPrompt = "", routedUndoResult = "";
+            var consentField = typeof(RecoveryWindow).GetField("_confirmGeneratedOnlyUndo",
+                BindingFlags.NonPublic | BindingFlags.Instance) ??
+                throw new InvalidOperationException("G3-07 consent adapter missing");
+            var resultField = typeof(RecoveryWindow).GetField("_showGeneratedOnlyUndo",
+                BindingFlags.NonPublic | BindingFlags.Instance) ??
+                throw new InvalidOperationException("G3-07 result adapter missing");
+            consentField.SetValue(undoView,
+                new Func<string, bool>(message =>
+                {
+                    routedUndoPrompt = message;
+                    return false;
+                }));
+            resultField.SetValue(undoView,
+                new Action<string>(message => routedUndoResult = message));
+            var execute = undoView.FindName("UndoExecuteButton") as Button ??
+                throw new InvalidOperationException("G3-07 routed Undo execution button missing");
+            var undoTabs = undoView.FindName("RecoveryTabs") as TabControl ??
+                throw new InvalidOperationException("G3-07 Undo tabs missing");
+            var undoHistory = undoView.FindName("HistoryGrid") as DataGrid ??
+                throw new InvalidOperationException("G3-07 Undo group history grid missing");
+            var undoHistorySummary = undoView.FindName("HistorySummaryText") as TextBlock ??
+                throw new InvalidOperationException("G3-07 Undo history summary missing");
+            var undoWpfDetail = undoView.FindName("DetailText") as TextBlock ??
+                throw new InvalidOperationException("G3-07 Undo detail missing");
+            var undoLegacyApply = undoView.FindName("ApplyButton") as Button ??
+                throw new InvalidOperationException("G3-07 legacy Apply button missing");
+            undoView.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            PumpUntil(() => undoHistorySummary.Text.Contains("対象フォルダ履歴",
+                StringComparison.Ordinal), TimeSpan.FromSeconds(35));
+            undoTabs.SelectedIndex = 1;
+            var actualGroupRow = undoHistory.Items.Cast<object>()
+                .OfType<RecoveryEvidenceOverview.Row>().Single(x =>
+                    x.Source == "複数ファイルのグループ履歴" &&
+                    x.Target == undoOperationId &&
+                    x.State == "VerifiedCompleted");
+            undoHistory.SelectedItem = actualGroupRow;
+            Require(execute.IsEnabled && !undoLegacyApply.IsEnabled &&
+                !mergeButton.IsEnabled,
+                "G3-07: generated-only routed WPF Undo enables only verified group while regular Apply/Merge stay disabled");
+            RoutedClick(execute);
+            PumpUntil(() => undoWpfDetail.Text.Contains("最終確認を辞退",
+                StringComparison.Ordinal), TimeSpan.FromSeconds(35));
+            bool undoConsentRejected = routedUndoPrompt.Contains("元NTFS ID=",
+                    StringComparison.Ordinal) &&
+                routedUndoPrompt.Contains("追加で必要な容量", StringComparison.Ordinal) &&
+                !string.IsNullOrEmpty(routedUndoPrompt) &&
+                CompletedGroupLedger.Inspect(undoRoot).VerifiedCompleted == 1 &&
+                originalUndo.All(x =>
+                    OracleHash(x.Key) == originalUndoHash &&
+                    NativeFile.SameFile(x.Key, a));
+            Require(undoConsentRejected,
+                "G3-07: declining explicit routed WPF Undo consent preserves all generated shared links and hashes");
+            consentField.SetValue(undoView,
+                new Func<string, bool>(message =>
+                {
+                    routedUndoPrompt = message;
+                    return true;
+                }));
+            RoutedClick(execute);
+            PumpUntil(() => undoHistorySummary.Text.Contains("【生成テストUndo成功】",
+                StringComparison.Ordinal), TimeSpan.FromSeconds(60));
+            bool realWpfUndo = CompletedGroupLedger.Inspect(undoRoot).VerifiedRestored == 1 &&
+                routedUndoResult.Contains("独立化した別名 2件", StringComparison.Ordinal) &&
+                originalUndo.All(x =>
+                {
+                    var after = Safety.Capture(x.Key);
+                    return OracleHash(x.Key) == originalUndoHash &&
+                        after.CreationUtc == x.Value.CreationUtc &&
+                        after.ModifiedUtc == x.Value.ModifiedUtc &&
+                        after.Attributes == x.Value.Attributes &&
+                        after.SecurityDescriptor.AsSpan().SequenceEqual(
+                            x.Value.SecurityDescriptor);
+                }) &&
+                undoScan.Groups.Single().Files.Where(x =>
+                    !x.Path.Equals(undoScan.Groups.Single().Representative.Path,
+                        StringComparison.OrdinalIgnoreCase)).All(x =>
+                        !NativeFile.SameFile(x.Path,
+                            undoScan.Groups.Single().Representative.Path) &&
+                        NativeFile.GetIdentity(x.Path).LinkCount == 1) &&
+                NativeFile.GetIdentity(
+                    undoScan.Groups.Single().Representative.Path).LinkCount == 2 &&
+                !execute.IsEnabled && !undoLegacyApply.IsEnabled;
+            Require(realWpfUndo,
+                "G3-07: genuine WPF routed Yes executes guarded shared Undo Core, verifies separate NTFS IDs/bytes/ACL, never enables production Apply");
+            undoView.Close();
 
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with
             // native dialogs replaced by deterministic in-process answers.
@@ -996,6 +1125,10 @@ internal static class UiInteractionSmoke
                     part30RecoveryHistoryTabRoutedLoadedVerified = part30WpfHistoryReadOnly,
                     g3ReadOnlyUndoPreviewForgedHistoryRowRefused = g3NoStaleUndoAuthorization,
                     g3UndoReviewButtonCannotEnableLegacyApply = !recoveryApply.IsEnabled,
+                    g3GeneratedOnlyRoutedWpfUndoConsentDeniedWithoutMutation = undoConsentRejected,
+                    g3GeneratedOnlyRoutedWpfCoreUndoSuccess = realWpfUndo,
+                    g3ProductionUndoControlAlwaysDisabledForNormalRoot =
+                        !undoExecuteButton.IsEnabled,
                     part30HistoryTabRemainsReadOnly = historyGrid.IsReadOnly,
                     part30NeverEnabledApplyForHistory = !recoveryApply.IsEnabled,
                     part30ReadOnlyInspectionNeverCreatedStore =

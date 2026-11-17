@@ -1050,6 +1050,8 @@ jobs:
               $r.g3ExplicitStageRecoveryAfterCapacityLossVerified -ne $true -or
               $r.g3CrossLedgerFiveForeignEvidenceFamiliesRefused -ne $true -or
               $r.g3OriginalNtfsIdsPreservedOnForeignEvidence -ne $true -or
+              $r.g3PostUndoExistingCollisionLedgerExportVerified -ne $true -or
+              $r.g3CollisionNestedNumberedUtf8MemoAndRestartVerified -ne $true -or
               $r.actualCoreKillCheckpointCount -ne 7 -or
               $r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true -or
               $r.partialFailedGroupAllocationNeverCountedAsVerifiedReceipt -ne $true -or
@@ -1602,6 +1604,9 @@ jobs:
               $r.part30RecoveryHistoryTabRoutedLoadedVerified -ne $true -or
               $r.g3ReadOnlyUndoPreviewForgedHistoryRowRefused -ne $true -or
               $r.g3UndoReviewButtonCannotEnableLegacyApply -ne $true -or
+              $r.g3GeneratedOnlyRoutedWpfUndoConsentDeniedWithoutMutation -ne $true -or
+              $r.g3GeneratedOnlyRoutedWpfCoreUndoSuccess -ne $true -or
+              $r.g3ProductionUndoControlAlwaysDisabledForNormalRoot -ne $true -or
               $r.part30HistoryTabRemainsReadOnly -ne $true -or
               $r.part30NeverEnabledApplyForHistory -ne $true -or
               $r.part30ReadOnlyInspectionNeverCreatedStore -ne $true -or

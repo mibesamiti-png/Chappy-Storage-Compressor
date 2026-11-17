@@ -254,6 +254,32 @@ check('G3-03/06: one production-compiled but synthetic-guarded group Undo replay
       'ResumeUndoCore(' not in source and
       'RestoreMetadataAfterCrashCore(' not in source and
       'UndoReviewButton' in recovery_xaml)
+collision_ledger = (root/'Core/CollisionRecoveryLedger.cs').read_text(encoding='utf-8')
+collision_plan = (root/'Core/CollisionCollectionPlan.cs').read_text(encoding='utf-8')
+check('G3-05: independently restored Undo aliases enter preexisting no-overwrite collision receipt flow',
+      'public static string BeginRestoredUndoExportSynthetic(' in collision_ledger and
+      'CompletedGroupLedger.InspectOriginals(root)' in collision_ledger and
+      'x.State == "VerifiedRestored" && !x.Representative' in collision_ledger and
+      'CollisionCollectionPlan.Inspect(output,' in collision_ledger and
+      'return BeginSynthetic(root, plan, sources);' in collision_ledger and
+      'FileMode.CreateNew' in collision_ledger and
+      '同名ファイル一覧.txt' in collision_plan and
+      'VerifyRestoredUndoCollisionExport(parent, check, expectThrows);' in group_batch_tests and
+      'g3CollisionNestedNumberedUtf8MemoAndRestartVerified = true' in group_batch_tests and
+      '$r.g3PostUndoExistingCollisionLedgerExportVerified -ne $true' in workflow and
+      'ProductionMutationEnabled = false' in collision_ledger)
+check('G3-07: real routed WPF Undo requires explicit generated-only opt-in and cannot act on user media',
+      'UndoExecuteButton' in recovery_xaml and
+      'private bool _allowGeneratedOnlyUndoTest;' in recovery_window and
+      'root.Contains("ChappyStorageSmoke_"' in recovery_window and
+      'CompletedGroupLedger.InspectUndoCandidates(root)' in recovery_window and
+      'CompletedGroupLedger.ResumeUndoCore(root, operationId,' in recovery_window and
+      'private async void UndoExecute_Click(' in recovery_window and
+      'g3GeneratedOnlyRoutedWpfCoreUndoSuccess = realWpfUndo' in ui_test and
+      'g3GeneratedOnlyRoutedWpfUndoConsentDeniedWithoutMutation = undoConsentRejected' in ui_test and
+      '$r.g3GeneratedOnlyRoutedWpfCoreUndoSuccess -ne $true' in workflow and
+      'IndependentUndoEngine.Restore(' not in recovery_window and
+      'MergeVerifiedGroup(' not in recovery_window)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

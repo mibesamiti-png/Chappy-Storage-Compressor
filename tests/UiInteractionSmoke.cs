@@ -1178,6 +1178,8 @@ internal static class UiInteractionSmoke
                     "R2.17 part 16: real WPF restart resumes PNG/JPEG without new candidates or journal edits");
                 liveCombinedResumed = true;
 
+                AssertJpegPreparationAndReview(window, testRoot, realInput, realOutput);
+
                 // G1-05: route the REAL combined-report WPF Click through
                 // the same generated JPEG/PNG plans; select the already
                 // verified candidate folder without a native CI dialog.
@@ -1651,6 +1653,92 @@ internal static class UiInteractionSmoke
 
     private static void RoutedClick(Button button) =>
         button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, button));
+
+    private static void AssertJpegPreparationAndReview(MainWindow window, string testRoot,
+        string input, string output)
+    {
+        string sourceVolume = Path.GetPathRoot(input)!;
+        string backupParent = new[] { Environment.GetEnvironmentVariable("RUNNER_TEMP"),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) }
+            .OfType<string>().First(path => Directory.Exists(path) &&
+                !string.Equals(Path.GetPathRoot(path), sourceVolume, StringComparison.OrdinalIgnoreCase) &&
+                new DriveInfo(Path.GetPathRoot(path)!).DriveFormat == "NTFS");
+        string backup = Directory.CreateDirectory(Path.Combine(backupParent,
+            "ChappyStorageSmoke_G4Wpf_" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            string stage = Directory.CreateDirectory(Path.Combine(testRoot, "g4-wpf-stage")).FullName;
+            var report = CombinedCapacityReport.Inspect(input, output);
+            var row = ReplacementReadiness.Inspect(report, input, output, backup).Rows
+                .First(row => row.Format == "JPG" && row.SpaceRequirementsMet);
+            string source = Path.Combine(input, row.RelativePath);
+            var before = Safety.Capture(source);
+            string hash = OracleHash(source);
+            string prompt = "";
+            string result = "";
+            bool allow = false;
+            SetPrivate(window, "_pickImagePreparation",
+                new Func<string, (string, string, string, string)?>(_ => (source, output, stage, backup)));
+            SetPrivate(window, "_confirmImagePreparation", new Func<string, bool>(message =>
+            {
+                prompt = message;
+                return allow;
+            }));
+            SetPrivate(window, "_showImagePreparation",
+                new Action<string, string, MessageBoxImage>((message, _, _) => result = message));
+            var prepareButton = Named<Button>(window, "CopyOnlyPreparationButton");
+
+            RoutedClick(prepareButton);
+            PumpUntil(() => prepareButton.IsEnabled && prompt.Length > 0, TimeSpan.FromSeconds(45));
+            Require(Directory.GetFileSystemEntries(backup).Length == 0 &&
+                Directory.GetFileSystemEntries(stage).Length == 0 &&
+                prompt.Contains("空き容量は増えません", StringComparison.Ordinal) &&
+                prompt.Contains("画素を維持", StringComparison.Ordinal) &&
+                Safety.SameSnapshot(before) && OracleHash(source) == hash,
+                "G4-06: declining the real WPF JPEG preparation creates no copies or receipt");
+
+            allow = true;
+            RoutedClick(prepareButton);
+            PumpUntil(() => prepareButton.IsEnabled && result.Length > 0, TimeSpan.FromSeconds(45));
+            string receipt = Path.Combine(backup, ".chappy-g4-preparation.json");
+            Require(result.Contains("実際に回復した容量は0 B", StringComparison.Ordinal) &&
+                File.Exists(receipt) && Directory.GetFiles(backup, "*.bak").Length == 1 &&
+                Directory.GetFiles(stage).Length == 1 &&
+                Safety.SameSnapshot(before) && OracleHash(source) == hash,
+                "G4-06: WPF preparation saves a valid JPEG receipt and two copies without modifying the original: " +
+                result);
+
+            var recovery = new RecoveryWindow(input);
+            var tabs = (TabControl)recovery.FindName("RecoveryTabs");
+            tabs.SelectedItem = recovery.FindName("ImageRecoveryTab");
+            var picker = typeof(RecoveryWindow).GetField("_pickImageReceipt",
+                BindingFlags.Instance | BindingFlags.NonPublic) ??
+                throw new InvalidOperationException("G4 image review picker missing");
+            picker.SetValue(recovery, (Func<RecoveryWindow, string?>)(_ => receipt));
+            var reviewButton = (Button)recovery.FindName("ImageReceiptReviewButton");
+            var reviewText = (TextBlock)recovery.FindName("ImageReceiptReviewText");
+            RoutedClick(reviewButton);
+            PumpUntil(() => reviewButton.IsEnabled &&
+                (reviewText.Text.Contains("準備済み", StringComparison.Ordinal) ||
+                 reviewText.Text.Contains("要手動確認", StringComparison.Ordinal)),
+                TimeSpan.FromSeconds(30));
+            Require(reviewText.Text.Contains("準備済み", StringComparison.Ordinal) &&
+                reviewText.Text.Contains(source, StringComparison.OrdinalIgnoreCase) &&
+                reviewText.Text.Contains($"原本 {row.SourceBytes:N0} B / 圧縮候補 {row.CandidateBytes:N0} B",
+                    StringComparison.Ordinal) &&
+                reviewText.Text.Contains("この確認で回復した容量 0 B", StringComparison.Ordinal) &&
+                !((Button)recovery.FindName("ApplyButton")).IsEnabled &&
+                !((Button)recovery.FindName("UndoExecuteButton")).IsEnabled &&
+                Safety.SameSnapshot(before) && OracleHash(source) == hash,
+                "G4-06: real WPF recovery reopens the valid JPEG receipt with the recorded sizes and actions locked: " +
+                reviewText.Text);
+            recovery.Close();
+        }
+        finally
+        {
+            Directory.Delete(backup, recursive: true); // Unique generated backup directory only.
+        }
+    }
 
     private static void SetPrivate<T>(MainWindow window, string name, T value)
         where T : Delegate

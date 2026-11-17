@@ -1038,6 +1038,8 @@ jobs:
               $r.explicitResumeFinalDetachedAliases -ne 3 -or
               $r.allBytesTimesOwnerDaclAndNtfsIdsVerified -ne $true -or
               $r.completedHistoryRestored -ne $true -or
+              $r.groupOriginalRecordsReadOnlyVerified -ne $true -or
+              $r.untrustedGroupOriginalRecordsDenied -ne $true -or
               $r.actualCoreKillCheckpointCount -ne 7 -or
               $r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true -or
               $r.partialFailedGroupAllocationNeverCountedAsVerifiedReceipt -ne $true -or
@@ -1576,6 +1578,8 @@ jobs:
               $r.part22NoLockPlanOrCandidateCreatedForEitherRace -ne $true -or
               $r.part22UntrustedForeignOutputBytesPreserved -ne $true -or
               $r.part23ReadOnlyDedupeUndoPlanRoutedClickVerified -ne $true -or
+              $r.b2SelectedRiskReviewRoutedClickVerified -ne $true -or
+              $r.b2ProductionMergeStillLockedAfterRiskConsent -ne $true -or
               $r.part23MergeStillDisabledAfterPreview -ne $true -or
               $r.part23ScanSourceHashesAndNtfsIdentitiesPreserved -ne $true -or
               $r.part24ActualWpfReadOnlyCompletedLedgerChecked -ne $true -or

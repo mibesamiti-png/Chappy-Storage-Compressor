@@ -36,6 +36,11 @@ public partial class RecoveryWindow : Window
         CollisionPriorityFilter.IsEnabled = !busy;
         ApplyButton.IsEnabled = !busy && RecoveryTabs.SelectedIndex == 0 &&
             RecoveryGrid.SelectedItem is RecoveryCase c && c.CanApply;
+        // G3 is review-only: no live Apply from completed group history.
+        UndoReviewButton.IsEnabled = !busy &&
+            RecoveryTabs.SelectedIndex == 1 &&
+            HistoryGrid.SelectedItem is RecoveryEvidenceOverview.Row h &&
+            h.Source == "複数ファイルのグループ履歴";
     }
 
     private async Task RefreshAsync()
@@ -178,10 +183,18 @@ public partial class RecoveryWindow : Window
         if (ApplyButton != null && RecoveryGrid != null && RecoveryTabs != null)
             ApplyButton.IsEnabled = !_busy && RecoveryTabs.SelectedIndex == 0 &&
                 RecoveryGrid.SelectedItem is RecoveryCase c && c.CanApply;
+        if (UndoReviewButton != null && HistoryGrid != null && RecoveryTabs != null)
+            UndoReviewButton.IsEnabled = !_busy && RecoveryTabs.SelectedIndex == 1 &&
+                HistoryGrid.SelectedItem is RecoveryEvidenceOverview.Row h &&
+                h.Source == "複数ファイルのグループ履歴";
     }
 
     private void HistorySelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (UndoReviewButton != null && HistoryGrid != null && RecoveryTabs != null)
+            UndoReviewButton.IsEnabled = !_busy && RecoveryTabs.SelectedIndex == 1 &&
+                HistoryGrid.SelectedItem is RecoveryEvidenceOverview.Row selected &&
+                selected.Source == "複数ファイルのグループ履歴";
         if (HistoryGrid?.SelectedItem is RecoveryEvidenceOverview.Row h && DetailText != null)
             DetailText.Text = $"証拠の種類：{h.Source}\n\n判定：{h.AttentionText} / {h.State}\n\n" +
                 $"対象：{h.Target}\n\n{h.Explanation}\n\n" +
@@ -204,6 +217,45 @@ public partial class RecoveryWindow : Window
                 CollisionRecoveryChecklist.Analyze(_lastCollisionEvidence, x)
                     .DetailText() +
                 "\n\nこの画面では再開・削除・名前変更・自動修復はできません。";
+    }
+
+    // G3-01: a deliberately NON-actionable WPF handoff to the persisted
+    // completed group. This does not take a prior ScanResult, does not write
+    // a checkpoint and never calls IndependentUndoEngine.Restore.
+    private async void UndoReview_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || RecoveryTabs.SelectedIndex != 1 ||
+            HistoryGrid.SelectedItem is not RecoveryEvidenceOverview.Row row ||
+            row.Source != "複数ファイルのグループ履歴")
+            return;
+        string operationId = row.Target;
+        Busy(true);
+        DetailText.Text = "永続グループ記録から全元ファイル・空き容量を読み取り専用で再検証中…";
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_selectedRoot))
+                throw new InvalidOperationException("対象フォルダが指定されていません");
+            var candidates = await Task.Run(() =>
+                CompletedGroupLedger.InspectUndoCandidates(_selectedRoot));
+            var candidate = candidates.SingleOrDefault(x =>
+                x.OperationId.Equals(operationId, StringComparison.OrdinalIgnoreCase));
+            // Never mistake a stale WPF row for a recovery authorization.
+            if (candidate is null || !candidate.ReviewReady)
+            {
+                DetailText.Text = candidate?.Describe() ??
+                    "未検証または復元済みの履歴です。元ファイルを安全なUndo候補として再特定できません。" +
+                    " 復旧記録を保全し、手動調査してください。";
+                return;
+            }
+            DetailText.Text = candidate.Describe() +
+                "\n\n【再起動後の永続記録から再特定済み。独立Undoは未実行】";
+        }
+        catch (Exception ex)
+        {
+            DetailText.Text = "Undo候補の安全な再特定に失敗（ファイルは変更していません）。" +
+                "\n" + ex.Message;
+        }
+        finally { Busy(false); }
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)

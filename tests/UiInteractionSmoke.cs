@@ -244,6 +244,160 @@ internal static class UiInteractionSmoke
                 !Directory.Exists(Safety.StorePath(originals)),
                 "B2 G2-07: declining selected risk confirmation does not create a store or link");
 
+            // G2-07: even reflection-enabling the PRIVATE test flag on an
+            // ordinary non-sentinel folder can only return the read-only plan.
+            var generatedMergeFlag = typeof(MainWindow).GetField(
+                "_allowGeneratedOnlyMergeTest", BindingFlags.NonPublic | BindingFlags.Instance) ??
+                throw new InvalidOperationException("G2-07 private fixture safety switch missing");
+            generatedMergeFlag.SetValue(window, true);
+            SetPrivate(window, "_confirmSelectedMergeRisk",
+                new Func<string, bool>(_ => true));
+            afterRiskText = "";
+            RoutedClick(selectedMergeReviewButton);
+            PumpUntil(() => selectedMergeReviewButton.IsEnabled &&
+                progressText.Text == "再検証済み・本番統合は無効",
+                TimeSpan.FromSeconds(35));
+            bool g207NormalRootForcedFlagStillLocked =
+                !mergeButton.IsEnabled &&
+                afterRiskText.Contains("本番統合は実行できません",
+                    StringComparison.Ordinal) &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId) &&
+                !Directory.Exists(Safety.StorePath(originals));
+            Require(g207NormalRootForcedFlagStillLocked,
+                "G2-07: forced private fixture flag on non-sentinel root cannot authorize any merge");
+            generatedMergeFlag.SetValue(window, false);
+            // The INTERNAL Core must refuse a non-sentinel root even if a
+            // caller bypasses the WPF gate and supplies a genuine scan group.
+            var internalBatchMerge = typeof(CompletedGroupLedger).GetMethod(
+                "MergeVerifiedGroups", BindingFlags.NonPublic | BindingFlags.Static) ??
+                throw new InvalidOperationException("G2-07 normal-compiled shared Core missing");
+            bool g207CoreDeniedNormalRoot = false;
+            try
+            {
+                internalBatchMerge.Invoke(null,
+                    [originals, new[] { ((GroupRow)groupsGrid.Items[0]).Group },
+                        CancellationToken.None]);
+            }
+            catch (TargetInvocationException ex) when
+                (ex.InnerException is InvalidOperationException)
+            {
+                g207CoreDeniedNormalRoot = true;
+            }
+            Require(g207CoreDeniedNormalRoot &&
+                !Directory.Exists(Safety.StorePath(originals)) &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId),
+                "G2-07: internal batch Core itself rejects non-sentinel root before any store or original changes");
+
+            // G2-07: the SAME shipped WPF SelectedMergeReviewButton is now
+            // tested against a disposable 3-alias and 2-alias NTFS selection.
+            // Distinct original file IDs are saved before any Core write.
+            // This is not a physical mouse test and never touches user media.
+            string mergeRoot = Path.Combine(testRoot, "ChappyStorageSmoke_G207WpfMerge");
+            Directory.CreateDirectory(mergeRoot);
+            File.WriteAllText(Path.Combine(mergeRoot,
+                ".chappy-part23-generated-only"), "Part23 synthetic data only");
+            string firstMerge = Path.Combine(mergeRoot, "fixture-a.mp4");
+            string secondMerge = Path.Combine(mergeRoot, "fixture-b.mp4");
+            string thirdMerge = Path.Combine(mergeRoot, "fixture-c.mp4");
+            string fourthMerge = Path.Combine(mergeRoot, "fixture-d.jpg");
+            string fifthMerge = Path.Combine(mergeRoot, "fixture-e.jpg");
+            byte[] generatedMp4 = new byte[512 * 1024];
+            byte[] generatedJpeg = new byte[256 * 1024];
+            new Random(2207).NextBytes(generatedMp4);
+            new Random(2208).NextBytes(generatedJpeg);
+            File.WriteAllBytes(firstMerge, generatedMp4);
+            File.WriteAllBytes(fourthMerge, generatedJpeg);
+            foreach (string alias in new[] { secondMerge, thirdMerge })
+            {
+                File.Copy(firstMerge, alias);
+                File.SetCreationTimeUtc(alias, File.GetCreationTimeUtc(firstMerge));
+                File.SetLastWriteTimeUtc(alias, File.GetLastWriteTimeUtc(firstMerge));
+            }
+            File.Copy(fourthMerge, fifthMerge);
+            File.SetCreationTimeUtc(fifthMerge, File.GetCreationTimeUtc(fourthMerge));
+            File.SetLastWriteTimeUtc(fifthMerge, File.GetLastWriteTimeUtc(fourthMerge));
+            string[] mergePaths =
+                [firstMerge, secondMerge, thirdMerge, fourthMerge, fifthMerge];
+            var preMerge = mergePaths.ToDictionary(path => path,
+                path => (Hash: OracleHash(path), Id: NativeFile.GetIdentity(path)),
+                StringComparer.OrdinalIgnoreCase);
+            Require(preMerge.Values.Select(x => x.Id.FileIndex).Distinct().Count() == 5,
+                "G2-07: 5 disposable inputs start with 5 independent NTFS file IDs");
+            var mergeView = new MainWindow();
+            var g2Scan = Named<Button>(mergeView, "ScanButton");
+            var g2Selected = Named<Button>(mergeView, "SelectedMergeReviewButton");
+            var g2Merge = Named<Button>(mergeView, "MergeButton");
+            var g2Groups = Named<DataGrid>(mergeView, "GroupsGrid");
+            var g2Path = Named<TextBox>(mergeView, "PathBox");
+            var g2Status = Named<TextBlock>(mergeView, "ProgressText");
+            Require(!g2Merge.IsEnabled,
+                "G2-07: ordinary production MergeButton is locked before generated fixture test");
+            g2Path.Text = mergeRoot;
+            RoutedClick(g2Scan);
+            PumpUntil(() => g2Scan.IsEnabled && g2Status.Text == "スキャン完了",
+                TimeSpan.FromSeconds(35));
+            Require(g2Groups.Items.Count == 2,
+                "G2-07: WPF scanner selected two byte-exact groups on real generated NTFS");
+            g2Groups.SelectedItems.Add(g2Groups.Items[0]);
+            g2Groups.SelectedItems.Add(g2Groups.Items[1]);
+            Require(g2Selected.IsEnabled && !g2Merge.IsEnabled,
+                "G2-07: both generated groups are selected, public Merge stays locked");
+            generatedMergeFlag.SetValue(mergeView, true);
+            string g207RiskText = "", g207ResultText = "";
+            bool g207AllowConsent = false;
+            int g207ConsentCalls = 0;
+            SetPrivate(mergeView, "_confirmSelectedMergeRisk",
+                new Func<string, bool>(message =>
+                {
+                    g207RiskText = message;
+                    g207ConsentCalls++;
+                    return g207AllowConsent;
+                }));
+            SetPrivate(mergeView, "_showDedupePlan",
+                new Action<string>(message => g207ResultText = message));
+            RoutedClick(g2Selected);
+            PumpUntil(() => g2Selected.IsEnabled &&
+                g2Status.Text == "確認を中止（未実行）",
+                TimeSpan.FromSeconds(35));
+            bool g207NoConsentPreserved = g207ConsentCalls == 1 &&
+                !Directory.Exists(Safety.StorePath(mergeRoot)) &&
+                mergePaths.All(path =>
+                    OracleHash(path) == preMerge[path].Hash &&
+                    NativeFile.GetIdentity(path).SameFile(preMerge[path].Id));
+            Require(g207NoConsentPreserved,
+                "G2-07: routed No keeps two generated groups' original IDs and store absent");
+            g207AllowConsent = true;
+            g207ConsentCalls = 0;
+            RoutedClick(g2Selected);
+            PumpUntil(() => g2Status.Text ==
+                "生成テスト統合完了・本番統合は無効",
+                TimeSpan.FromSeconds(60));
+            var mergedLedger = CompletedGroupLedger.Inspect(mergeRoot);
+            bool g207RealWpfCoreMerged =
+                g207ConsentCalls == 2 &&
+                g207RiskText.Contains("実統合・最終同意",
+                    StringComparison.Ordinal) &&
+                g207ResultText.Contains("グループ 2件",
+                    StringComparison.Ordinal) &&
+                g207ResultText.Contains("対象ドライブ空き容量",
+                    StringComparison.Ordinal) &&
+                mergedLedger.VerifiedCompleted == 2 &&
+                mergedLedger.NeedsReview == 0 &&
+                NativeFile.SameFile(firstMerge, secondMerge) &&
+                NativeFile.SameFile(firstMerge, thirdMerge) &&
+                NativeFile.SameFile(fourthMerge, fifthMerge) &&
+                !NativeFile.SameFile(firstMerge, fourthMerge) &&
+                mergePaths.All(path => OracleHash(path) == preMerge[path].Hash) &&
+                !g2Merge.IsEnabled && !g2Selected.IsEnabled &&
+                CompletedGroupLedger.InspectUndoCandidates(mergeRoot)
+                    .Count(x => x.ReviewReady) == 2;
+            Require(g207RealWpfCoreMerged,
+                "G2-07: routed selection/2 consents/fresh source verification reaches real shared Core and persists two groups (3+2) with independent Undo candidates");
+            mergeView.Close();
+
             // Part 24: read-only persisted-history check via genuine XAML
             // Click; an empty store must not be created just to inspect it.
             string ledgerBody = "";
@@ -1249,6 +1403,10 @@ internal static class UiInteractionSmoke
                     part22UntrustedForeignOutputBytesPreserved = true,
                     part23ReadOnlyDedupeUndoPlanRoutedClickVerified = part23WpfPlanSafe,
                     b2SelectedRiskReviewRoutedClickVerified = selectedConsentReadOnly,
+                    b2GeneratedOnlySelectedMergeRoutedTwoConsentAndPersistedCore = g207RealWpfCoreMerged,
+                    b2NonSentinelWpfAndInternalCoreStillLocked =
+                        g207NormalRootForcedFlagStillLocked && g207CoreDeniedNormalRoot,
+                    b2GeneratedSelectionNoConsentKeepsOriginalNtfsIds = g207NoConsentPreserved,
                     b2ProductionMergeStillLockedAfterRiskConsent = !mergeButton.IsEnabled,
                     part23MergeStillDisabledAfterPreview = !mergeButton.IsEnabled,
                     part23ScanSourceHashesAndNtfsIdentitiesPreserved =

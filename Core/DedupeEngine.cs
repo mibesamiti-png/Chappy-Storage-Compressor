@@ -30,6 +30,9 @@ public static class DedupeEngine
         string preparedGroupId, IProgress<EngineProgress>? progress,
         CancellationToken ct)
     {
+        // Same generated-only boundary as CompletedGroupLedger. A forged
+        // internal caller cannot bypass it by directly invoking Core.
+        root = CompletedGroupLedger.RequireSynthetic(root);
         if (!Guid.TryParseExact(preparedGroupId, "N", out _))
             throw new InvalidDataException("Missing durable group authorization");
         return RunCore(root, [group], false, progress, ct,

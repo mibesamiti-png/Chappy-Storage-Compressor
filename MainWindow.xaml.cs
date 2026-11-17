@@ -32,6 +32,10 @@ public partial class MainWindow : Window
     // deterministic STA/WPF CI without a physical Windows message box.
     private Action<string> _showDedupePlan;
     private Action<string> _showCompletedLedger;
+    // This consent can ACKNOWLEDGE a read-only risk preview only; it has
+    // no path to production Core mutation. The on-disk file IDs are checked
+    // AGAIN after the message box returns.
+    private Func<string, bool> _confirmSelectedMergeRisk;
     // Optional, per-window, inline progress taps for isolated WPF tests.
     // Production leaves them null. The real preview engines and their journals
     // run unchanged; the observer is invoked only AFTER the engine reports a
@@ -72,6 +76,10 @@ public partial class MainWindow : Window
         _showCompletedLedger = message => MessageBox.Show(message,
             "統合完了履歴（読み取り専用）",
             MessageBoxButton.OK, MessageBoxImage.Information);
+        _confirmSelectedMergeRisk = message => MessageBox.Show(message,
+            "選択したグループの確認（本番統合は無効）",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning,
+            MessageBoxResult.No) == MessageBoxResult.Yes;
         InitializeComponent();
         GroupsGrid.ItemsSource = _rows;
         Log("起動しました。対象を選び「読み取り専用スキャン」を実行してください。");
@@ -94,6 +102,9 @@ public partial class MainWindow : Window
         ScanButton.IsEnabled = !busy;
         MergeButton.IsEnabled = false; // destructive merge remains permanently locked.
         DedupePlanButton.IsEnabled = !busy && _lastScan is { Groups.Count: > 0 };
+        SelectedMergeReviewButton.IsEnabled = !busy &&
+            _lastScan is not null && GroupsGrid.SelectedItems.Count > 0;
+        GroupsGrid.IsEnabled = !busy;
         CompletedLedgerButton.IsEnabled = !busy;
         MediaReportButton.IsEnabled = !busy && _lastScan != null;
         DetailsButton.IsEnabled = !busy && GroupsGrid.SelectedItems.Count == 1;
@@ -128,6 +139,7 @@ public partial class MainWindow : Window
         JobProgress.Value = 0;
         ProgressText.Text = "待機中";
         MergeButton.IsEnabled = false;
+        SelectedMergeReviewButton.IsEnabled = false;
         MediaReportButton.IsEnabled = false;
         DetailsButton.IsEnabled = false;
     }
@@ -150,6 +162,9 @@ public partial class MainWindow : Window
     private void SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (MergeButton != null) MergeButton.IsEnabled = false; // R1.5: never enable from selection.
+        if (SelectedMergeReviewButton != null)
+            SelectedMergeReviewButton.IsEnabled = !_busy &&
+                _lastScan is not null && GroupsGrid.SelectedItems.Count > 0;
         if (DetailsButton != null) DetailsButton.IsEnabled = !_busy && GroupsGrid.SelectedItems.Count == 1;
     }
 
@@ -284,8 +299,9 @@ public partial class MainWindow : Window
                 var undo = IndependentUndoCrashJournal.Inspect(root, token);
                 token.ThrowIfCancellationRequested();
                 var group = CompletedGroupLedger.Inspect(root);
+                var originals = CompletedGroupLedger.InspectOriginals(root, token);
                 token.ThrowIfCancellationRequested();
-                return (completed, undo, group);
+                return (completed, undo, group, originals);
             }, token);
             token.ThrowIfCancellationRequested();
             ProgressText.Text = "統合履歴を確認（未変更）";
@@ -298,7 +314,13 @@ public partial class MainWindow : Window
                 $"統合確認済み {history.group.VerifiedCompleted} 件 ／ Undo完了 {history.group.VerifiedRestored} 件\n" +
                 $"明示的再開待ち {history.group.ExplicitResumeRequired} 件 ／ " +
                 $"処理途中の中断 {history.group.InterruptedAliases} 件 ／ 要手動確認 {history.group.NeedsReview} 件\n" +
-                "※ グループ履歴の検証結果も本番ファイル操作の許可ではありません。");
+                "※ グループ履歴の検証結果も本番ファイル操作の許可ではありません。\n\n" +
+                $"【元ファイルごとの記録：確認済み {history.originals.Count:N0} 件】\n" +
+                string.Join("\n", history.originals.Take(12).Select(x =>
+                    x.OperationId + " / " + x.Describe())) +
+                (history.originals.Count > 12 ?
+                    $"\nほか {history.originals.Count - 12:N0}件。復旧ウィザードの履歴タブで全件確認できます。" : "") +
+                "\n※ 元NTFS ID/時刻/Owner・DACL指紋は永続履歴の元記録。Undo後の現在IDとは異なる場合があります。");
         }
         catch (OperationCanceledException)
         {
@@ -347,6 +369,85 @@ public partial class MainWindow : Window
             ProgressText.Text = "統合・Undo計画エラー（未実行）";
             Log("読み取り専用統合計画エラー: " + ex.Message);
             _showDedupePlan("計画は安全条件を満たせませんでした。原本は変更しません。\n" + ex.Message);
+        }
+        finally
+        {
+            Busy(false);
+            _work?.Dispose(); _work = null;
+        }
+    }
+
+    // G2-07: WPF selected rows -> existing strict snapshot validation ->
+    // optional risk acknowledgement -> FRESH second validation.
+    // This method MUST NOT invoke MergeVerifiedGroups, DedupeEngine.Run, or
+    // any normal-build Undo. Even a Yes response only acknowledges the risk.
+    private async void SelectedMergeReview_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _lastScan is null || GroupsGrid.SelectedItems.Count == 0)
+            return;
+        ScanResult scan = _lastScan;
+        string root = scan.Root;
+        var rows = GroupsGrid.SelectedItems.Cast<GroupRow>().ToArray();
+        var groups = rows.Select(row => row.Group).ToArray();
+        _work = new CancellationTokenSource();
+        CancellationToken token = _work.Token;
+        Busy(true);
+        ProgressText.Text = "選択した重複を再検証中";
+        try
+        {
+            var review = await Task.Run(() =>
+                DedupeFirstWorkflowPlan.InspectSelected(root, groups, token), token);
+            token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_lastScan, scan) ||
+                !root.Equals(PathBox.Text, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("確認中に対象フォルダが変更されました");
+            if (!review.VerifiedForPreview)
+            {
+                ProgressText.Text = "選択した重複は要確認（未実行）";
+                _showDedupePlan(review.Describe() +
+                    "\n再検査に不一致があるため、確認・実行は禁止です。");
+                return;
+            }
+            // This is NOT authorizing a merge: only ask whether the user
+            // understands that hardlinks share writes and Undo needs space.
+            if (!_confirmSelectedMergeRisk(review.Describe() +
+                "\n\n上記の危険性を理解しましたか？（どちらでもファイルは変更しません）"))
+            {
+                ProgressText.Text = "確認を中止（未実行）";
+                return;
+            }
+            token.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_lastScan, scan) ||
+                !root.Equals(PathBox.Text, StringComparison.OrdinalIgnoreCase) ||
+                GroupsGrid.SelectedItems.Count != rows.Length ||
+                rows.Any(row => !GroupsGrid.SelectedItems.Contains(row)))
+                throw new InvalidOperationException("確認中に選択グループが変化しました");
+            var refreshed = await Task.Run(() =>
+                DedupeFirstWorkflowPlan.InspectSelected(root, groups, token), token);
+            token.ThrowIfCancellationRequested();
+            if (!refreshed.VerifiedForPreview ||
+                refreshed.Groups.Count != review.Groups.Count ||
+                refreshed.Groups.Where((g, i) =>
+                    g.Representative != review.Groups[i].Representative ||
+                    !g.Paths.SequenceEqual(review.Groups[i].Paths,
+                        StringComparer.OrdinalIgnoreCase)).Any())
+                throw new InvalidOperationException(
+                    "同意後の最終再検証で原本または記録が変わりました");
+            ProgressText.Text = "再検証済み・本番統合は無効";
+            Log($"選択 {groups.Length} 組の元ID・全バイト・容量を再照合しました。" +
+                " 同意は実行許可ではなく、元ファイルを変更していません。");
+            _showDedupePlan(refreshed.Describe() +
+                "\n\n最終再検証OK。ただしG3/G5未合格のため本番統合は実行できません。");
+        }
+        catch (OperationCanceledException)
+        {
+            ProgressText.Text = "確認の検証を中止（未実行）";
+        }
+        catch (Exception ex)
+        {
+            ProgressText.Text = "選択した重複は要確認（未実行）";
+            _showDedupePlan("対象は変更していません。最終確認を拒否しました。\n" +
+                ex.Message);
         }
         finally
         {

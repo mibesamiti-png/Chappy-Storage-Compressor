@@ -465,19 +465,34 @@ internal static class R217GroupLedgerResumeTests
                 }
                 finally { CapacityGuard.TestOnlyReadAvailable = null; }
                 var summary = CompletedGroupLedger.Inspect(root);
+                string master = Path.Combine(Safety.StorePath(root), group.Hash + ".mp4");
+                // Gate 5 has already created a store hardlink to the
+                // representative. Its link count must be exactly TWO until
+                // the pending journal is explicitly reviewed; the duplicate
+                // must regain its original independent ID and single link.
                 bool originalBytesAndIds = group.Files.Select((x, i) =>
                     File.Exists(x.Path) &&
                     NativeFile.GetIdentity(x.Path).SameFile(originalIds[i]) &&
-                    NativeFile.GetIdentity(x.Path).LinkCount == 1 &&
+                    NativeFile.GetIdentity(x.Path).LinkCount ==
+                        (lowAtGate == 5 && x.Path == group.Representative.Path ? 2u : 1u) &&
                     Hash(x.Path) == group.Hash).All(x => x);
-                string master = Path.Combine(Safety.StorePath(root), group.Hash + ".mp4");
+                bool masterCorrect = lowAtGate == 3
+                    ? !File.Exists(master) && Journal.Pending().Count == 0
+                    : File.Exists(master) && Journal.Pending().Count == 1 &&
+                      NativeFile.SameFile(master, group.Representative.Path) &&
+                      !NativeFile.SameFile(master, group.Files[1].Path);
+                if (checks != lowAtGate || !originalBytesAndIds || !masterCorrect ||
+                    summary.NeedsReview != 1 || summary.VerifiedCompleted != 0)
+                    Console.WriteLine("B2 G2-04 DIAGNOSTIC: gate=" + lowAtGate +
+                        " actualChecks=" + checks + " originals=" + originalBytesAndIds +
+                        " masterCorrect=" + masterCorrect + " review=" + summary.NeedsReview +
+                        " completed=" + summary.VerifiedCompleted +
+                        " pending=" + Journal.Pending().Count);
                 check(checks == lowAtGate && originalBytesAndIds &&
                     summary.NeedsReview == 1 && summary.VerifiedCompleted == 0 &&
-                    (lowAtGate == 3
-                        ? !File.Exists(master) && Journal.Pending().Count == 0
-                        : File.Exists(master) && Journal.Pending().Count == 1),
-                    "B2 G2-04: new low-space check at gate " + lowAtGate +
-                    " preserves independent originals, no committed receipt, and review evidence");
+                    masterCorrect,
+                    "B2 G2-04: refreshed low-space check at gate " + lowAtGate +
+                    " preserves original independent file IDs/bytes and retains exact review evidence");
             }
             finally
             {

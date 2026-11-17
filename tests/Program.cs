@@ -535,7 +535,7 @@ static class Program
                         source, tampered).Verified,
                     "G4-01: 候補のPNGメタデータ/CRCを後から改ざんした場合は拒否");
                 string shared = Path.Combine(output, "g4-shared.png");
-                File.CreateHardLink(shared, preview.PreviewPath!);
+                NativeFile.NewHardLink(shared, preview.PreviewPath!);
                 Check(!ReplacementReadiness.InspectCandidatePair(
                         source, preview.PreviewPath!).Verified,
                     "G4-05: 候補に外部ハードリンクを追加したら独立でなくなり拒否");

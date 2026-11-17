@@ -999,7 +999,9 @@ internal static class UiInteractionSmoke
             // the original WPF Click event. No test-executable substitution:
             // Actions supplies its independently pinned official jpegtran.exe.
             // Outside official-source Windows CI we skip (not pretend tested).
-            string? officialTool = Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_JPEGTRAN");
+            // G4-02 product WinExe embeds the release SIMD executable SHA,
+            // not the separately CI-built non-SIMD benchmarking hash.
+            string? officialTool = Environment.GetEnvironmentVariable("CHAPPY_R217_SIMD_JPEGTRAN");
             bool liveCombinedRan = false;
             bool liveCombinedResumed = false;
             bool routedPngStop = false, routedJpegStop = false;
@@ -1014,6 +1016,17 @@ internal static class UiInteractionSmoke
                         Environment.GetEnvironmentVariable("CHAPPY_R217_JPEGTRAN_COMMIT") ==
                             "7b4993786d856cbccabfc0ed2f923ba000e326cc",
                     "R2.17 part 16: WPF batch uses CI-built officially pinned jpegtran, not synthetic tool");
+                string? embeddedToolSha = typeof(JpegLosslessPreviewEngine).Assembly
+                    .GetCustomAttributes<System.Reflection.AssemblyMetadataAttribute>()
+                    .SingleOrDefault(x => x.Key == "Chappy.TrustedJpegtranSha256")?.Value;
+                Require(embeddedToolSha is { Length: 64 } &&
+                        embeddedToolSha.Equals(
+                            Environment.GetEnvironmentVariable("CHAPPY_R217_SIMD_SHA256"),
+                            StringComparison.OrdinalIgnoreCase),
+                    "G4-02: actual compiled WPF WinExe embeds the exact official SIMD tool SHA-256");
+                using (var guarded = JpegLosslessPreviewEngine.OpenTrustedTool(officialTool))
+                    Require(guarded.CanRead && !guarded.CanWrite,
+                        "G4-02: normal-compiled WPF Core accepts only the trusted SIMD executable");
 
                 string realInput = Path.Combine(testRoot, "generated-real-input");
                 string realOutput = Path.Combine(testRoot, "generated-real-output");
@@ -1032,7 +1045,9 @@ internal static class UiInteractionSmoke
                 Require(liveSourceCount == 12, "R2.17 part 16: six valid WIC JPEG + six valid PNG synthetic sources");
 
                 int liveToolPicks = 0, liveFolderPicks = 0, liveConsents = 0, liveResults = 0;
-                string liveResultBody = "";
+                string liveResultBody = "", liveFailureBody = "";
+                SetPrivate(window, "_showCombinedFailure",
+                    new Action<string>(body => liveFailureBody = body));
                 SetPrivate(window, "_pickCombinedTool", new Func<string?, string?>(_ =>
                 {
                     liveToolPicks++;
@@ -1063,8 +1078,11 @@ internal static class UiInteractionSmoke
                 Require(stopButton.IsEnabled && !unifiedBatchButton.IsEnabled &&
                         !mergeButton.IsEnabled,
                     "R2.17 part 16: real combined-click becomes busy with Stop enabled");
-                PumpUntil(() => liveResults == 1 && unifiedBatchButton.IsEnabled &&
-                    progressText.Text == "PNG/JPG候補作成終了", TimeSpan.FromSeconds(120));
+                PumpUntil(() => unifiedBatchButton.IsEnabled &&
+                    ((liveResults == 1 && progressText.Text == "PNG/JPG候補作成終了") ||
+                     liveFailureBody.Length > 0), TimeSpan.FromSeconds(120));
+                Require(liveFailureBody.Length == 0,
+                    "G4-02: real WPF JPEG SIMD execution after SHA attestation: " + liveFailureBody);
                 var firstState = CombinedBatchResumeInspector.Inspect(
                     realInput, realOutput, officialTool);
                 string pngJournalPath = Path.Combine(realOutput, ".chappy-png-batch-r16.progress.jsonl");

@@ -320,23 +320,53 @@ internal sealed class DuplicateGroupDetailsWindow : Window
 
         var status = new TextBlock
         {
-            Text = "未確認：削除は実行できません。",
+            Text = "確認済み 0 / " + plan.DeleteCandidates.Count +
+                   " 件（画面上の予定のみ、削除機能は未解禁）",
             Foreground = Muted,
             Margin = new Thickness(0, 8, 0, 6)
         };
-        var consent = new CheckBox
+        var individual = new StackPanel
         {
-            Content = "残す1件・削除候補・元のパス・フォルダ分け予定を確認した",
-            Foreground = Light,
-            IsChecked = false,
-            ToolTip = "確認済みの印はこの画面限り。削除の許可や実行ではありません。"
+            Margin = new Thickness(0, 4, 0, 4)
         };
-        consent.Checked += (_, _) => status.Text =
-            "確認済み（計画のみ）。削除機能は別途安全性を検証するまで無効です。";
-        consent.Unchecked += (_, _) => status.Text = "未確認：削除は実行できません。";
-
+        var choices = new List<CheckBox>();
+        void RefreshReviewCount()
+        {
+            int count = choices.Count(x => x.IsChecked == true);
+            status.Text = $"確認済み {count} / {choices.Count} 件 " +
+                          "（未保存の仮選択。実際の削除はできません）";
+        }
+        foreach (var candidate in plan.DeleteCandidates)
+        {
+            var cb = new CheckBox
+            {
+                Foreground = Light,
+                IsChecked = false,
+                Content = "確認済みにする: " + candidate.OriginalRelativePath +
+                          "   →   " + candidate.ProposedCollectionRelativePath,
+                ToolTip = "この行の確認状態は保存されません。元パスと整理予定先を照合してください。",
+                Margin = new Thickness(0, 5, 0, 5)
+            };
+            cb.Checked += (_, _) => RefreshReviewCount();
+            cb.Unchecked += (_, _) => RefreshReviewCount();
+            choices.Add(cb);
+            individual.Children.Add(cb);
+        }
+        var reviewList = new ScrollViewer
+        {
+            Height = 110,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = individual
+        };
         var footer = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
-        footer.Children.Add(consent);
+        footer.Children.Add(new TextBlock
+        {
+            Text = "削除候補ごとの確認（まだ実ファイルへ適用しません）",
+            Foreground = Light,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 5)
+        });
+        footer.Children.Add(reviewList);
         footer.Children.Add(status);
         var buttons = new WrapPanel();
         buttons.Children.Add(MakeButton("一覧メモをコピー", (_, _) =>

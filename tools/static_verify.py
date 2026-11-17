@@ -126,6 +126,7 @@ check('G4-02/03/05: saved candidate must be rechecked with whole bytes, NTFS ID/
 wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')
 diagnostics_batch = (root/'RUN_DIAGNOSTICS.bat').read_text(encoding='utf-8')
 pinned_profile = (root/'tests/R217PinnedJpegtranProfile.cs').read_text(encoding='utf-8')
+jpeg_batch_source = (root/'Core/JpegBatchPreviewEngine.cs').read_text(encoding='utf-8')
 check('G4-02: compiled SHA pin is in WPF assembly metadata, not runtime config or writable sidecar',
       'Chappy.TrustedJpegtranSha256' in wpf_project and
       'ChappyTrustedJpegtranSha256' in wpf_project and
@@ -139,7 +140,7 @@ check('G4-02: same tool identity and SHA verification immediately before native 
       'NativeFile.GetIdentity(tool)' in jpeg_engine and
       'NativeFile.HasNamedDataStreams(tool)' in jpeg_engine and
       'using var pinnedExecutable = OpenTrustedTool(tool, ct);' in jpeg_engine and
-      'using var pinnedExecutable = JpegLosslessPreviewEngine.OpenTrustedTool(tool, ct);' in r19 and
+      'using var pinnedExecutable = JpegLosslessPreviewEngine.OpenTrustedTool(tool, ct);' in jpeg_batch_source and
       'using (var process = Process.Start(psi)' in jpeg_engine)
 check('G4-02: official CI pinned source hashes compiled and exact exe bundled into release',
       'CHAPPY_R217_SIMD_SHA256=$trustedSha' in workflow and

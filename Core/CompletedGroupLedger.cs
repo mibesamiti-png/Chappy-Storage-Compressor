@@ -110,6 +110,117 @@ public static class CompletedGroupLedger
         return originals;
     }
 
+    // G3-01 / G3-04: reload original group Undo identity from the SAME
+    // persisted manifest after app or worker restart. This method is an
+    // inspection only; all mutations remain behind the G3/G5 release lock.
+    // Never resurrect an alias from a caller-supplied screenshot or stale row.
+    public sealed record UndoCandidate(string OperationId, string State,
+        string RepresentativePath, string MasterPath,
+        IReadOnlyList<OriginalEvidence> OriginalFiles,
+        IReadOnlyList<string> RemainingSharedPaths,
+        int AlreadyIndependentAliases, long RequiredAdditionalBytes,
+        long AvailableTargetBytes, long AvailableJournalBytes,
+        bool EvidenceVerified, bool GlobalEvidenceClean,
+        bool CapacityEnough, string Reason)
+    {
+        public int RemainingAliases => RemainingSharedPaths.Count;
+        public bool ReviewReady => EvidenceVerified && GlobalEvidenceClean &&
+            CapacityEnough && RemainingAliases > 0;
+        public bool ProductionUndoAuthorized => false;
+        public string Describe()
+        {
+            var lines = new List<string>
+            {
+                "【独立Undoの再開候補・読み取り専用】",
+                "操作ID: " + OperationId,
+                "履歴状態: " + State,
+                "判定: " + (ReviewReady ? "元ファイルの再特定・必要容量を確認" :
+                    "要確認・実行不可"),
+                "理由: " + Reason,
+                "代表ファイル: " + RepresentativePath,
+                "ストアの実体: " + MasterPath,
+                $"すでに独立化済み: {AlreadyIndependentAliases}件 / 残りの共有名: {RemainingAliases}件",
+                "追加で必要な容量の保守的見積り: " +
+                    GroupRow.HumanSize(RequiredAdditionalBytes),
+                "対象ボリュームの確認時空き容量: " +
+                    GroupRow.HumanSize(AvailableTargetBytes),
+                "Journal側の確認時空き容量: " +
+                    GroupRow.HumanSize(AvailableJournalBytes),
+                "【再特定した全元ファイルと元NTFS ID】"
+            };
+            lines.AddRange(OriginalFiles.Select(x => x.Describe()));
+            lines.Add("【これから独立化する共有名】");
+            lines.AddRange(RemainingSharedPaths);
+            lines.Add("※ Undo後は各ファイルが別のNTFS実体になるため、コピーに必要な容量を消費します。");
+            lines.Add("※ 確認後に他のアプリが編集・移動した場合は再検査が必要です。");
+            lines.Add("※ 容量の観測は予約ではなく、ここから復元操作は実行できません。");
+            lines.Add("※ G3/G5の安全受入・明示承認が完了するまで本番Undoは無効です。");
+            return string.Join("\\n", lines);
+        }
+    }
+
+    public static IReadOnlyList<UndoCandidate> InspectUndoCandidates(
+        string inputRoot, CancellationToken ct = default)
+    {
+        string root = Safety.ValidateRoot(inputRoot);
+        ct.ThrowIfCancellationRequested();
+        var summary = Inspect(root);
+        // Any history/family ambiguity blocks the whole read-only candidate
+        // from appearing approved, even when another group is valid.
+        bool groupClean = summary.Entries.All(e =>
+            e.State is "VerifiedCompleted" or "ExplicitResumeRequired" or
+                "VerifiedRestored");
+        bool journalClean = Journal.Pending().Count == 0 &&
+            Journal.UnresolvedRecordFiles().Count == 0;
+        var undo = IndependentUndoCrashJournal.Inspect(root, ct);
+        bool undoClean = undo.Entries.All(e =>
+            e.State is "VerifiedFinished" or "VerifiedAborted");
+        bool globalClean = groupClean && journalClean && undoClean;
+        // Query both volumes; conservative free-space observations are NOT a
+        // reservation and cannot grant mutation privileges.
+        var (target, journal) = CapacityGuard.ReadAvailable(root);
+        var result = new List<UndoCandidate>();
+        foreach (Entry entry in summary.Entries.OrderBy(e => e.OperationId,
+                     StringComparer.OrdinalIgnoreCase))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (entry.State is not ("VerifiedCompleted" or "ExplicitResumeRequired"))
+                continue; // never reveal a fabricated trusted candidate
+            Manifest x = Read(root, entry.OperationId, "completed");
+            Checkpoint p = ReadCheckpoint(root, x);
+            if (p.ActiveStage is not null || !Verify(x, p) ||
+                p.Detached.Count != entry.DetachedCount ||
+                x.Aliases.Count != entry.AliasCount ||
+                p.Detached.Count >= x.Aliases.Count)
+                throw new InvalidDataException(
+                    "Undo source/group ledger changed during restart inspection");
+            long needed = checked(x.Representative.Length *
+                (x.Aliases.Count - p.Detached.Count) +
+                CapacityGuard.TargetReserve);
+            bool enough = CapacityGuard.Enough(target, needed) &&
+                CapacityGuard.Enough(journal, CapacityGuard.JournalReserve);
+            var originals = new[] { x.Representative }.Concat(x.Aliases)
+                .Select((source, index) => new OriginalEvidence(x.Id,
+                    entry.State, index == 0, source.Path, x.Hash,
+                    source.Length, source.Identity.VolumeSerial,
+                    source.Identity.FileIndex, source.Identity.LinkCount,
+                    source.CreationUtc, source.ModifiedUtc, source.Attributes,
+                    Convert.ToHexString(
+                        System.Security.Cryptography.SHA256.HashData(
+                            source.SecurityDescriptor))))
+                .ToArray();
+            result.Add(new UndoCandidate(x.Id, entry.State,
+                x.Representative.Path, x.Master, originals,
+                x.Aliases.Skip(p.Detached.Count).Select(a => a.Path).ToArray(),
+                p.Detached.Count, needed, target, journal,
+                true, globalClean, enough,
+                !globalClean ? "未解決の統合・Undo履歴またはJournalが存在します" :
+                !enough ? "独立コピーと安全余裕のための空き容量が不足しています" :
+                "元ID・全バイト・Owner/DACL・現在の共有リンク数を再照合しました"));
+        }
+        return result;
+    }
+
     private static string Folder(string root) => Path.Combine(Safety.StorePath(root), Name);
     private static string PathFor(string root, string id, string phase) =>
         Path.Combine(Folder(root), id + "." + phase + ".json");

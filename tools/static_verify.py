@@ -456,8 +456,18 @@ for token in ['EvaluateCapacity(', 'AvailableFreeSpace', 'Safety.Capture(path)',
               'MinimumReserveBytes', 'differentVolume', 'SourceBytes']:
     check('R2.2 preflight guard: '+token, token in r22)
 for destructive in ['File.Move(', 'File.Delete(', 'File.Replace(', 'File.Copy(', 'File.WriteAllBytes(',
-                    'FileStream(', 'Directory.CreateDirectory(', 'NativeFile.NewHardLink(']:
+                    'Directory.CreateDirectory(', 'NativeFile.NewHardLink(']:
     check('R2.2 preflight never mutates: '+destructive, destructive not in r22)
+# Read-only handles prevent a cooperating writer from racing the same NTFS
+# file. Forbid Create/Write/OpenOrCreate instead of forbidding FileStream
+# entirely, which would incorrectly reject the safer G4 pre-Apply design.
+check('R2.2/G4 read-only source and candidate FileStream locks',
+      'new FileStream(original, FileMode.Open,' in r22 and
+      'new FileStream(candidate, FileMode.Open,' in r22 and
+      'FileAccess.Read, FileShare.Read' in r22 and
+      not any(x in r22 for x in ['FileAccess.Write', 'FileAccess.ReadWrite',
+           'FileMode.Create', 'FileMode.Append', 'FileMode.OpenOrCreate',
+           'FileMode.Truncate']))
 check('R2.2 GUI event wired', 'ReplacementReadiness_Click' in source and
       'ReplacementReadinessButton.IsEnabled' in source and
       'ReplacementReadiness_Click' in (root/'MainWindow.xaml').read_text(encoding='utf-8'))

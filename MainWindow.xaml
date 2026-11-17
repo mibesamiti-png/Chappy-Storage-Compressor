@@ -260,6 +260,9 @@
                 <Button x:Name="RecoveryButton" Content="復旧ウィザードを開く"
                         Click="Recovery_Click" Background="#303030" FontSize="14"
                         ToolTip="復旧記録と要手動確認の理由を調べます。"/>
+                <Button x:Name="CleanupHistoryButton" Content="重複整理の保留記録を確認"
+                        Click="CleanupHistory_Click" Background="#303030"
+                        ToolTip="保留先と元の保存場所、復帰やごみ箱処理の記録を読み取り専用で表示します。削除・復元操作は行いません。"/>
                 <Button x:Name="CompletedLedgerButton" Content="保存済み統合履歴を確認"
                         Click="CompletedLedger_Click"
                         ToolTip="過去の統合とUndoの記録を読み取り専用で調べます。"/>

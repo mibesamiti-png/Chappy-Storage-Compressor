@@ -857,6 +857,13 @@ public static class CompletedGroupLedger
             throw new InvalidDataException("Group Undo cannot proceed from unverified history");
         Manifest x = Read(root, id, "completed");
         Checkpoint p = ReadCheckpoint(root, x);
+        // BEFORE writing the first Undo checkpoint or touching any stage,
+        // conservatively require enough room for ALL remaining aliases.
+        // Reobserve each individual stage and just before its File.Replace
+        // inside the common internal Undo Core as well.
+        long allRemainingBytes = checked(x.Representative.Length *
+            (x.Aliases.Count - p.Detached.Count));
+        CapacityGuard.AssertCanRestore(root, allRemainingBytes);
         if (p.ActiveStage is not null)
         {
             string state = ActiveState(x, p);
@@ -895,7 +902,10 @@ public static class CompletedGroupLedger
         for (int i = p.Detached.Count; i < x.Aliases.Count; i++)
         {
             uint expectedLinks = checked((uint)(2 + x.Aliases.Count - i));
-            IndependentUndoEngine.Restore(root, x.Aliases[i], x.Master, x.Hash,
+            // G3: the generated Undo suite invokes the SAME internal NTFS
+            // cutover compiled in a normal Windows product build. Its root
+            // sentinel and protected public Restore API remain unchanged.
+            IndependentUndoEngine.RestoreCore(root, x.Aliases[i], x.Master, x.Hash,
                 expectedLinks, evidence,
                 // The phase names are never authority by themselves. Reopen
                 // and validate the durable checkpoint AFTER any competing

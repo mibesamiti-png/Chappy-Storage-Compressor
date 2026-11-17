@@ -36,6 +36,30 @@ public static class CapacityGuard
                 new DriveInfo(journalDrive).AvailableFreeSpace);
     }
 
+    // G3: a full independent copy must fit BEFORE creating its stage.
+    // Immediately before File.Replace, the stage already occupies space,
+    // but retain both target metadata reserve and journal reserve.
+    // Observing available space is never a reservation or permission for
+    // ordinary user-media Undo: that is still disabled.
+    internal static void AssertCanRestore(string targetRoot,
+        long additionalCopyBytes, bool stageAlreadyAllocated = false)
+    {
+        if (additionalCopyBytes < 0 ||
+            additionalCopyBytes > long.MaxValue - TargetReserve)
+            throw new IOException("独立Undoの必要容量が不正です。");
+        long requiredTarget = checked(TargetReserve +
+            (stageAlreadyAllocated ? 0L : additionalCopyBytes));
+        var (target, journal) = ReadAvailable(targetRoot);
+        if (!Enough(target, requiredTarget))
+            throw new IOException(
+                "独立Undoのコピーに必要な対象ドライブ空き容量が不足: " +
+                $"観測 {GroupRow.HumanSize(target)} / 必要 {GroupRow.HumanSize(requiredTarget)}。");
+        if (!Enough(journal, JournalReserve))
+            throw new IOException(
+                "独立Undoの復旧台帳に必要な空き容量が不足: " +
+                $"観測 {GroupRow.HumanSize(journal)} / 必要 {GroupRow.HumanSize(JournalReserve)}。");
+    }
+
     public static void AssertCanStart(string targetRoot)
     {
         var (target, journal) = ReadAvailable(targetRoot);

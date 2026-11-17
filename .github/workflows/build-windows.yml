@@ -1044,6 +1044,10 @@ jobs:
               $r.g3RestartedProcessPartialUndoRemainingAliasProof -ne $true -or
               $r.g3LowTargetAndJournalSpaceReadOnlyRefusal -ne $true -or
               $r.g3UnknownLinkAndRestoredGroupNoUndoCandidate -ne $true -or
+              $r.g3SharedNormalCompiledUndoCoreUsedInSyntheticGroup -ne $true -or
+              $r.g3IndependentWriteAfterUndoOtherOriginalsPreserved -ne $true -or
+              $r.g3PrecopyAndFinalCutoverTargetJournalCapacityRefused -ne $true -or
+              $r.g3ExplicitStageRecoveryAfterCapacityLossVerified -ne $true -or
               $r.actualCoreKillCheckpointCount -ne 7 -or
               $r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true -or
               $r.partialFailedGroupAllocationNeverCountedAsVerifiedReceipt -ne $true -or

@@ -1,8 +1,6 @@
 using System.Text.Json;
-#if CHAPPY_TESTING
 using System.ComponentModel;
 using System.Runtime.InteropServices;
-#endif
 
 namespace ChappyStorageCompressor.Core;
 
@@ -16,15 +14,14 @@ namespace ChappyStorageCompressor.Core;
 public static class IndependentUndoEngine
 {
     public const bool ProductionEnabled = false;
-#if CHAPPY_TESTING
-    // Only used by synthetic Core tests. Never included as an executable
-    // security-descriptor writer in a production build.
+    // Compiled for the same internal Core in both builds. The only normal
+    // entrypoint that could run it remains INTERNAL and generated-only.
+    // The PUBLIC Restore entrypoint always throws in release builds.
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode,
         EntryPoint = "SetFileSecurityW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFileSecurity(string path,
         uint securityInformation, byte[] securityDescriptor);
-#endif
     public sealed record Result(string AliasPath, string DurableEvidencePath,
         FileIdentity SharedIdentityBefore, FileIdentity IndependentIdentityAfter,
         long ApproximateRestoredBytes);
@@ -50,6 +47,30 @@ public static class IndependentUndoEngine
         throw new NotSupportedException(
             "独立Undoの本番操作は完了台帳・メタデータ・電源断ゲートを満たすまで無効です。");
 #else
+        return RestoreCore(testRoot, originalIndependent, masterPath,
+            expectedHash, expectedSharedLinkCount, evidenceDirectory, ct,
+            testOnlyBeforeFinalValidation, testOnlyCompletedOperationId,
+            testOnlyCrashCheckpoint, testOnlyGroupPhase,
+            testOnlyAfterFinalValidation);
+#endif
+    }
+
+    // G3 shared implementation: the identical generated-only NTFS cutover
+    // logic is compiled in NORMAL and test builds, but deliberately INTERNAL.
+    // Never route WPF or the public Restore API to this method. A strict
+    // generated-root marker and in-place ID/byte validation are enforced
+    // before any file is touched. G3/G5 must approve a separate product
+    // authorization boundary before ordinary media can be modified.
+    internal static Result RestoreCore(string testRoot,
+        FileSnapshot originalIndependent, string masterPath,
+        string expectedHash, uint expectedSharedLinkCount,
+        string evidenceDirectory, CancellationToken ct = default,
+        Action<string>? testOnlyBeforeFinalValidation = null,
+        string? testOnlyCompletedOperationId = null,
+        Action<string>? testOnlyCrashCheckpoint = null,
+        Action<string, string>? testOnlyGroupPhase = null,
+        Action<string>? testOnlyAfterFinalValidation = null)
+    {
         ct.ThrowIfCancellationRequested();
         string root = Safety.ValidateRoot(testRoot);
         string temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
@@ -77,6 +98,9 @@ public static class IndependentUndoEngine
 
         using var exclusive = MutationLease.Acquire();
         Journal.AssertCleanBeforeMerge();
+        // Stage copy requires a fresh source-volume observation. Fail before
+        // writing any undo evidence or independent stage if it cannot fit.
+        CapacityGuard.AssertCanRestore(root, originalIndependent.Length);
         if (!Safety.SameSnapshot(originalIndependent) &&
             !NativeFile.SameFile(alias, master))
             throw new InvalidDataException("Original source changed or expected link missing");
@@ -102,6 +126,7 @@ public static class IndependentUndoEngine
         string record = Path.Combine(evidence, id + ".part23-undo.json");
         if (File.Exists(stage) || File.Exists(record))
             throw new IOException("Undo stage/evidence already exists");
+#if CHAPPY_TESTING
         if (testOnlyCompletedOperationId is not null)
         {
             IndependentUndoCrashJournal.BeginSynthetic(root,
@@ -109,6 +134,7 @@ public static class IndependentUndoEngine
                 stage, expectedHash, expectedSharedLinkCount);
             testOnlyCrashCheckpoint?.Invoke("intent-written");
         }
+#endif
 
         // Persist group-wide intent BEFORE any stage byte is written.
         // This testing hook is deliberately absent from normal builds.
@@ -135,11 +161,13 @@ public static class IndependentUndoEngine
         if (!StageValid(staged))
             throw new InvalidDataException("Independent stage failed byte or owner/DACL/metadata validation");
         testOnlyGroupPhase?.Invoke("stage-validated", stage);
+#if CHAPPY_TESTING
         if (testOnlyCompletedOperationId is not null)
         {
             IndependentUndoCrashJournal.MarkStageSynthetic(root, testOnlyCompletedOperationId);
             testOnlyCrashCheckpoint?.Invoke("stage-validated");
         }
+#endif
 
         var intent = new Evidence(1, alias, master, stage, expectedHash,
             shared.Identity.VolumeSerial, shared.Identity.FileIndex,
@@ -201,6 +229,10 @@ public static class IndependentUndoEngine
                     "Pathname was renamed, deleted, replaced or modified after final Undo validation; no cutover performed");
         }
 
+        // G3: the prepared copy now occupies disk; observe BOTH volumes
+        // again immediately before the irreversible alias cutover. This
+        // cannot reserve free space or make path races atomic.
+        CapacityGuard.AssertCanRestore(root, 0, stageAlreadyAllocated: true);
         // This is a single test-owned alias, NOT the master. The independent
         // source and store link remain untouched by the replace operation.
         File.Replace(stage, alias, null);
@@ -208,11 +240,13 @@ public static class IndependentUndoEngine
         testOnlyGroupPhase?.Invoke("post-cutover-before-metadata", stage);
         // This crash checkpoint occurs AFTER the name has been switched to
         // an independent NTFS ID, BEFORE owner/DACL/time normalization.
+#if CHAPPY_TESTING
         if (testOnlyCompletedOperationId is not null)
         {
             testOnlyCrashCheckpoint?.Invoke("post-cutover-before-metadata");
             IndependentUndoCrashJournal.MarkCutoverSynthetic(root, testOnlyCompletedOperationId);
         }
+#endif
         FileSnapshot detached = Safety.Capture(alias);
         // ReplaceFileW can preserve metadata of the *replaced* NTFS alias
         // rather than all metadata of the staged independent file. Reapply
@@ -285,13 +319,14 @@ public static class IndependentUndoEngine
                 detached.SecurityDescriptor.AsSpan().SequenceEqual(originalIndependent.SecurityDescriptor) +
                 "; retain evidence");
         testOnlyGroupPhase?.Invoke("metadata-restored-before-ledger", stage);
+#if CHAPPY_TESTING
         if (testOnlyCompletedOperationId is not null)
         {
             IndependentUndoCrashJournal.MarkMetadataSynthetic(root, testOnlyCompletedOperationId);
             testOnlyCrashCheckpoint?.Invoke("metadata-restored-before-ledger");
         }
-        return new Result(alias, record, shared.Identity, detached.Identity, detached.Length);
 #endif
+        return new Result(alias, record, shared.Identity, detached.Identity, detached.Length);
     }
 
 #if CHAPPY_TESTING

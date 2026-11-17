@@ -124,6 +124,10 @@ public static class DuplicateCleanupWorkflow
         Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".recycled.json");
     private static string ReportReceiptPath(string root, string id) =>
         Path.Combine(EvidenceDir(root), id + ".report.json");
+    private static string RestoreIntentPath(string root, string id, int index) =>
+        Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".restore-intent.json");
+    private static string RestoreReceiptPath(string root, string id, int index) =>
+        Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".restored.json");
     private static string ReviewPath(string root, string id, int index, int seq) =>
         Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") +
             ".review-" + seq.ToString("D4") + ".json");
@@ -263,6 +267,47 @@ public static class DuplicateCleanupWorkflow
         return !File.Exists(c.SourcePath) && Matches(c.Original, c.DestinationPath);
     }
 
+    private static bool ValidStageReceipt(string root, string id, int index, Candidate c)
+    {
+        string receipt = StagePath(root, id, index);
+        if (!File.Exists(receipt)) return false;
+        try
+        {
+            var recorded = JsonSerializer.Deserialize<FileEvidence>(File.ReadAllBytes(receipt));
+            if (recorded != c.Original)
+                throw new InvalidDataException("Stage receipt does not match immutable intent");
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Stage receipt is invalid JSON", ex);
+        }
+    }
+
+    private static bool ValidReport(Intent x)
+    {
+        string report = Resolve(x.Root, x.ReportRelative);
+        string receipt = ReportReceiptPath(x.Root, x.Id);
+        if (!File.Exists(report) || !File.Exists(receipt))
+            return false;
+        byte[] expected = ReportBytes(x);
+        string? recorded;
+        try
+        {
+            recorded = JsonSerializer.Deserialize<string>(File.ReadAllBytes(receipt));
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Cleanup report receipt is malformed", ex);
+        }
+        if (!string.Equals(recorded, Convert.ToHexString(SHA256.HashData(expected)),
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Cleanup report receipt hash is inconsistent");
+        if (!File.ReadAllBytes(report).AsSpan().SequenceEqual(expected))
+            throw new InvalidDataException("Cleanup report was modified after verification");
+        return true;
+    }
+
     internal static void StageSynthetic(string testRoot, string scanRoot,
         string id, int index, Action<string>? checkpoint = null)
     {
@@ -273,8 +318,13 @@ public static class DuplicateCleanupWorkflow
             throw new ArgumentOutOfRangeException(nameof(index));
         RequireKeeper(x);
         var c = x.Candidates[index];
+        if (File.Exists(RestoreIntentPath(root, id, index)) ||
+            File.Exists(RestoreReceiptPath(root, id, index)) ||
+            File.Exists(TrashIntentPath(root, id, index)) ||
+            File.Exists(TrashReceiptPath(root, id, index)))
+            throw new InvalidDataException("Already restored/recycled or ambiguous: staging refused");
         string receipt = StagePath(root, id, index);
-        if (File.Exists(receipt))
+        if (ValidStageReceipt(root, id, index, c))
         {
             if (!StagedAndValid(x, c))
                 throw new InvalidDataException("Staged receipt no longer matches the file");
@@ -347,8 +397,10 @@ public static class DuplicateCleanupWorkflow
         string root = OwnedRoot(testRoot, scanRoot);
         var x = Read(testRoot, root, id);
         RequireKeeper(x);
-        if (x.Candidates.Where((c, i) => !File.Exists(StagePath(root, id, i)) ||
-            !StagedAndValid(x, c)).Any())
+        if (x.Candidates.Where((c, i) => !ValidStageReceipt(root, id, i, c) ||
+            !StagedAndValid(x, c) ||
+            File.Exists(RestoreIntentPath(root, id, i)) ||
+            File.Exists(TrashIntentPath(root, id, i))).Any())
             throw new InvalidDataException("Not all candidates are staged and verified");
         string report = Resolve(root, x.ReportRelative);
         byte[] expected = ReportBytes(x);
@@ -399,9 +451,10 @@ public static class DuplicateCleanupWorkflow
         if (index < 0 || index >= x.Candidates.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
         RequireKeeper(x);
-        if (!File.Exists(ReportReceiptPath(root, id)) ||
+        if (!ValidReport(x) ||
             File.Exists(TrashIntentPath(root, id, index)) ||
-            !File.Exists(StagePath(root, id, index)) ||
+            File.Exists(RestoreIntentPath(root, id, index)) ||
+            !ValidStageReceipt(root, id, index, x.Candidates[index]) ||
             !StagedAndValid(x, x.Candidates[index]))
             throw new InvalidDataException("Cannot confirm unverified/started cleanup");
         var (_, last) = Review(x, index);
@@ -424,11 +477,14 @@ public static class DuplicateCleanupWorkflow
         if (index < 0 || index >= x.Candidates.Count)
             throw new ArgumentOutOfRangeException(nameof(index));
         if (File.Exists(TrashIntentPath(root, id, index)) ||
-            File.Exists(TrashReceiptPath(root, id, index)))
-            throw new InvalidDataException("Recycle already attempted: manual inspection required");
+            File.Exists(TrashReceiptPath(root, id, index)) ||
+            File.Exists(RestoreIntentPath(root, id, index)) ||
+            File.Exists(RestoreReceiptPath(root, id, index)))
+            throw new InvalidDataException("Recycle/restore already attempted: manual inspection required");
         RequireKeeper(x);
         var c = x.Candidates[index];
-        if (!File.Exists(ReportReceiptPath(root, id)) ||
+        if (!ValidReport(x) ||
+            !ValidStageReceipt(root, id, index, c) ||
             !Review(x, index).Confirmed || !StagedAndValid(x, c) ||
             !Safety.ByteEqual(x.Keeper.Path, c.DestinationPath, CancellationToken.None))
             throw new InvalidDataException("Unconfirmed or modified candidate cannot be recycled");
@@ -457,6 +513,83 @@ public static class DuplicateCleanupWorkflow
         });
     }
 
+    /// <summary>
+    /// Restore only an independently authenticated staged synthetic candidate to
+    /// its EXACT original pathname. The current path must be absent; never use
+    /// File.Move(overwrite: true), delete a foreign occupant, or auto-create a
+    /// missing original parent. Durable intent is written before the NTFS rename.
+    /// A crash after rename is recovered only with matching file ID + SHA.
+    /// This is NOT a Recycle Bin restore and has no product mutation entrypoint.
+    /// </summary>
+    internal static void RestoreSynthetic(string testRoot, string scanRoot,
+        string id, int index, Action<string>? checkpoint = null)
+    {
+        using var lease = MutationLease.Acquire();
+        string root = OwnedRoot(testRoot, scanRoot);
+        var x = Read(testRoot, root, id);
+        if (index < 0 || index >= x.Candidates.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        RequireKeeper(x);
+        var c = x.Candidates[index];
+        if (File.Exists(TrashIntentPath(root, id, index)) ||
+            File.Exists(TrashReceiptPath(root, id, index)))
+            throw new InvalidDataException(
+                "Recycle was attempted: original restore requires manual review");
+        if (!ValidStageReceipt(root, id, index, c) || !ValidReport(x))
+            throw new InvalidDataException("Stage/report evidence is missing or altered");
+        string intent = RestoreIntentPath(root, id, index);
+        string receipt = RestoreReceiptPath(root, id, index);
+        bool originalMatches = Matches(c.Original, c.SourcePath);
+        bool stageMatches = StagedAndValid(x, c);
+        if (File.Exists(receipt))
+        {
+            if (!File.Exists(intent) || !originalMatches ||
+                File.Exists(c.DestinationPath))
+                throw new InvalidDataException("Restored receipt conflicts with current NTFS file");
+            return;
+        }
+        if (File.Exists(intent) && originalMatches &&
+            !File.Exists(c.DestinationPath))
+        {
+            // Recovery of a verified rename interrupted before its receipt.
+            DurableJson(receipt, c.Original);
+            return;
+        }
+        if (File.Exists(c.SourcePath) || Directory.Exists(c.SourcePath) ||
+            !stageMatches)
+            throw new InvalidDataException("Original path occupied or staged file changed");
+
+        // Re-check parent directories under pinned handles; the restored parent
+        // must already exist, not be a reparse point or a renamed alias.
+        ParentsSafe(root, c.SourcePath, create: false);
+        using var parents = NativeFile.PinnedDirectories.Open(root,
+            new[] { x.Keeper.Path, c.SourcePath, c.DestinationPath });
+        parents.AssertUnchanged();
+        if (!Matches(x.Keeper, x.Keeper.Path) ||
+            !StagedAndValid(x, c) ||
+            !Safety.ByteEqual(x.Keeper.Path, c.DestinationPath,
+                CancellationToken.None))
+            throw new InvalidDataException("Staged file/keeper changed before restoration");
+        if (!File.Exists(intent))
+            DurableJson(intent, new
+            {
+                Schema = 1, Id = id, Index = index,
+                c.SourcePath, c.DestinationPath, c.Original.Sha256
+            });
+        checkpoint?.Invoke("after-restore-intent-before-rename");
+
+        using var pinned = NativeFile.PinnedFile.Open(c.DestinationPath,
+            new FileIdentity(c.Original.VolumeSerial, c.Original.FileIndex, 1),
+            c.Original.Sha256);
+        pinned.RenameNoReplace(c.SourcePath);
+        checkpoint?.Invoke("after-restore-rename-before-receipt");
+        if (!Matches(c.Original, c.SourcePath) ||
+            File.Exists(c.DestinationPath) ||
+            !Matches(x.Keeper, x.Keeper.Path))
+            throw new InvalidDataException("Restored NTFS identity/content differs: manual review");
+        DurableJson(receipt, c.Original);
+    }
+
     internal static IReadOnlyList<Status> InspectSynthetic(
         string testRoot, string scanRoot, string id)
     {
@@ -464,20 +597,33 @@ public static class DuplicateCleanupWorkflow
         var x = Read(testRoot, root, id);
         return x.Candidates.Select((c, i) =>
         {
-            bool stagedReceipt = File.Exists(StagePath(root, id, i));
+            bool stagedReceipt = ValidStageReceipt(root, id, i, c);
             bool startedRecycle = File.Exists(TrashIntentPath(root, id, i));
             bool doneRecycle = File.Exists(TrashReceiptPath(root, id, i));
+            bool restoreIntent = File.Exists(RestoreIntentPath(root, id, i));
+            bool restored = File.Exists(RestoreReceiptPath(root, id, i));
             bool originalValid = Matches(c.Original, c.SourcePath);
             bool stagedValid = StagedAndValid(x, c);
             bool reviewed = Review(x, i).Confirmed;
-            string state = doneRecycle
-                ? "SimulatedRecycleReceiptRequiresReview"
-                : startedRecycle
-                    ? "RecycleIntentRequiresManualReview"
-                    : stagedReceipt && stagedValid
-                        ? reviewed ? "ConfirmedStaged" : "StagedUnconfirmed"
-                        : !stagedReceipt && originalValid && !File.Exists(c.DestinationPath)
-                            ? "NotStaged"
+            string state =
+                (restoreIntent && startedRecycle) || (restored && startedRecycle)
+                    ? "ManualReview"
+                    : restored
+                        ? restoreIntent && originalValid && !File.Exists(c.DestinationPath)
+                            ? "RestoredOriginal" : "ManualReview"
+                        : restoreIntent
+                            ? originalValid && !File.Exists(c.DestinationPath)
+                                ? "InterruptedAfterRestoreRecoverable"
+                                : stagedValid && !File.Exists(c.SourcePath)
+                                    ? "RestoreIntentRecorded" : "ManualReview"
+                        : doneRecycle
+                            ? "SimulatedRecycleReceiptRequiresReview"
+                            : startedRecycle
+                                ? "RecycleIntentRequiresManualReview"
+                            : stagedReceipt && stagedValid
+                                ? reviewed ? "ConfirmedStaged" : "StagedUnconfirmed"
+                            : !stagedReceipt && originalValid && !File.Exists(c.DestinationPath)
+                                ? "NotStaged"
                             : !stagedReceipt && stagedValid
                                 ? "InterruptedAfterStageRecoverable"
                                 : "ManualReview";

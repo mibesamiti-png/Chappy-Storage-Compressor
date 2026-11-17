@@ -54,6 +54,7 @@ internal static class UiInteractionSmoke
             var stopButton = Named<Button>(window, "StopButton");
             var mergeButton = Named<Button>(window, "MergeButton");
             var dedupePlanButton = Named<Button>(window, "DedupePlanButton");
+            var selectedMergeReviewButton = Named<Button>(window, "SelectedMergeReviewButton");
             var completedLedgerButton = Named<Button>(window, "CompletedLedgerButton");
             var unifiedBatchButton = Named<Button>(window, "UnifiedBatchButton");
             var pngBatchButton = Named<Button>(window, "PngBatchButton");
@@ -67,6 +68,7 @@ internal static class UiInteractionSmoke
                 "G1-05: newly opened WPF dashboard never implies that a scan has run");
 
             Require(!mergeButton.IsEnabled && !dedupePlanButton.IsEnabled &&
+                    !selectedMergeReviewButton.IsEnabled &&
                     completedLedgerButton.IsEnabled &&
                     !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
@@ -192,6 +194,56 @@ internal static class UiInteractionSmoke
             Require(part23WpfPlanSafe,
                 "R2.17 part 23: actual WPF duplicate-first/Undo plan never links or changes scanned media");
 
+            // B2 G2-07: real WPF selected-row consent and final recheck.
+            // Consent is only an acknowledgement, NEVER permission for the
+            // public Merge button or internal Core transaction.
+            groupsGrid.SelectedIndex = 0;
+            Require(selectedMergeReviewButton.IsEnabled && !mergeButton.IsEnabled,
+                "B2 G2-07: selecting a scanned group enables ONLY read-only confirmation");
+            string selectedRiskText = "", afterRiskText = "";
+            SetPrivate(window, "_confirmSelectedMergeRisk",
+                new Func<string, bool>(message =>
+                {
+                    selectedRiskText = message;
+                    return true; // consent still MUST NOT mutate data
+                }));
+            SetPrivate(window, "_showDedupePlan",
+                new Action<string>(message => afterRiskText = message));
+            RoutedClick(selectedMergeReviewButton);
+            Require(!selectedMergeReviewButton.IsEnabled && !mergeButton.IsEnabled,
+                "B2 G2-07: selected confirmation enters busy state without enabling Merge");
+            PumpUntil(() => selectedMergeReviewButton.IsEnabled &&
+                progressText.Text == "再検証済み・本番統合は無効",
+                TimeSpan.FromSeconds(35));
+            bool selectedConsentReadOnly =
+                selectedRiskText.Contains("共有化後", StringComparison.Ordinal) &&
+                selectedRiskText.Contains("独立Undoに必要な追加容量", StringComparison.Ordinal) &&
+                selectedRiskText.Contains("対象ドライブの確認時空き", StringComparison.Ordinal) &&
+                selectedRiskText.Contains(left, StringComparison.OrdinalIgnoreCase) &&
+                selectedRiskText.Contains(right, StringComparison.OrdinalIgnoreCase) &&
+                afterRiskText.Contains("最終再検証OK", StringComparison.Ordinal) &&
+                afterRiskText.Contains("本番統合は実行できません", StringComparison.Ordinal) &&
+                !mergeButton.IsEnabled &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId) &&
+                !NativeFile.SameFile(left, right) &&
+                !Directory.Exists(Safety.StorePath(originals));
+            Require(selectedConsentReadOnly,
+                "B2 G2-07: routed selected confirmation explains shared edits and Undo capacity, revalidates source, never changes NTFS files");
+            // Even a canceled risk dialog must leave all original IDs intact.
+            SetPrivate(window, "_confirmSelectedMergeRisk",
+                new Func<string, bool>(_ => false));
+            RoutedClick(selectedMergeReviewButton);
+            PumpUntil(() => selectedMergeReviewButton.IsEnabled &&
+                progressText.Text == "確認を中止（未実行）",
+                TimeSpan.FromSeconds(35));
+            Require(!mergeButton.IsEnabled &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId) &&
+                !Directory.Exists(Safety.StorePath(originals)),
+                "B2 G2-07: declining selected risk confirmation does not create a store or link");
+
             // Part 24: read-only persisted-history check via genuine XAML
             // Click; an empty store must not be created just to inspect it.
             string ledgerBody = "";
@@ -210,6 +262,7 @@ internal static class UiInteractionSmoke
                 ledgerBody.Contains("独立Undo中断履歴：読み取り専用",
                     StringComparison.Ordinal) &&
                 ledgerBody.Contains("未完了: 0件", StringComparison.Ordinal) &&
+                ledgerBody.Contains("元ファイルごとの記録：確認済み 0 件", StringComparison.Ordinal) &&
                 !Directory.Exists(Safety.StorePath(originals)) &&
                 OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
                 NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
@@ -891,6 +944,8 @@ internal static class UiInteractionSmoke
                     part22NoLockPlanOrCandidateCreatedForEitherRace = true,
                     part22UntrustedForeignOutputBytesPreserved = true,
                     part23ReadOnlyDedupeUndoPlanRoutedClickVerified = part23WpfPlanSafe,
+                    b2SelectedRiskReviewRoutedClickVerified = selectedConsentReadOnly,
+                    b2ProductionMergeStillLockedAfterRiskConsent = !mergeButton.IsEnabled,
                     part23MergeStillDisabledAfterPreview = !mergeButton.IsEnabled,
                     part23ScanSourceHashesAndNtfsIdentitiesPreserved =
                         OracleHash(left) == beforeA && OracleHash(right) == beforeB &&

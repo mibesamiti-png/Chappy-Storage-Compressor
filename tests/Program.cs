@@ -594,12 +594,52 @@ static class Program
                         Directory.CreateDirectory(g4Backup);
                         string guard = Path.Combine(g4Backup, ".chappy-g4-generated-only");
                         File.WriteAllText(guard, "CHAPPY-G4-GENERATED-ONLY\\n");
+                        string independentBackupSlot = Path.Combine(g4Backup, "empty-backup");
+                        Directory.CreateDirectory(independentBackupSlot);
                         try
                         {
                             var originalSnapshot = Safety.Capture(source);
+                            using (var writer = new FileStream(source, FileMode.Open,
+                                FileAccess.ReadWrite, FileShare.None))
+                                ExpectThrows(() =>
+                                    ReplacementReadiness.PrepareVerifiedCopies(
+                                        source, preview.PreviewPath!, g4Stage,
+                                        independentBackupSlot, hash, fidelity.CandidateSha256),
+                                    "G4-03: 他プロセスの原本排他writer中は独立バックアップ準備を拒否");
+                            Check(!Directory.EnumerateFileSystemEntries(g4Stage).Any() &&
+                                !Directory.EnumerateFileSystemEntries(independentBackupSlot).Any(),
+                                "G4-03: 排他writer競合で作業ファイルを作らない");
+
+                            string alias = Path.Combine(g4Stage, "g4-source-hardlink-alias.png");
+                            NativeFile.NewHardLink(alias, source);
+                            try
+                            {
+                                ExpectThrows(() =>
+                                    ReplacementReadiness.PrepareVerifiedCopies(
+                                        source, preview.PreviewPath!, g4Stage,
+                                        independentBackupSlot, hash, fidelity.CandidateSha256),
+                                    "G4-05: 元画像が既存ハードリンク共有なら独立stage準備を拒否");
+                            }
+                            finally { File.Delete(alias); }
+                            Check(Safety.SameSnapshot(originalSnapshot) &&
+                                !Directory.EnumerateFileSystemEntries(g4Stage).Any() &&
+                                !Directory.EnumerateFileSystemEntries(independentBackupSlot).Any(),
+                                "G4-05: ハードリンク競合後は元IDと作業先の無変更を確認");
+
+                            // A wrong creation-time source hash must never be
+                            // replaced by the current real source hash.
+                            ExpectThrows(() => ReplacementReadiness.PrepareVerifiedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot, new string('0', 64),
+                                    fidelity.CandidateSha256),
+                                "G4-03: 生成時原本SHAの不一致でバックアップ前に停止");
+                            Check(!Directory.EnumerateFileSystemEntries(g4Stage).Any() &&
+                                !Directory.EnumerateFileSystemEntries(independentBackupSlot).Any(),
+                                "G4-03: 原本SHA不一致は作業フォルダを変更しない");
+
                             var prepared = ReplacementReadiness.PrepareVerifiedCopies(
-                                source, preview.PreviewPath!, g4Stage, g4Backup,
-                                hash, fidelity.CandidateSha256);
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot, hash, fidelity.CandidateSha256);
                             Check(File.Exists(prepared.StagedPath) &&
                                 File.Exists(prepared.BackupPath) &&
                                 Safety.ByteEqual(source, prepared.BackupPath,
@@ -622,42 +662,21 @@ static class Program
                                     source, prepared.StagedPath).Verified,
                                 "G4-03: 生成stageのPNG画素/メタデータ独立復号も合格");
 
-                            // Foreign content must never be deleted or overwritten
-                            // by copy-only preparation. A dirty destination is
-                            // allowed but only NEW GUID file names are allocated.
+                            // A second call without recovery must refuse the
+                            // previous generated files. A third-party file
+                            // must be preserved, never silently overwritten.
                             string foreign = Path.Combine(g4Stage, "unknown-third-party.bin");
                             File.WriteAllText(foreign, "foreign-preserve");
-                            var another = ReplacementReadiness.PrepareVerifiedCopies(
-                                source, preview.PreviewPath!, g4Stage, g4Backup,
-                                hash, fidelity.CandidateSha256);
+                            ExpectThrows(() => ReplacementReadiness.PrepareVerifiedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot, hash, fidelity.CandidateSha256),
+                                "G4-03: 出力先の既存/異物ファイルに遭遇すれば変更せず停止");
                             Check(File.ReadAllText(foreign) == "foreign-preserve" &&
-                                another.StagedPath != prepared.StagedPath &&
-                                another.BackupPath != prepared.BackupPath &&
                                 File.Exists(prepared.StagedPath) &&
-                                File.Exists(prepared.BackupPath),
-                                "G4-03: 出力先異物を上書き/削除せず新規IDで独立コピー");
-
-                            using (var writer = new FileStream(source, FileMode.Open,
-                                FileAccess.ReadWrite, FileShare.None))
-                                ExpectThrows(() =>
-                                    ReplacementReadiness.PrepareVerifiedCopies(
-                                        source, preview.PreviewPath!, g4Stage, g4Backup,
-                                        hash, fidelity.CandidateSha256),
-                                    "G4-03: 他プロセスの原本排他writer中はバックアップ準備を拒否");
-
-                            string alias = Path.Combine(g4Stage, "g4-source-hardlink-alias.png");
-                            NativeFile.NewHardLink(alias, source);
-                            try
-                            {
-                                ExpectThrows(() =>
-                                    ReplacementReadiness.PrepareVerifiedCopies(
-                                        source, preview.PreviewPath!, g4Stage, g4Backup,
-                                        hash, fidelity.CandidateSha256),
-                                    "G4-05: 元画像が既存ハードリンク共有ならstage準備も拒否");
-                            }
-                            finally { File.Delete(alias); }
-                            Check(Safety.SameSnapshot(originalSnapshot),
-                                "G4-05: ハードリンク試験後は原本ID/所有権/全バイト不変");
+                                File.Exists(prepared.BackupPath) &&
+                                Safety.ByteEqual(source, prepared.BackupPath,
+                                    CancellationToken.None),
+                                "G4-03: 異物/中断候補を上書きせず独立原本バックアップを保持");
                         }
                         finally
                         {

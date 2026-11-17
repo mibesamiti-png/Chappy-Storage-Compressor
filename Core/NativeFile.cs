@@ -168,6 +168,21 @@ public static class NativeFile
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("Windows NTFS required");
+        // A generated stage on the same NTFS volume may already inherit
+        // IDENTICAL owner/group/DACL semantics. Avoid rewriting its DACL in
+        // that case: Win32 can legitimately reflow inherited ACEs on write.
+        // Prove the target identity, links and streams even on this fast path.
+        if (SameOwnerGroupDacl(ReadSecurity(original), ReadSecurity(independent)))
+        {
+            FileIdentity unchanged = GetIdentity(independent);
+            if (!unchanged.SameFile(expectedIndependentId) ||
+                unchanged.LinkCount != 1 ||
+                HasNamedDataStreams(independent) ||
+                !Safety.EligibleAttributes(File.GetAttributes(independent)))
+                throw new InvalidDataException(
+                    "Stage already has correct ACL but untrusted NTFS identity");
+            return;
+        }
         uint sourceResult = GetNamedSecurityInfoW(Extended(original), 1,
             OwnerGroupDaclInfo, out var sourceOwner, out var sourceGroup,
             out var sourceDacl, out _, out var sourceDescriptor);

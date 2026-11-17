@@ -222,6 +222,9 @@ internal static class R217GroupIntraAliasCrashTests
                         CompletedGroupLedger.Inspect(root).Entries.Single(e =>
                             e.OperationId == f.First).State == expected;
 
+                }
+                if (phase == "post-cutover-before-metadata")
+                {
                     // G3-06: valid stage alone is not enough: the saved
                     // per-alias sidecar must match the same original/master
                     // identity and byte evidence, or no replay is permitted.
@@ -236,14 +239,11 @@ internal static class R217GroupIntraAliasCrashTests
                         "G3-06: altered durable per-alias receipt refuses a valid staged Undo");
                     attackedEvidenceRefused &=
                         Hash(receipt) == tamperedReceiptHash &&
-                        NativeFile.SameFile(f.FirstMaster,
+                        !NativeFile.SameFile(f.FirstMaster,
                             f.Originals.Values.Single(x =>
                                 Path.GetFileName(x.Path) == "group-a1.mp4").Path);
                     // Restore only our known test-owned JSON bytes.
                     File.WriteAllBytes(receipt, authenticReceipt);
-                }
-                if (phase == "post-cutover-before-metadata")
-                {
                     string extra = Path.Combine(root, "part28-test-owned-extra.tmp");
                     NativeFile.NewHardLink(extra, f.FirstMaster);
                     bool linked = NativeFile.SameFile(extra, f.FirstMaster);

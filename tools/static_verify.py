@@ -237,11 +237,13 @@ check('G4-04: generated PNG cutover/restore use pinned IDs, not File.Replace',
       'oldPinned.RenameNoReplace(phase.Original);' in replacement_readiness and
       'File.Replace(' not in replacement_readiness and
       'File.Move(' not in replacement_readiness)
-check('G4-04: synthetic cutover can only touch generated exact PNG smoke files',
+check('G4-04: synthetic cutover is limited to the generated PNG/JPG smoke files',
       'RequireGeneratedImageScope(' in replacement_readiness and
       'Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true"' in replacement_readiness and
       'Guid.TryParseExact(name[' in replacement_readiness and
       '"r16-variants", "rgba-multi.png"' in replacement_readiness and
+      '"g4-jpeg-input", "g4.jpg"' in replacement_readiness and
+      'Guid.TryParseExact(candidateName[jpegPrefix.Length..^4], "N", out _)' in replacement_readiness and
       '"ChappyStorageSmoke_G4Backup_"' in replacement_readiness and
       'G4-04: 実プロセス死の原本ID・候補ID状態を判定:' in test and
       'G4-04: 本物のプロセス死→原本ID/ACL/時刻/全バイト復元:' in test and

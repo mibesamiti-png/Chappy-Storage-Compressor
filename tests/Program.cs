@@ -867,7 +867,7 @@ static class Program
                                 var image = ReplacementReadiness.PrepareVerifiedCopies(
                                     source, preview.PreviewPath!, testStage,
                                     testBackup, hash, fidelity.CandidateSha256);
-                                Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                Check(ReplacementReadiness.InspectGeneratedImageSynthetic(
                                     source, preview.PreviewPath!, testStage,
                                     testBackup) == "Prepared",
                                     "G4-04: 実PNGの2-volume準備後は元IDのまま: " + checkpoint);
@@ -923,7 +923,7 @@ static class Program
                                             "G4-03: stage準備後の元NTFS容量不足は切替を拒否");
                                     }
                                     finally { CapacityGuard.TestOnlyReadAvailable = null; }
-                                    Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                    Check(ReplacementReadiness.InspectGeneratedImageSynthetic(
                                         source, preview.PreviewPath!, testStage, testBackup) == "Prepared",
                                         "G4-03: 拒否後も元ID・stage・独立バックアップは一致");
                                 }
@@ -936,7 +936,7 @@ static class Program
                                     string token = Path.GetFileNameWithoutExtension(image.StagedPath)
                                         [".chappy-g4-stage-".Length..];
                                     string rollbackPath = source + ".chappy-g4-old-" + token + ".rollback";
-                                    Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                    Check(ReplacementReadiness.InspectGeneratedImageSynthetic(
                                         source, preview.PreviewPath!, testStage, testBackup) == "Applied",
                                         "G4-04: 完了レシートは再読込で適用済みを識別");
                                     File.Delete(rollbackPath); // Disposable fixture only.
@@ -958,7 +958,7 @@ static class Program
                                             source, preview.PreviewPath!, testStage, testBackup),
                                             "G4-04: 破損した適用記録から独立復元しない");
                                         File.WriteAllText(appliedPath, appliedEvidence);
-                                        Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                        Check(ReplacementReadiness.InspectGeneratedImageSynthetic(
                                             source, preview.PreviewPath!, testStage, testBackup) ==
                                             "AppliedWithoutRollback",
                                             "G4-04: 安全停止後も候補と独立原本バックアップを保全");
@@ -968,33 +968,9 @@ static class Program
                                         File.Delete(preview.PreviewPath!);
                                 }
 
-                                var childProcess = new System.Diagnostics.ProcessStartInfo("dotnet")
-                                {
-                                    UseShellExecute = false,
-                                    RedirectStandardOutput = true,
-                                    RedirectStandardError = true
-                                };
-                                foreach (string arg in new[] {
-                                    typeof(Program).Assembly.Location,
-                                    killDuringRecovery ? "--g4-pinned-restore-child" :
-                                        "--g4-pinned-cutover-child",
-                                    source, preview.PreviewPath!, testStage,
-                                    testBackup, checkpoint })
-                                    childProcess.ArgumentList.Add(arg);
-                                using (var child = System.Diagnostics.Process.Start(childProcess)
-                                    ?? throw new IOException("G4 cutover child failed"))
-                                {
-                                    if (!child.WaitForExit(120_000))
-                                    {
-                                        child.Kill(entireProcessTree: true);
-                                        throw new TimeoutException("G4 pinned child timed out");
-                                    }
-                                    string error = child.StandardError.ReadToEnd();
-                                    Check(child.ExitCode == 94,
-                                        "G4-04: NTFSリネーム境界で実OSプロセス停止: " +
-                                        checkpoint + " / " + error);
-                                }
-                                string interrupted = ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                G4ImageAcceptanceTests.ExpectProcessExit(source, preview.PreviewPath!,
+                                    testStage, testBackup, checkpoint, killDuringRecovery, Check);
+                                string interrupted = ReplacementReadiness.InspectGeneratedImageSynthetic(
                                     source, preview.PreviewPath!, testStage, testBackup);
                                 var readOnlyReview = ReplacementReadiness.InspectImageTransaction(image.ReceiptPath);
                                 string expectedReview = checkpoint == "g4-after-backup-restore-record" ?
@@ -2382,6 +2358,7 @@ static class Program
             // intentionally contain copies and must not pollute dedupe counts.
             TestR15PngPreview(root);
             TestR16PngAndBatch(root);
+            G4ImageAcceptanceTests.Run(root, TrustedJpegtranForTests(), Check);
             TestR17JournalAndJpeg(root);
             TestR18JpegAndOrphans(root);
             TestR19JpegQueue(root);

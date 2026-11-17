@@ -18,7 +18,8 @@ public static class PngBatchJournalTools
 
     public sealed record TailResult(string State, int TailBytes, string Message);
     public sealed record Row(string RelativePath, string State, long SourceBytes, long PreviewBytes,
-        long EstimatedSavingBytes, string Note, string PreviewPath);
+        long EstimatedSavingBytes, string Note, string PreviewPath,
+        string? SourceSha256 = null, string? PreviewSha256 = null);
     public sealed record Audit(int Total, int Completed, int Pending, int Skipped, int Failed,
         int Deferred, long EstimatedSavingBytes, TailResult Tail, IReadOnlyList<Row> Rows);
     public sealed record RepairResult(string BackupPath, int DiscardedTailBytes, bool AddedNewline);
@@ -93,7 +94,10 @@ public static class PngBatchJournalTools
                 string? preview = entry.PreviewPath;
                 bool sourceUnchanged = File.Exists(path) && !IsReparse(path) &&
                     new FileInfo(path).Length == entry.SourceBytes &&
-                    File.GetLastWriteTimeUtc(path).Ticks == entry.ModifiedUtcTicks;
+                    File.GetLastWriteTimeUtc(path).Ticks == entry.ModifiedUtcTicks &&
+                    entry.SourceSha256 is { Length: 64 } &&
+                    string.Equals(Safety.ComputeSha256(path, ct), entry.SourceSha256,
+                        StringComparison.OrdinalIgnoreCase);
                 bool previewUnchanged = preview is not null && File.Exists(preview) &&
                     !IsReparse(preview) && new FileInfo(preview).Length == entry.PreviewBytes &&
                     entry.PreviewSha256 is not null &&
@@ -112,7 +116,8 @@ public static class PngBatchJournalTools
                 }
             }
             rows.Add(new Row(entry.RelativePath, status, entry.SourceBytes,
-                entry.PreviewBytes, entrySavings, note, entry.PreviewPath ?? ""));
+                entry.PreviewBytes, entrySavings, note, entry.PreviewPath ?? "",
+                entry.SourceSha256, entry.PreviewSha256));
         }
         return new Audit(rows.Count, rows.Count(x => x.State == "CandidatePresent"),
             rows.Count(x => x.State == "Pending"), rows.Count(x => x.State == "Skipped"),
@@ -270,6 +275,7 @@ public static class PngBatchJournalTools
         item.PreviewPath = parsed.PreviewPath;
         item.PreviewBytes = parsed.PreviewBytes;
         item.PreviewSha256 = parsed.PreviewSha256;
+        item.SourceSha256 = parsed.SourceSha256;
         item.Message = parsed.Message ?? "";
     }
 

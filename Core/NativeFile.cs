@@ -103,6 +103,92 @@ public static class NativeFile
             throw new Win32Exception(Marshal.GetLastWin32Error(), "ハードリンク作成に失敗: " + newLink);
     }
 
+    // G4-03: security copy is ONLY for a newly created independent stage or
+    // backup, never for an original. Apply DACL by NTFS file HANDLE so an
+    // intervening path swap cannot redirect the security write. Scope v1 to
+    // files already owned by the same SID/group; changing ownership requires
+    // extra privilege and therefore fails closed rather than silently losing
+    // owner information. Uses Win32's own descriptor pointers and LocalFree.
+    private const uint OwnerGroupDaclInfo = 0x00000001 | 0x00000002 | 0x00000004;
+    private const uint DaclInfo = 0x00000004;
+    private const uint WriteDacAccess = 0x00040000;
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern uint GetNamedSecurityInfoW(string objectName, int objectType,
+        uint securityInfo, out IntPtr owner, out IntPtr group, out IntPtr dacl,
+        out IntPtr sacl, out IntPtr descriptor);
+
+    [DllImport("advapi32.dll", ExactSpelling = true)]
+    private static extern uint SetSecurityInfo(SafeFileHandle handle, int objectType,
+        uint securityInfo, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+
+    [DllImport("advapi32.dll", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EqualSid(IntPtr first, IntPtr second);
+
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+    private static extern IntPtr LocalFree(IntPtr handle);
+
+    internal static void CopyOwnerGroupDaclToNewFile(string original,
+        string independent, FileIdentity expectedIndependentId)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Windows NTFS required");
+        uint sourceResult = GetNamedSecurityInfoW(Extended(original), 1,
+            OwnerGroupDaclInfo, out var sourceOwner, out var sourceGroup,
+            out var sourceDacl, out _, out var sourceDescriptor);
+        if (sourceResult != 0)
+            throw new Win32Exception((int)sourceResult,
+                "Cannot read original owner/group/DACL");
+        try
+        {
+            uint targetResult = GetNamedSecurityInfoW(Extended(independent), 1,
+                OwnerGroupDaclInfo, out var targetOwner, out var targetGroup,
+                out _, out _, out var targetDescriptor);
+            if (targetResult != 0)
+                throw new Win32Exception((int)targetResult,
+                    "Cannot read independent file owner/group");
+            try
+            {
+                static bool SameSid(IntPtr a, IntPtr b) =>
+                    a == IntPtr.Zero || b == IntPtr.Zero ?
+                        a == b : EqualSid(a, b);
+                if (!SameSid(sourceOwner, targetOwner) ||
+                    !SameSid(sourceGroup, targetGroup))
+                    throw new InvalidDataException(
+                        "Owner/group differs; unsupported image replacement case");
+            }
+            finally { if (targetDescriptor != IntPtr.Zero) LocalFree(targetDescriptor); }
+
+            // DELETE and WRITE sharing are DENIED; also verifies that the
+            // named stage still refers to the exact newly created NTFS ID.
+            using var handle = CreateFilePinned(Extended(independent),
+                WriteDacAccess | ReadAttributes, 0x00000001, IntPtr.Zero,
+                OpenExisting, OpenReparsePoint, IntPtr.Zero);
+            if (handle.IsInvalid)
+                throw new Win32Exception(Marshal.GetLastWin32Error(),
+                    "Cannot lock independent image file for DACL copy");
+            var pinned = IdentityFromHandle(handle);
+            if (!pinned.SameFile(expectedIndependentId) ||
+                pinned.LinkCount != 1 || HasNamedDataStreams(independent) ||
+                (File.GetAttributes(independent) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException(
+                    "Independent stage/backup ID, link count, ADS or attributes changed");
+            uint written = SetSecurityInfo(handle, 1, DaclInfo,
+                IntPtr.Zero, IntPtr.Zero, sourceDacl, IntPtr.Zero);
+            if (written != 0)
+                throw new Win32Exception((int)written,
+                    "Could not preserve original DACL on new independent file");
+            if (!IdentityFromHandle(handle).SameFile(expectedIndependentId))
+                throw new InvalidDataException(
+                    "Independent stage ID changed while writing DACL");
+        }
+        finally { if (sourceDescriptor != IntPtr.Zero) LocalFree(sourceDescriptor); }
+        if (!ReadSecurity(original).AsSpan().SequenceEqual(ReadSecurity(independent)))
+            throw new InvalidDataException(
+                "Owner/group/DACL could not be preserved byte-for-byte");
+    }
+
     public static byte[] ReadSecurity(string path)
     {
         const uint ownerGroupDacl = 0x00000001 | 0x00000002 | 0x00000004;

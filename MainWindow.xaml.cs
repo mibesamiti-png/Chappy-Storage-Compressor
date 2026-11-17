@@ -62,6 +62,9 @@ public partial class MainWindow : Window
     }
 
     private readonly ObservableCollection<GroupRow> _rows = new();
+    private Func<string, (string Source, string Output, string Stage, string Backup)?> _pickImagePreparation;
+    private Func<string, bool> _confirmImagePreparation;
+    private Action<string, string, MessageBoxImage> _showImagePreparation;
 
     public MainWindow()
     {
@@ -84,6 +87,13 @@ public partial class MainWindow : Window
             "選択したグループの確認（本番統合は無効）",
             MessageBoxButton.YesNo, MessageBoxImage.Warning,
             MessageBoxResult.No) == MessageBoxResult.Yes;
+        _pickImagePreparation = PickImagePreparationNative;
+        _confirmImagePreparation = message =>
+            MessageBox.Show(message, "画像原本の独立コピー準備",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning,
+                MessageBoxResult.No) == MessageBoxResult.Yes;
+        _showImagePreparation = (message, title, icon) =>
+            MessageBox.Show(message, title, MessageBoxButton.OK, icon);
         InitializeComponent();
         GroupsGrid.ItemsSource = _rows;
         Log("起動しました。対象を選び「読み取り専用スキャン」を実行してください。");
@@ -1425,6 +1435,40 @@ public partial class MainWindow : Window
         finally { Busy(false); _work?.Dispose(); _work = null; }
     }
 
+    private (string Source, string Output, string Stage, string Backup)?
+        PickImagePreparationNative(string input)
+    {
+        var sourcePicker = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "既存PNG/JPG一括候補の原本画像を1枚選択",
+            Filter = "PNG/JPEG画像|*.png;*.jpg;*.jpeg",
+            InitialDirectory = input,
+            Multiselect = false,
+            CheckFileExists = true
+        };
+        if (sourcePicker.ShowDialog(this) != true) return null;
+        string source = sourcePicker.FileName;
+        using var outputPicker = new Forms.FolderBrowserDialog
+        {
+            Description = "原本画像のPNG/JPG一括候補台帳がある出力フォルダ（既存）",
+            ShowNewFolderButton = false
+        };
+        if (outputPicker.ShowDialog() != Forms.DialogResult.OK) return null;
+        using var stagePicker = new Forms.FolderBrowserDialog
+        {
+            Description = "元画像と同じNTFSボリュームの【空の専用フォルダ】を選択（新規作成可）",
+            ShowNewFolderButton = true
+        };
+        if (stagePicker.ShowDialog() != Forms.DialogResult.OK) return null;
+        using var backupPicker = new Forms.FolderBrowserDialog
+        {
+            Description = "元画像とは異なるNTFSドライブの【空の独立バックアップ専用フォルダ】",
+            ShowNewFolderButton = true
+        };
+        if (backupPicker.ShowDialog() != Forms.DialogResult.OK) return null;
+        return (source, outputPicker.SelectedPath, stagePicker.SelectedPath, backupPicker.SelectedPath);
+    }
+
     // G4-03: user-consented, production COPY-ONLY preparation of exactly
     // one journal-backed PNG/JPEG candidate. This creates NEW files only in
     // two explicitly selected empty directories; the original is never
@@ -1441,37 +1485,9 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
-        var sourcePicker = new Microsoft.Win32.OpenFileDialog
-        {
-            Title = "既存PNG/JPG一括候補の原本画像を1枚選択",
-            Filter = "PNG/JPEG画像|*.png;*.jpg;*.jpeg",
-            InitialDirectory = input,
-            Multiselect = false,
-            CheckFileExists = true
-        };
-        if (sourcePicker.ShowDialog(this) != true) return;
-        string source = sourcePicker.FileName;
-        using var outputPicker = new Forms.FolderBrowserDialog
-        {
-            Description = "原本画像のPNG/JPG一括候補台帳がある出力フォルダ（既存）",
-            ShowNewFolderButton = false
-        };
-        if (outputPicker.ShowDialog() != Forms.DialogResult.OK) return;
-        using var stagePicker = new Forms.FolderBrowserDialog
-        {
-            Description = "元画像と同じNTFSボリュームの【空の専用フォルダ】を選択（新規作成可）",
-            ShowNewFolderButton = true
-        };
-        if (stagePicker.ShowDialog() != Forms.DialogResult.OK) return;
-        using var backupPicker = new Forms.FolderBrowserDialog
-        {
-            Description = "元画像とは異なるNTFSドライブの【空の独立バックアップ専用フォルダ】",
-            ShowNewFolderButton = true
-        };
-        if (backupPicker.ShowDialog() != Forms.DialogResult.OK) return;
-        string output = outputPicker.SelectedPath;
-        string stage = stagePicker.SelectedPath;
-        string backup = backupPicker.SelectedPath;
+        var selection = _pickImagePreparation(input);
+        if (selection is null) return;
+        var (source, output, stage, backup) = selection.Value;
         _work = new CancellationTokenSource();
         var token = _work.Token;
         Busy(true);
@@ -1511,13 +1527,12 @@ public partial class MainWindow : Window
                 $"独立原本バックアップ先: {backup}\n\n" +
                 "別ドライブへ原本の完全なコピー、元ドライブへ候補のコピー、" +
                 "復旧証拠レシートを新規作成します。\n" +
+                "圧縮候補は画素を維持し、ファイルのバイト列は原本と異なります。\n" +
                 "この操作はディスク容量を追加消費し、空き容量は増えません。\n" +
                 "中断・異物・失敗時も生成済みのコピーを自動削除しません。\n" +
                 "原本の置換・削除・自動復元は実行しません。\n\n" +
                 "この1枚のコピー準備を実行しますか？";
-            if (MessageBox.Show(question, "画像原本の独立コピー準備",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning,
-                MessageBoxResult.No) != MessageBoxResult.Yes)
+            if (!_confirmImagePreparation(question))
             {
                 ProgressText.Text = "コピー準備をキャンセル（原本変更なし）";
                 return;
@@ -1536,8 +1551,8 @@ public partial class MainWindow : Window
                 "生成したstage/backupは明示的な確認まで保持してください。";
             Log("G4コピー準備成功（原本未変更・実回復0 B）: " +
                 prepared.ReceiptPath);
-            MessageBox.Show(result, "独立バックアップ・stage検証完了",
-                MessageBoxButton.OK, MessageBoxImage.Information);
+            _showImagePreparation(result, "独立バックアップ・stage検証完了",
+                MessageBoxImage.Information);
             ProgressText.Text = "原本未変更：独立コピー準備完了";
         }
         catch (OperationCanceledException)
@@ -1549,11 +1564,10 @@ public partial class MainWindow : Window
         {
             Log("G4コピー準備は安全停止（生成途中のstage/backupは保全）: " +
                 ex.Message);
-            MessageBox.Show(ex.Message +
+            _showImagePreparation(ex.Message +
                 "\n\n原本に対する置換・削除は実行していません。" +
                 "出力先に残ったコピーやレシートは勝手に削除せず確認してください。",
-                "コピー準備の安全停止", MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+                "コピー準備の安全停止", MessageBoxImage.Warning);
             ProgressText.Text = "独立コピー準備は安全停止（原本未変更）";
         }
         finally { Busy(false); _work?.Dispose(); _work = null; }

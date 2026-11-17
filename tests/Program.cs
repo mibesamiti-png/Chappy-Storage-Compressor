@@ -612,8 +612,8 @@ static class Program
         {
             string oldStyle = System.Text.Encoding.UTF8.GetString(progressOriginal);
             string withoutSourceProof = System.Text.RegularExpressions.Regex.Replace(
-                oldStyle, "\\"SourceSha256\\":\\"[0-9A-F]{64}\\"",
-                "\\"SourceSha256\\":null");
+                oldStyle, @"""SourceSha256"":""[0-9A-F]{64}""",
+                @"""SourceSha256"":null");
             Check(oldStyle != withoutSourceProof,
                 "G4-03: 正規PNG候補履歴には生成当時の原本SHA証拠がある");
             File.WriteAllText(generatedProgress, withoutSourceProof,

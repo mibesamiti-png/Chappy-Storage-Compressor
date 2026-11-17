@@ -202,7 +202,7 @@ public static class DuplicateCleanupWorkflow
             if (File.Exists(folder)) throw new InvalidDataException("File occupies cleanup directory");
             if (!Directory.Exists(folder))
             {
-                if (!create) throw new InvalidDataException("Cleanup parent missing");
+                if (!create) return; // During read-only preview future subfolders do not exist.
                 Directory.CreateDirectory(folder);
             }
             if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0)

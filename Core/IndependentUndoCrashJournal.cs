@@ -397,7 +397,7 @@ public static class IndependentUndoCrashJournal
         }
         if (entry.State is "CutoverNeedsRecovery" or "MetadataNeedsHistoryUpdate")
         {
-            IndependentUndoEngine.RestoreMetadataAfterCrashSynthetic(
+            IndependentUndoEngine.RestoreMetadataAfterCrashCore(
                 root, original, record.Master, record.Hash, record.ExpectedLinks);
             if (CompletedMergeLedger.Inspect(root).VerifiedRestored == 0)
                 CompletedMergeLedger.MarkRestoredSynthetic(root, id);

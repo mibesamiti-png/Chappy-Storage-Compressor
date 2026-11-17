@@ -1593,6 +1593,9 @@ jobs:
               $r.part22UntrustedForeignOutputBytesPreserved -ne $true -or
               $r.part23ReadOnlyDedupeUndoPlanRoutedClickVerified -ne $true -or
               $r.b2SelectedRiskReviewRoutedClickVerified -ne $true -or
+              $r.b2GeneratedOnlySelectedMergeRoutedTwoConsentAndPersistedCore -ne $true -or
+              $r.b2NonSentinelWpfAndInternalCoreStillLocked -ne $true -or
+              $r.b2GeneratedSelectionNoConsentKeepsOriginalNtfsIds -ne $true -or
               $r.b2ProductionMergeStillLockedAfterRiskConsent -ne $true -or
               $r.part23MergeStillDisabledAfterPreview -ne $true -or
               $r.part23ScanSourceHashesAndNtfsIdentitiesPreserved -ne $true -or

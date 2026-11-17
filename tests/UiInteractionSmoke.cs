@@ -508,7 +508,7 @@ internal static class UiInteractionSmoke
                 StringComparison.Ordinal), TimeSpan.FromSeconds(35));
             bool undoConsentRejected = routedUndoPrompt.Contains("元NTFS ID=",
                     StringComparison.Ordinal) &&
-                routedUndoPrompt.Contains("独立Undoに必要", StringComparison.Ordinal) == false &&
+                routedUndoPrompt.Contains("追加で必要な容量", StringComparison.Ordinal) &&
                 !string.IsNullOrEmpty(routedUndoPrompt) &&
                 CompletedGroupLedger.Inspect(undoRoot).VerifiedCompleted == 1 &&
                 originalUndo.All(x =>
@@ -537,10 +537,14 @@ internal static class UiInteractionSmoke
                         after.SecurityDescriptor.AsSpan().SequenceEqual(
                             x.Value.SecurityDescriptor);
                 }) &&
-                originalUndo.Keys.Where(x => !x.Equals(a,
-                    StringComparison.OrdinalIgnoreCase)).All(x =>
-                        !NativeFile.SameFile(x, a) &&
-                        NativeFile.GetIdentity(x).LinkCount == 1) &&
+                undoScan.Groups.Single().Files.Where(x =>
+                    !x.Path.Equals(undoScan.Groups.Single().Representative.Path,
+                        StringComparison.OrdinalIgnoreCase)).All(x =>
+                        !NativeFile.SameFile(x.Path,
+                            undoScan.Groups.Single().Representative.Path) &&
+                        NativeFile.GetIdentity(x.Path).LinkCount == 1) &&
+                NativeFile.GetIdentity(
+                    undoScan.Groups.Single().Representative.Path).LinkCount == 2 &&
                 !execute.IsEnabled && !undoLegacyApply.IsEnabled;
             Require(realWpfUndo,
                 "G3-07: genuine WPF routed Yes executes guarded shared Undo Core, verifies separate NTFS IDs/bytes/ACL, never enables production Apply");

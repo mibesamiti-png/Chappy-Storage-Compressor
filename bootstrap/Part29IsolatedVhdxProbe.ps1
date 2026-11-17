@@ -122,6 +122,19 @@ function Hash([string]$path) {
     return [Convert]::ToHexString(
         [Security.Cryptography.SHA256]::HashData([IO.File]::ReadAllBytes($path)))
 }
+function UniqueAllocation([string[]]$paths) {
+    # Count data-bearing NTFS IDs once, regardless of hardlink path count.
+    $ids = [Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::OrdinalIgnoreCase)
+    [long]$bytes = 0
+    foreach ($path in $paths) {
+        if (-not [IO.File]::Exists($path)) { continue }
+        $id = Identity $path
+        $key = "$($id.Volume):$($id.Index)"
+        if ($ids.Add($key)) { $bytes += (Allocated $path) }
+    }
+    return [pscustomobject]@{ Bytes = $bytes; Ids = $ids.Count }
+}
 function RunDiskpart([string]$script, [string]$file) {
     [IO.File]::WriteAllText($file, $script, [Text.Encoding]::ASCII)
     $result = & "$env:SystemRoot\System32\diskpart.exe" /s $file 2>&1
@@ -191,6 +204,123 @@ try {
         (Hash $a) -eq $hash -and (Hash $b) -eq $hash) 'Independent Undo proof failed'
     Assert (($freeDedupe - $freeUndone) -ge 4MB) 'Undo VHDX reallocation not observed'
 
+    # B2 G2-06: 2/3/2 GROUP PHYSICAL ACCOUNTING ON THE ISOLATED VHDX.
+    # This is a native NTFS hardlink/free-space model of the exact stages
+    # exercised by the REAL Core process-kill matrix in Part27. It does NOT
+    # claim that the WPF or production Core is authorized to traverse a
+    # mounted-VHDX directory junction; their safety boundary forbids that.
+    $g0a = [IO.Path]::Combine($mount, 'batch0-a.mp4')
+    $g0b = [IO.Path]::Combine($mount, 'batch0-b.mp4')
+    $g1a = [IO.Path]::Combine($mount, 'batch1-a.mp4')
+    $g1b = [IO.Path]::Combine($mount, 'batch1-b.mp4')
+    $g1c = [IO.Path]::Combine($mount, 'batch1-c.mp4')
+    $g2a = [IO.Path]::Combine($mount, 'batch2-a.mp4')
+    $g2b = [IO.Path]::Combine($mount, 'batch2-b.mp4')
+    $m0 = [IO.Path]::Combine($mount, 'batch0-master.mp4')
+    $m1 = [IO.Path]::Combine($mount, 'batch1-master.mp4')
+    $m2 = [IO.Path]::Combine($mount, 'batch2-master.mp4')
+    $backup0 = [IO.Path]::Combine($mount, 'batch0-b.saved')
+    $backup1 = [IO.Path]::Combine($mount, 'batch1-b.saved')
+    $payload = [byte[]]::new(4MB)
+    foreach ($pair in @(@($g0a, @($g0b)), @($g1a, @($g1b, $g1c)),
+            @($g2a, @($g2b)))) {
+        [Security.Cryptography.RandomNumberGenerator]::Fill($payload)
+        [IO.File]::WriteAllBytes([string]$pair[0], $payload)
+        foreach ($alias in $pair[1]) {
+            [IO.File]::Copy([string]$pair[0], [string]$alias)
+        }
+    }
+    $names = [string[]]@($g0a, $g0b, $g1a, $g1b, $g1c, $g2a, $g2b)
+    $beforeGroup = UniqueAllocation $names
+    $freeGroupBaseline = Free $mountRoot
+    $g0Hash = Hash $g0a
+    $g1Hash = Hash $g1a
+    $g2Hash = Hash $g2a
+    $id2a = Identity $g2a
+    $id2b = Identity $g2b
+    Assert ($beforeGroup.Ids -eq 7 -and $beforeGroup.Bytes -eq 28MB) 'VHDX generated three-group baseline does not have seven independently allocated IDs'
+    # First group: complete a 2-name transaction. The backing bytes
+    # disappear ONLY when the exact independent alias backup is deleted.
+    New-Item -Path $m0 -ItemType HardLink -Target $g0a -ErrorAction Stop | Out-Null
+    [IO.File]::Move($g0b, $backup0)
+    New-Item -Path $g0b -ItemType HardLink -Target $m0 -ErrorAction Stop | Out-Null
+    Assert ((Identity $backup0).Index -ne (Identity $g0a).Index -and
+        (Hash $backup0) -eq $g0Hash) 'Group 0 preserved independent original before deletion'
+    [IO.File]::Delete($backup0)
+    $allocatedFirst = UniqueAllocation ($names + @($m0, $m1, $m2, $backup0, $backup1))
+    $freeFirst = Free $mountRoot
+    Assert ($allocatedFirst.Ids -eq 6 -and
+        ($beforeGroup.Bytes - $allocatedFirst.Bytes) -eq 4MB -and
+        ($freeFirst - $freeGroupBaseline) -ge 2MB -and
+        (Identity $g0a).Links -eq 3 -and (Identity $g0b).Index -eq (Identity $g0a).Index) 'Completed group 0 did not release exactly one NTFS allocation'
+    # Group 1: stop after durable journal-equivalent source rename and
+    # shared-alias creation, but BEFORE deleting the original backup.
+    # A second hardlink to the master does not free backing bytes.
+    New-Item -Path $m1 -ItemType HardLink -Target $g1a -ErrorAction Stop | Out-Null
+    [IO.File]::Move($g1b, $backup1)
+    New-Item -Path $g1b -ItemType HardLink -Target $m1 -ErrorAction Stop | Out-Null
+    $allocatedPrepared = UniqueAllocation ($names + @($m0, $m1, $m2, $backup0, $backup1))
+    $freePrepared = Free $mountRoot
+    Assert ($allocatedPrepared.Ids -eq 6 -and
+        ($beforeGroup.Bytes - $allocatedPrepared.Bytes) -eq 4MB -and
+        (Identity $backup1).Links -eq 1 -and
+        (Identity $backup1).Index -ne (Identity $m1).Index -and
+        (Identity $g1b).Index -eq (Identity $m1).Index -and
+        (Hash $backup1) -eq $g1Hash) 'Pending original backup must still consume independent space'
+    # Group 1: simulated crash immediately AFTER disposing the first
+    # backup, BEFORE the group-wide completed receipt. This partially
+    # frees physical space, but only group 0 counts as verified complete.
+    [IO.File]::Delete($backup1)
+    $allocatedPartial = UniqueAllocation ($names + @($m0, $m1, $m2, $backup0, $backup1))
+    $freePartial = Free $mountRoot
+    $physicalPartialDelta = $beforeGroup.Bytes - $allocatedPartial.Bytes
+    $verifiedReceiptLogical = 4MB
+    Assert ($allocatedPartial.Ids -eq 5 -and
+        $physicalPartialDelta -eq 8MB -and
+        ($freePartial - $freeFirst) -ge 2MB -and
+        (Identity $g1a).Links -eq 3 -and
+        (Identity $g1b).Index -eq (Identity $g1a).Index -and
+        (Identity $g1c).Links -eq 1 -and
+        (Identity $g1c).Index -ne (Identity $g1a).Index -and
+        -not [IO.File]::Exists($backup1) -and
+        $verifiedReceiptLogical -lt $physicalPartialDelta) 'Uncommitted group 1 physical savings must not be falsely counted as verified completed savings'
+    # Third group was never approached: both original independent IDs,
+    # hashes, and link counts must remain EXACTLY unchanged.
+    $thirdOriginals = ((Identity $g2a).Index -eq $id2a.Index -and
+        (Identity $g2b).Index -eq $id2b.Index -and
+        (Identity $g2a).Links -eq 1 -and
+        (Identity $g2b).Links -eq 1 -and
+        (Hash $g2a) -eq $g2Hash -and
+        (Hash $g2b) -eq $g2Hash -and
+        -not [IO.File]::Exists($m2))
+    Assert $thirdOriginals 'Untouched third group lost original bytes or independent IDs'
+    $batchReport = [ordered]@{
+        groups = '2/3/2'
+        generatedOriginalCount = 7
+        generatedFileBytesEach = 4MB
+        sourceUniqueIdsBefore = $beforeGroup.Ids
+        sourceAllocatedBeforeBytes = $beforeGroup.Bytes
+        completedGroup0UniqueIds = $allocatedFirst.Ids
+        completedGroup0AllocatedBytes = $allocatedFirst.Bytes
+        pendingBackupKeptUniqueIds = $allocatedPrepared.Ids
+        pendingBackupKeptAllocatedBytes = $allocatedPrepared.Bytes
+        incompleteGroup1AfterBackupDeleteUniqueIds = $allocatedPartial.Ids
+        incompleteGroup1AfterBackupDeleteAllocatedBytes = $allocatedPartial.Bytes
+        physicalUniqueIdAllocatedDeltaBytes = $physicalPartialDelta
+        verifiedCompletedGroupLogicalBytes = $verifiedReceiptLogical
+        freeSpaceBeforeGroupsBytes = $freeGroupBaseline
+        freeSpaceAfterGroup0Bytes = $freeFirst
+        freeSpaceWithGroup1BackupBytes = $freePrepared
+        freeSpaceAfterGroup1PartialBytes = $freePartial
+        confirmedGroup0FreeSpaceGain = ($freeFirst - $freeGroupBaseline) -ge 2MB
+        observedPartialFreeSpaceGain = ($freePartial - $freeFirst) -ge 2MB
+        pendingBackupConsumesStorage = $allocatedPrepared.Bytes -eq $allocatedFirst.Bytes
+        unfinishedGroupPhysicalSavingsNotCreditedToReceipt = $verifiedReceiptLogical -lt $physicalPartialDelta
+        untouchedThirdGroupIndependentIdsAndSha = $thirdOriginals
+        realCoreOnMountedJunction = $false
+        physicalPowerCutProven = $false
+    }
+
     # Fill ONLY the 512-MiB generated volume to cross the 4-MiB reserve.
     $filler = [IO.Path]::Combine($mount, 'generated-only-filler.bin')
     $chunk = [byte[]]::new(1MB)
@@ -232,6 +362,7 @@ try {
         independentUndoReallocatedSpaceVerified = ($freeDedupe - $freeUndone) -ge 4MB
         lowSpaceReachedBelowFourMiB = $freeLow -lt 4MB
         generatedFillerBytes = $fillBytes
+        groupedPartialAllocation = $batchReport
         allSourceHashesAndIndependentIdsPreserved = $true
         productionDedupeEnabled = $false
         productionUndoEnabled = $false

@@ -265,6 +265,28 @@ internal static class UiInteractionSmoke
             Require(g207NormalRootForcedFlagStillLocked,
                 "G2-07: forced private fixture flag on non-sentinel root cannot authorize any merge");
             SetPrivate(window, "_allowGeneratedOnlyMergeTest", false);
+            // The INTERNAL Core must refuse a non-sentinel root even if a
+            // caller bypasses the WPF gate and supplies a genuine scan group.
+            var internalBatchMerge = typeof(CompletedGroupLedger).GetMethod(
+                "MergeVerifiedGroups", BindingFlags.NonPublic | BindingFlags.Static) ??
+                throw new InvalidOperationException("G2-07 normal-compiled shared Core missing");
+            bool g207CoreDeniedNormalRoot = false;
+            try
+            {
+                internalBatchMerge.Invoke(null,
+                    [originals, new[] { ((GroupRow)groupsGrid.Items[0]).Group },
+                        CancellationToken.None]);
+            }
+            catch (TargetInvocationException ex) when
+                (ex.InnerException is InvalidOperationException)
+            {
+                g207CoreDeniedNormalRoot = true;
+            }
+            Require(g207CoreDeniedNormalRoot &&
+                !Directory.Exists(Safety.StorePath(originals)) &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId),
+                "G2-07: internal batch Core itself rejects non-sentinel root before any store or original changes");
 
             // G2-07: the SAME shipped WPF SelectedMergeReviewButton is now
             // tested against a disposable 3-alias and 2-alias NTFS selection.
@@ -1378,6 +1400,10 @@ internal static class UiInteractionSmoke
                     part22UntrustedForeignOutputBytesPreserved = true,
                     part23ReadOnlyDedupeUndoPlanRoutedClickVerified = part23WpfPlanSafe,
                     b2SelectedRiskReviewRoutedClickVerified = selectedConsentReadOnly,
+                    b2GeneratedOnlySelectedMergeRoutedTwoConsentAndPersistedCore = g207RealWpfCoreMerged,
+                    b2NonSentinelWpfAndInternalCoreStillLocked =
+                        g207NormalRootForcedFlagStillLocked && g207CoreDeniedNormalRoot,
+                    b2GeneratedSelectionNoConsentKeepsOriginalNtfsIds = g207NoConsentPreserved,
                     b2ProductionMergeStillLockedAfterRiskConsent = !mergeButton.IsEnabled,
                     part23MergeStillDisabledAfterPreview = !mergeButton.IsEnabled,
                     part23ScanSourceHashesAndNtfsIdentitiesPreserved =

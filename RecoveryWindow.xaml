@@ -110,6 +110,8 @@
               Click="UndoReview_Click" Margin="4" MinWidth="280" IsEnabled="False"/>
       <Button x:Name="UndoExecuteButton" Content="生成データの独立Undo（検証用・通常は無効）"
               Click="UndoExecute_Click" Margin="4" MinWidth="260" IsEnabled="False"/>
+      <Button x:Name="UndoCancelButton" Content="生成Undoを中断（記録保全）"
+              Click="UndoCancel_Click" Margin="4" MinWidth="180" IsEnabled="False"/>
       <Button x:Name="ApplyButton" Content="選択した1件を安全に復旧" Click="Apply_Click"
               Margin="4" MinWidth="200" IsEnabled="False" Background="#2B7B70" BorderBrush="#3E9E8F"/>
       <Button Content="閉じる" Click="Close_Click" Margin="4" MinWidth="90"/>

@@ -446,8 +446,9 @@ public partial class RecoveryWindow : Window
 
     private void UndoCancel_Click(object sender, RoutedEventArgs e)
     {
-        if (!_busy || _undoWork is not { IsCancellationRequested: false } work)
+        if (!_busy || _undoWork is null || _undoWork.IsCancellationRequested)
             return;
+        var work = _undoWork;
         UndoCancelButton.IsEnabled = false;
         DetailText.Text = "中断要求中…安全なチェックポイントで停止し、履歴を保全します。";
         work.Cancel();

@@ -486,6 +486,10 @@ internal static class UiInteractionSmoke
                 throw new InvalidOperationException("G3-07 Undo group history grid missing");
             var undoHistorySummary = undoView.FindName("HistorySummaryText") as TextBlock ??
                 throw new InvalidOperationException("G3-07 Undo history summary missing");
+            var undoCancel = undoView.FindName("UndoCancelButton") as Button ??
+                throw new InvalidOperationException("G3-07 generated-only Undo cancel button missing");
+            Require(!undoCancel.IsEnabled,
+                "G3-07: cancel button starts disabled and cannot authorize normal Undo");
             var undoWpfDetail = undoView.FindName("DetailText") as TextBlock ??
                 throw new InvalidOperationException("G3-07 Undo detail missing");
             var undoLegacyApply = undoView.FindName("ApplyButton") as Button ??
@@ -522,9 +526,59 @@ internal static class UiInteractionSmoke
                     routedUndoPrompt = message;
                     return true;
                 }));
+            // G3-07: inject a routed cancel AFTER the first durable
+            // independent-alias checkpoint, never in the middle of an
+            // uncommitted user-file write. The same normal-compiled Core and
+            // WPF Click handler are used; no second recovery engine.
+            var durableAliasHook = typeof(RecoveryWindow).GetField(
+                "_afterGeneratedUndoAliasForTest",
+                BindingFlags.NonPublic | BindingFlags.Instance) ??
+                throw new InvalidOperationException("G3-07 durable UI test probe missing");
+            bool routedCancelAtDurableAlias = false;
+            durableAliasHook.SetValue(undoView, new Action<int>(count =>
+            {
+                if (count != 1) return;
+                undoView.Dispatcher.Invoke(() =>
+                {
+                    routedCancelAtDurableAlias = undoCancel.IsEnabled;
+                    if (undoCancel.IsEnabled) RoutedClick(undoCancel);
+                });
+            }));
+            RoutedClick(execute);
+            PumpUntil(() => undoHistorySummary.Text.Contains("【生成テストUndo中断】",
+                StringComparison.Ordinal), TimeSpan.FromSeconds(60));
+            var canceledState = CompletedGroupLedger.Inspect(undoRoot);
+            bool durablePartialUndoPreserved = routedCancelAtDurableAlias &&
+                canceledState.ExplicitResumeRequired == 1 &&
+                canceledState.VerifiedRestored == 0 &&
+                originalUndo.All(x => OracleHash(x.Key) == originalUndoHash) &&
+                undoScan.Groups.Single().Files.Count(x =>
+                    !x.Path.Equals(undoScan.Groups.Single().Representative.Path,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    !NativeFile.SameFile(x.Path,
+                        undoScan.Groups.Single().Representative.Path)) == 1 &&
+                !undoCancel.IsEnabled && !undoLegacyApply.IsEnabled &&
+                undoWpfDetail.Text.Contains("明示的に再開", StringComparison.Ordinal);
+            Require(durablePartialUndoPreserved,
+                "G3-07: genuine routed Cancel retains one verified detached alias and durable explicit-resume receipt");
+            durableAliasHook.SetValue(undoView, null);
+            var explicitResumeRow = undoHistory.Items.Cast<object>()
+                .OfType<RecoveryEvidenceOverview.Row>().Single(x =>
+                    x.Source == "複数ファイルのグループ履歴" &&
+                    x.Target == undoOperationId &&
+                    x.State == "ExplicitResumeRequired" && x.NeedsAttention);
+            undoHistory.SelectedItem = explicitResumeRow;
+            Require(execute.IsEnabled && !undoCancel.IsEnabled,
+                "G3-07: flagged explicit-resume history is selectable only after fresh evidence checks");
             RoutedClick(execute);
             PumpUntil(() => undoHistorySummary.Text.Contains("【生成テストUndo成功】",
                 StringComparison.Ordinal), TimeSpan.FromSeconds(60));
+            bool restoredCapacityAndIdsVisible =
+                routedUndoResult.Contains("空き容量", StringComparison.Ordinal) &&
+                routedUndoResult.Contains("現NTFS ID", StringComparison.Ordinal) &&
+                routedUndoResult.Contains("Owner/DACL", StringComparison.Ordinal) &&
+                undoHistorySummary.Text.Contains("空き容量の観測差",
+                    StringComparison.Ordinal);
             bool realWpfUndo = CompletedGroupLedger.Inspect(undoRoot).VerifiedRestored == 1 &&
                 routedUndoResult.Contains("独立化した別名 2件", StringComparison.Ordinal) &&
                 originalUndo.All(x =>
@@ -546,8 +600,8 @@ internal static class UiInteractionSmoke
                 NativeFile.GetIdentity(
                     undoScan.Groups.Single().Representative.Path).LinkCount == 2 &&
                 !execute.IsEnabled && !undoLegacyApply.IsEnabled;
-            Require(realWpfUndo,
-                "G3-07: genuine WPF routed Yes executes guarded shared Undo Core, verifies separate NTFS IDs/bytes/ACL, never enables production Apply");
+            Require(realWpfUndo && restoredCapacityAndIdsVisible,
+                "G3-07: canceled WPF Undo explicitly resumes with all independent NTFS IDs/bytes/ACL and observed capacity, while release Apply stays locked");
             undoView.Close();
 
             // G3-05: immediately after the REAL WPF-triggered Core Undo,
@@ -1213,6 +1267,8 @@ internal static class UiInteractionSmoke
                     g3ReadOnlyUndoPreviewForgedHistoryRowRefused = g3NoStaleUndoAuthorization,
                     g3UndoReviewButtonCannotEnableLegacyApply = !recoveryApply.IsEnabled,
                     g3GeneratedOnlyRoutedWpfUndoConsentDeniedWithoutMutation = undoConsentRejected,
+                    g3GeneratedOnlyRoutedWpfUndoCancelCheckpointAndResume = durablePartialUndoPreserved,
+                    g3GeneratedOnlyRoutedWpfUndoObservedCapacityAndIds = restoredCapacityAndIdsVisible,
                     g3GeneratedOnlyRoutedWpfCoreUndoSuccess = realWpfUndo,
                     g3NormalCompiledCollisionExportAfterRoutedWpfUndo =
                         normalWpfToCollision,

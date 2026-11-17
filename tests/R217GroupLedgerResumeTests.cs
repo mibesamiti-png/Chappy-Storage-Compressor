@@ -9,6 +9,12 @@ internal static class R217GroupLedgerResumeTests
 {
     private const string Flag = "--r217-part27-generated-group-undo-kill";
     private const string Guard = "CHAPPY_PART27_GROUP_UNDO_GENERATED_ONLY";
+    private static readonly string[] BatchCrashCheckpoints =
+    [
+        "journal-recorded", "backup-renamed", "new-link-created",
+        "pre-backup-delete", "backup-deleted",
+        "group-core-verified", "group-completed"
+    ];
     private static string Hash(string path) => Safety.ComputeSha256(path, CancellationToken.None);
 
     public static bool IsChild(string[] args) => args.Length > 0 && args[0] == Flag;
@@ -28,9 +34,16 @@ internal static class R217GroupLedgerResumeTests
     public static int RunChild(string[] args)
     {
         if (args.Length != 4 || args[0] != Flag ||
-            Environment.GetEnvironmentVariable(Guard) != "generated-only" ||
-            (args[2] != "merge-batch" && !Guid.TryParseExact(args[2], "N", out _)))
+            Environment.GetEnvironmentVariable(Guard) != "generated-only")
             throw new InvalidOperationException("Part27 worker not authorized");
+        string? crashPoint = args[2] == "merge-batch" ? "backup-deleted" :
+            args[2].StartsWith("merge-batch:", StringComparison.Ordinal)
+                ? args[2]["merge-batch:".Length..] : null;
+        if (crashPoint is not null &&
+            !BatchCrashCheckpoints.Contains(crashPoint, StringComparer.Ordinal))
+            throw new InvalidOperationException("Unknown generated Core crash checkpoint");
+        if (crashPoint is null && !Guid.TryParseExact(args[2], "N", out _))
+            throw new InvalidOperationException("Unknown generated Undo receipt");
         string root = Path.GetFullPath(args[1]);
         GuardRoot(root);
         string signal = Path.GetFullPath(args[3]);
@@ -38,29 +51,30 @@ internal static class R217GroupLedgerResumeTests
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Part27 checkpoint outside generated root");
         Journal.TestFolderPath = Path.Combine(root, "part27-journal");
-        if (args[2] == "merge-batch")
+        if (crashPoint is not null)
         {
             // Genuine OS process termination, never an exception unwinding
             // or a simulated power loss. The first group must have committed
-            // before stopping inside the second group's REAL Core cutover.
+            // before stopping at each critical transition of the second group.
             var batch = Scanner.Run(root, true, null, CancellationToken.None)
                 .Groups.OrderBy(g => g.Representative.Length).ToList();
             if (batch.Count != 3 || batch[0].Files.Count != 2 ||
                 batch[1].Files.Count != 3 || batch[2].Files.Count != 2)
                 throw new InvalidDataException("Generated-only batch kill fixture mismatch");
-            int deletedAliases = 0;
+            int reached = 0;
             FaultInjection.OnCheckpoint = checkpoint =>
             {
-                if (checkpoint != "backup-deleted" || ++deletedAliases != 2)
+                if (checkpoint != crashPoint || ++reached != 2)
                     return;
                 using (var stream = new FileStream(signal, FileMode.CreateNew,
                     FileAccess.Write, FileShare.None))
                 {
-                    stream.Write("second-group-first-alias-backup-deleted"u8);
+                    stream.Write(System.Text.Encoding.UTF8.GetBytes(
+                        "second-group-" + crashPoint));
                     stream.Flush(flushToDisk: true);
                 }
                 using var self = Process.GetCurrentProcess();
-                self.Kill();
+                self.Kill(); // exact generated worker, not user processes
                 Thread.Sleep(Timeout.Infinite);
             };
             CompletedGroupLedger.MergeVerifiedGroups(root, batch, CancellationToken.None);

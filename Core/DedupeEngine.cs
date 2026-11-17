@@ -73,6 +73,8 @@ public static class DedupeEngine
         // store directory. Hold these non-delete-sharing handles until Core exits.
         using var sourceParents = NativeFile.PinnedDirectories.Open(root,
             items.SelectMany(g => g.Files.Select(file => file.Path)));
+        foreach (var source in items.SelectMany(group => group.Files))
+            ReplacementReadiness.AssertNoPendingImageReplacement(source.Path);
         Safety.ValidateStore(root);
         // Store is now known to exist: also pin the directory receiving all
         // master links, not just the source parents.

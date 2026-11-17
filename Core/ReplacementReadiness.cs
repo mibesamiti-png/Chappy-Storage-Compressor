@@ -733,7 +733,39 @@ public static class ReplacementReadiness
         string Rollback, string Quarantine, string RestoreStage,
         FileIdentity? RestoreIdentity, string ReceiptHash, string State);
 
-    private sealed record ImageProgress(string ReceiptHash, FileIdentity? RestoreIdentity = null);
+    private sealed record ImageProgress(string ReceiptHash, FileIdentity? RestoreIdentity = null,
+        string? RestoreAttempt = null);
+
+    private static string ImageReservationPath(string original) =>
+        original + ".chappy-g4-active.json";
+
+    // The backup destination can be on any NTFS volume. Reserve the source
+    // name beside the image so the dedupe engine can see it under its lease.
+    internal static void AssertNoPendingImageReplacement(string original)
+    {
+        try { File.GetAttributes(ImageReservationPath(original)); }
+        catch (FileNotFoundException) { return; }
+        catch (DirectoryNotFoundException) { return; }
+        throw new InvalidDataException("画像の適用・復元記録が有効なため重複統合を停止");
+    }
+
+    private static byte[] ImageReservationBytes(string receiptHash) =>
+        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new ImageProgress(receiptHash));
+
+    private static string FinishImageRestore(ImagePhase phase, string state)
+    {
+        string path = ImageReservationPath(phase.Original);
+        FileIdentity identity;
+        try { identity = NativeFile.GetIdentity(path); }
+        catch (FileNotFoundException) { return state; }
+        catch (DirectoryNotFoundException) { return state; }
+        string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            ImageReservationBytes(phase.ReceiptHash)));
+        using var reservation = NativeFile.PinnedFile.Open(path, identity, hash,
+            denyDeleteSharing: true);
+        reservation.DeleteCurrent(requireIndependent: true);
+        return state;
+    }
 
     private static ImageProgress? ReadImageProgress(string path, string receiptHash)
     {
@@ -936,25 +968,30 @@ public static class ReplacementReadiness
             candidateParents?.AssertUnchanged();
             stageParents.AssertUnchanged();
             backupParents.AssertUnchanged();
+            var reservation = ReadImageProgress(ImageReservationPath(original), receiptHash);
+            if (reservation is not null && reservation != new ImageProgress(receiptHash))
+                throw new InvalidDataException("Invalid G4 source reservation");
             var applied = ReadImageProgress(Path.Combine(backupRoot, G4ApplyName), receiptHash);
             var restoring = ReadImageProgress(Path.Combine(backupRoot, G4RestoreName), receiptHash);
             if ((observedApply is not null && observedApply != applied) ||
                 (observedRestore is not null && observedRestore != restoring) ||
-                applied?.RestoreIdentity is not null ||
-                (restoring is not null && (applied is null || restoring.RestoreIdentity is null)))
+                applied?.RestoreIdentity is not null || applied?.RestoreAttempt is not null ||
+                (restoring is not null && (applied is null || restoring.RestoreIdentity is null ||
+                    (restoring.RestoreAttempt is not null &&
+                        !Guid.TryParseExact(restoring.RestoreAttempt, "N", out _)))))
                 throw new InvalidDataException("G4 progress records disagree or disappeared");
             observedApply = applied;
             observedRestore = restoring;
             return InspectImagePhase(record, original, candidate, stageRoot, backupRoot,
                 receiptPath, id, receiptHash, hasPreview, applied is not null,
-                restoring?.RestoreIdentity);
+                restoring?.RestoreIdentity, restoring?.RestoreAttempt);
         }, backupLock);
     }
 
     private static ImagePhase InspectImagePhase(PreparationReceipt record,
         string original, string candidate, string stageRoot, string backupRoot,
         string receiptPath, string id, string receiptHash, bool hasPreview,
-        bool applied, FileIdentity? restoreIdentity)
+        bool applied, FileIdentity? restoreIdentity, string? restoreAttempt)
     {
         static bool Eq(string a, string b) =>
             a.Equals(b, StringComparison.OrdinalIgnoreCase);
@@ -965,7 +1002,10 @@ public static class ReplacementReadiness
         string stage = staged.Path;
         string rollback = original + ".chappy-g4-old-" + id + ".rollback";
         string quarantine = original + ".chappy-g4-optimized-" + id + ".quarantine";
-        string restoreStage = original + ".chappy-g4-restore-" + id + ".stage";
+        // Old receipts used the transaction ID alone. For new attempts the
+        // recorded random suffix prevents a crash orphan from being adopted.
+        string restoreStage = original + ".chappy-g4-restore-" + id +
+            (restoreAttempt is null ? "" : "-" + restoreAttempt) + ".stage";
         if ((hasPreview && (!Safety.SameRenamedSnapshot(preview, candidate) ||
                 !Eq(Safety.ComputeSha256(candidate, CancellationToken.None,
                     allowDeleteSharing: true), record.CandidateSha256))) ||
@@ -990,10 +1030,10 @@ public static class ReplacementReadiness
         bool hasRollback = File.Exists(rollback);
         bool hasQuarantine = File.Exists(quarantine);
         bool hasRestoreStage = File.Exists(restoreStage);
-        // A directory or an unrecorded stage is never adopted for recovery.
-        if (hasRestoreStage && restoreIdentity is null)
-            throw new InvalidDataException("Unrecorded G4 restore stage; preserve for inspection");
-        if (new[] { original, stage, rollback, quarantine, restoreStage }.Any(Directory.Exists))
+        // An unrecorded path is never adopted or removed. A retry uses a
+        // new CREATE_NEW path and publishes its verified NTFS ID before moving.
+        if (new[] { original, stage, rollback, quarantine }.Any(Directory.Exists) ||
+            (restoreIdentity is not null && Directory.Exists(restoreStage)))
             throw new InvalidDataException("G4 transaction path occupied by a directory");
         bool IsOld(string at) =>
             Safety.SameRenamedSnapshot(old, at) &&
@@ -1099,6 +1139,9 @@ public static class ReplacementReadiness
             if (inspect().State != "Prepared")
                 throw new InvalidDataException("Source/stage changed before cutover");
 
+            WriteImageEvidence(ImageReservationPath(phase.Original),
+                ImageReservationBytes(phase.ReceiptHash));
+            FaultInjection.Hit("g4-after-image-reservation");
             sourcePinned.RenameNoReplace(phase.Rollback);
             FaultInjection.Hit("g4-after-original-rename");
             if (inspect().State != "OriginalSetAside")
@@ -1125,10 +1168,12 @@ public static class ReplacementReadiness
         return WithImageEvidence(original, candidate, stageRoot, backupRoot, (inspect, backup) =>
         {
             var phase = inspect();
-            if (phase.State == "Prepared") return "OriginalUnchanged";
-            if (phase.State is "OriginalRestored" or "BackupRestored") return phase.State;
+            if (phase.State == "Prepared") return FinishImageRestore(phase, "OriginalUnchanged");
+            if (phase.State is "OriginalRestored" or "BackupRestored")
+                return FinishImageRestore(phase, phase.State);
             if (phase.State is "AppliedWithoutRollback" or "BackupCandidateQuarantined")
-                return RestoreFromIndependentBackup(phase, inspect, backup, backupRoot);
+                return FinishImageRestore(phase,
+                    RestoreFromIndependentBackup(phase, inspect, backup, backupRoot));
             using var oldPinned = NativeFile.PinnedFile.Open(phase.Rollback,
                 phase.Receipt.Original!.Identity, phase.Receipt.OriginalSha256, denyDeleteSharing: true);
             using var candidatePinned = NativeFile.PinnedFile.Open(phase.State switch
@@ -1153,7 +1198,7 @@ public static class ReplacementReadiness
             var final = inspect();
             if (final.State is not ("Prepared" or "OriginalRestored"))
                 throw new InvalidDataException("G4 original restoration proof failed");
-            return final.State;
+            return FinishImageRestore(phase, final.State);
         });
     }
 
@@ -1209,11 +1254,14 @@ public static class ReplacementReadiness
             phase.RestoreIdentity is null ? old.Length : 0);
         if (phase.RestoreIdentity is null)
         {
+            string attempt = Guid.NewGuid().ToString("N");
+            string attemptStage = phase.RestoreStage[..^".stage".Length] + "-" + attempt + ".stage";
             FileIdentity identity;
-            using (var output = new FileStream(phase.RestoreStage, FileMode.CreateNew,
+            using (var output = new FileStream(attemptStage, FileMode.CreateNew,
                 FileAccess.Write, FileShare.None, 256 * 1024, FileOptions.WriteThrough))
             {
                 identity = NativeFile.IdentityFromHandle(output.SafeFileHandle);
+                FaultInjection.Hit("g4-after-backup-stage-create");
                 CopyImageBytes(backup, output, CancellationToken.None);
                 File.SetAttributes(output.SafeFileHandle, old.Attributes);
                 File.SetCreationTimeUtc(output.SafeFileHandle, old.CreationUtc);
@@ -1222,10 +1270,11 @@ public static class ReplacementReadiness
             }
             // Creation beside the original inherits its parent ACL. A different
             // owner/DACL is an unsupported case; preserve both files and stop.
-            if (!MatchesRestoredCopy(phase.RestoreStage, old, identity,
+            if (!MatchesRestoredCopy(attemptStage, old, identity,
                 backup.Name, phase.Receipt.OriginalSha256))
                 throw new InvalidDataException("Independent G4 restore stage failed byte/metadata proof");
-            RecordImageProgress(backupRoot, G4RestoreName, new(phase.ReceiptHash, identity));
+            FaultInjection.Hit("g4-before-backup-restore-record");
+            RecordImageProgress(backupRoot, G4RestoreName, new(phase.ReceiptHash, identity, attempt));
             FaultInjection.Hit("g4-after-backup-restore-record");
             phase = inspect();
         }

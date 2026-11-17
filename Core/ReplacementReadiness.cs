@@ -321,6 +321,13 @@ public static class ReplacementReadiness
         using var candidateParents = NativeFile.PinnedDirectories.Open(candidateRoot, [candidate]);
         using var stageParents = NativeFile.PinnedDirectories.Open(stageRoot, []);
         using var backupParents = NativeFile.PinnedDirectories.Open(backupRoot, []);
+        // Never treat a dirty stage/backup directory as ours. Incomplete
+        // artifacts from an earlier crash require manual review; no auto
+        // overwrite, removal, or resumption without a durable journal.
+        if (Directory.EnumerateFileSystemEntries(stageRoot).Any() ||
+            Directory.EnumerateFileSystemEntries(backupRoot).Any())
+            throw new InvalidDataException(
+                "stage/backupに既存ファイルがあります。異物または中断証拠として停止");
         var originalSnapshot = Safety.Capture(original);
         var candidateSnapshot = Safety.Capture(candidate);
         if (originalSnapshot.Identity.LinkCount != 1 ||
@@ -355,6 +362,12 @@ public static class ReplacementReadiness
         stageParents.AssertUnchanged();
         backupParents.AssertUnchanged();
 
+        // One final empty-directory proof before writing the first byte.
+        stageParents.AssertUnchanged();
+        backupParents.AssertUnchanged();
+        if (Directory.EnumerateFileSystemEntries(stageRoot).Any() ||
+            Directory.EnumerateFileSystemEntries(backupRoot).Any())
+            throw new InvalidDataException("コピー開始前にstage/backupへ異物が追加された");
         string id = Guid.NewGuid().ToString("N");
         string staged = Path.Combine(stageRoot,
             ".chappy-g4-stage-" + id + Path.GetExtension(candidate));

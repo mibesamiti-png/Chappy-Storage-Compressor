@@ -5,15 +5,17 @@ using System.Text.Json;
 namespace ChappyStorageCompressor.Core;
 
 /// <summary>
-/// Part35: crash-evidence experiment for Part34's grouped same-name outputs.
-/// Production ONLY exposes the hard-disabled safety flag. All writes and all
-/// mutating methods below are absent from shipped (non-CHAPPY_TESTING) builds.
+/// G3-05: the EXISTING Part35 collision transaction is compiled in both
+/// Windows builds, but every mutating entrypoint is INTERNAL and rejects
+/// anything except a disposable generated TEMP+sentinel root. There is no
+/// public or normal-WPF mutation caller until all G3/G5 gates are approved.
 /// </summary>
 public static class CollisionRecoveryLedger
 {
     public const bool ProductionMutationEnabled = false;
 
-#if CHAPPY_TESTING
+    // Normal-compiled internal Core with its original generated-root guard.
+    // No production accessible write APIs are exposed.
     private const string FolderName = ".chappy-collision-journal";
     private const string Sentinel = ".chappy-part23-generated-only";
     private const string SentinelText = "Part23 synthetic data only";
@@ -202,7 +204,7 @@ public static class CollisionRecoveryLedger
     // copy independently restored files to a separate destination, without
     // touching another file that occupies the requested output name.
     // The collision journal remains the one already used by Part35.
-    public static string BeginRestoredUndoExportSynthetic(string testRoot,
+    internal static string BeginRestoredUndoExportSynthetic(string testRoot,
         string operationId, string outputRoot)
     {
         string root = RequireOwnedRoot(testRoot);
@@ -351,7 +353,7 @@ public static class CollisionRecoveryLedger
             CollisionCollectionPlan.ReportText(Plan(x)))).ToArray();
     }
 
-    public static string BeginSynthetic(string testRoot, CollisionCollectionPlan.Result plan,
+    internal static string BeginSynthetic(string testRoot, CollisionCollectionPlan.Result plan,
         IReadOnlyList<(string Source, string Relative)> incoming)
     {
         using var lease = MutationLease.Acquire();
@@ -410,7 +412,7 @@ public static class CollisionRecoveryLedger
         return id;
     }
 
-    public static Status InspectSynthetic(string testRoot, string outputRoot, string id)
+    internal static Status InspectSynthetic(string testRoot, string outputRoot, string id)
     {
         try
         {
@@ -503,7 +505,7 @@ public static class CollisionRecoveryLedger
         }
     }
 
-    public static Status ResumeSynthetic(string testRoot, string outputRoot, string id,
+    internal static Status ResumeSynthetic(string testRoot, string outputRoot, string id,
         Action<string>? afterDurablePhase = null)
     {
         using var lease = MutationLease.Acquire();
@@ -573,5 +575,4 @@ public static class CollisionRecoveryLedger
             throw new InvalidDataException("Part35 end state requires manual review");
         return done;
     }
-#endif
 }

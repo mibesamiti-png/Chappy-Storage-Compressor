@@ -130,6 +130,39 @@ public static class NativeFile
     [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
     private static extern IntPtr LocalFree(IntPtr handle);
 
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode,
+        SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ConvertSecurityDescriptorToStringSecurityDescriptorW(
+        byte[] descriptor, uint revision, uint securityInfo,
+        out IntPtr sddl, out uint stringLength);
+
+    // The byte layout of equivalent self-relative SECURITY_DESCRIPTORs can
+    // differ in padding/offsets. Compare Windows' canonical owner/group/DACL
+    // SDDL, including DACL inheritance and protection flags, before treating
+    // independent backup metadata as preserved. Never compare just ACL counts
+    // or effective-access masks, which could hide a semantic ACL change.
+    internal static bool SameOwnerGroupDacl(byte[] expected, byte[] actual)
+    {
+        if (expected.AsSpan().SequenceEqual(actual)) return true;
+        static string ToSddl(byte[] descriptor)
+        {
+            if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    descriptor, 1, OwnerGroupDaclInfo, out IntPtr pointer,
+                    out _))
+                throw new Win32Exception(Marshal.GetLastWin32Error(),
+                    "Could not canonicalize owner/group/DACL descriptor");
+            try
+            {
+                return Marshal.PtrToStringUni(pointer) ??
+                    throw new InvalidDataException("Empty owner/group/DACL SDDL");
+            }
+            finally { if (pointer != IntPtr.Zero) LocalFree(pointer); }
+        }
+        return string.Equals(ToSddl(expected), ToSddl(actual),
+            StringComparison.Ordinal);
+    }
+
     internal static void CopyOwnerGroupDaclToNewFile(string original,
         string independent, FileIdentity expectedIndependentId)
     {
@@ -185,9 +218,9 @@ public static class NativeFile
                     "Independent stage ID changed while writing DACL");
         }
         finally { if (sourceDescriptor != IntPtr.Zero) LocalFree(sourceDescriptor); }
-        if (!ReadSecurity(original).AsSpan().SequenceEqual(ReadSecurity(independent)))
+        if (!SameOwnerGroupDacl(ReadSecurity(original), ReadSecurity(independent)))
             throw new InvalidDataException(
-                "Owner/group/DACL could not be preserved byte-for-byte");
+                "Owner/group/DACL and inheritance semantics were not preserved");
     }
 
     public static byte[] ReadSecurity(string path)

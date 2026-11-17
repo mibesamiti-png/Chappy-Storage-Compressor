@@ -655,6 +655,321 @@ public static class ReplacementReadiness
                 "Could not reproduce source NTFS owner/group/DACL/timestamps on independent image");
     }
 
+#if CHAPPY_TESTING
+    // G4-03/04 isolated REAL-PNG cutover experiment. This code is absent from
+    // the shipping WPF assembly. No consumer media may enter these methods.
+    // All NTFS renames are via an already-open, identity-bound PinnedFile
+    // handle; target replacement and automatic deletion are forbidden.
+    private sealed record SyntheticImagePhase(
+        PreparationReceipt Receipt, string Original, string Candidate,
+        string Stage, string Backup, string Rollback, string Quarantine,
+        string State);
+
+    private static void RequireGeneratedImageScope(string original, string candidate,
+        string stageRoot, string backupRoot)
+    {
+        if (!OperatingSystem.IsWindows() ||
+            Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
+            throw new InvalidOperationException("G4 cutover is synthetic Windows CI ONLY");
+        static bool Eq(string a, string b) =>
+            a.Equals(b, StringComparison.OrdinalIgnoreCase);
+        string temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        string dir = Path.GetDirectoryName(original) ??
+            throw new InvalidDataException("Missing PNG parent");
+        string root = Path.GetDirectoryName(dir) ??
+            throw new InvalidDataException("Missing generated smoke root");
+        string name = Path.GetFileName(root);
+        if (!name.StartsWith("ChappyStorageSmoke_", StringComparison.Ordinal) ||
+            !Guid.TryParseExact(name["ChappyStorageSmoke_".Length..], "N", out _) ||
+            !root.StartsWith(temp + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) ||
+            !Eq(original, Path.Combine(root, "r16-variants", "rgba-multi.png")) ||
+            !candidate.StartsWith(
+                Path.Combine(root, "r16-variants-output") +
+                Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+            !candidate.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetDirectoryName(stageRoot)!.Equals(root,
+                StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetFileName(stageRoot).StartsWith("g4-cutover-",
+                StringComparison.Ordinal) ||
+            !Directory.Exists(stageRoot) ||
+            !Directory.Exists(backupRoot))
+            throw new InvalidDataException("G4 requires exact generated PNG smoke paths");
+        string backupParent = Path.GetDirectoryName(backupRoot) ??
+            throw new InvalidDataException("Missing generated backup parent");
+        string backupName = Path.GetFileName(backupParent);
+        if (!backupName.StartsWith("ChappyStorageSmoke_G4Backup_", StringComparison.Ordinal) ||
+            !Guid.TryParseExact(backupName["ChappyStorageSmoke_G4Backup_".Length..],
+                "N", out _) ||
+            !Path.GetFileName(backupRoot).StartsWith("cutover-", StringComparison.Ordinal) ||
+            !File.Exists(Path.Combine(backupParent, ".chappy-g4-generated-only")))
+            throw new InvalidDataException("G4 independent backup test sentinel missing");
+        Safety.ValidateRoot(dir);
+        Safety.ValidateRoot(stageRoot);
+        Safety.ValidateRoot(backupRoot);
+    }
+
+    private static SyntheticImagePhase InspectSyntheticPhase(string originalPath,
+        string candidatePath, string stagingDirectory, string backupDirectory)
+    {
+        string original = Path.GetFullPath(originalPath);
+        string candidate = Path.GetFullPath(candidatePath);
+        string stageRoot = Path.GetFullPath(stagingDirectory);
+        string backupRoot = Path.GetFullPath(backupDirectory);
+        RequireGeneratedImageScope(original, candidate, stageRoot, backupRoot);
+        string receiptPath = Path.Combine(backupRoot, G4ReceiptName);
+        if (!File.Exists(receiptPath) ||
+            !Safety.EligibleAttributes(File.GetAttributes(receiptPath)) ||
+            NativeFile.GetIdentity(receiptPath).LinkCount != 1 ||
+            NativeFile.HasNamedDataStreams(receiptPath) ||
+            new FileInfo(receiptPath).Length is < 128 or > MaximumG4ReceiptBytes)
+            throw new InvalidDataException("Untrusted G4 preparation receipt");
+        var record = System.Text.Json.JsonSerializer.Deserialize<PreparationReceipt>(
+            File.ReadAllBytes(receiptPath)) ??
+            throw new InvalidDataException("Missing G4 receipt");
+        if (record.Schema != 1 ||
+            record.Original is null || record.Candidate is null ||
+            record.Stage is null || record.IndependentBackup is null ||
+            record.OriginalSha256 is not { Length: 64 } ||
+            record.CandidateSha256 is not { Length: 64 } ||
+            !record.OriginalSha256.All(Uri.IsHexDigit) ||
+            !record.CandidateSha256.All(Uri.IsHexDigit))
+            throw new InvalidDataException("Invalid G4 receipt evidence");
+        static bool Eq(string a, string b) =>
+            a.Equals(b, StringComparison.OrdinalIgnoreCase);
+        var old = record.Original;
+        var preview = record.Candidate;
+        var staged = record.Stage;
+        var backup = record.IndependentBackup;
+        if (!Eq(old.Path, original) || !Eq(preview.Path, candidate) ||
+            !Eq(Path.GetDirectoryName(staged.Path)!, stageRoot) ||
+            !Eq(Path.GetDirectoryName(backup.Path)!, backupRoot) ||
+            old.Identity.LinkCount != 1 || preview.Identity.LinkCount != 1 ||
+            staged.Identity.LinkCount != 1 || backup.Identity.LinkCount != 1 ||
+            old.Identity.VolumeSerial != staged.Identity.VolumeSerial ||
+            old.Identity.VolumeSerial == backup.Identity.VolumeSerial ||
+            old.Identity.SameFile(staged.Identity) ||
+            !Path.GetFileName(staged.Path).StartsWith(
+                ".chappy-g4-stage-", StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetFileName(backup.Path).StartsWith(
+                ".chappy-g4-backup-", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("G4 receipt paths or NTFS identities disagree");
+        string stage = staged.Path;
+        string oldName = Path.GetFileNameWithoutExtension(stage);
+        string id = oldName[".chappy-g4-stage-".Length..];
+        if (!Guid.TryParseExact(id, "N", out _))
+            throw new InvalidDataException("G4 synthetic stage ID invalid");
+        string rollback = original + ".chappy-g4-old-" + id + ".rollback";
+        string quarantine = original + ".chappy-g4-optimized-" + id + ".quarantine";
+        if (!Safety.SameSnapshot(preview) || !Safety.SameSnapshot(backup) ||
+            !Eq(Safety.ComputeSha256(candidate, CancellationToken.None,
+                    allowDeleteSharing: true),
+                record.CandidateSha256) ||
+            !Eq(Safety.ComputeSha256(backup.Path, CancellationToken.None,
+                    allowDeleteSharing: true),
+                record.OriginalSha256))
+            throw new InvalidDataException("G4 preview or external independent backup changed");
+        var stageFiles = Directory.GetFileSystemEntries(stageRoot);
+        var backupFiles = Directory.GetFileSystemEntries(backupRoot);
+        if (stageFiles.Length != (File.Exists(stage) ? 1 : 0) ||
+            (stageFiles.Length == 1 && !Eq(stageFiles[0], stage)) ||
+            backupFiles.Length != 2 ||
+            !backupFiles.Any(x => Eq(x, receiptPath)) ||
+            !backupFiles.Any(x => Eq(x, backup.Path)))
+            throw new InvalidDataException("G4 synthetic stage/backup foreign or orphan paths");
+        bool hasOriginal = File.Exists(original);
+        bool hasStage = File.Exists(stage);
+        bool hasRollback = File.Exists(rollback);
+        bool hasQuarantine = File.Exists(quarantine);
+        // A directory at any transaction name is a foreign collision.
+        if (new[] { original, stage, rollback, quarantine }.Any(Directory.Exists))
+            throw new InvalidDataException("G4 transaction path occupied by a directory");
+        bool IsOld(string at) =>
+            Safety.SameRenamedSnapshot(old, at) &&
+            Eq(Safety.ComputeSha256(at, CancellationToken.None,
+                    allowDeleteSharing: true),
+                record.OriginalSha256) &&
+            Safety.ByteEqual(at, backup.Path, CancellationToken.None,
+                allowDeleteSharing: true);
+        bool IsOptimized(string at)
+        {
+            var actual = Safety.Capture(at);
+            // NTFS short-name/file-name tunneling: when a staged file is
+            // renamed into the recently vacated original name, NTFS can
+            // inherit the ORIGINAL file's creation timestamp. The real
+            // Windows CI proved that ID, bytes, owner/DACL, attributes and
+            // modified UTC all remain identical; ONLY CreationUtc changes.
+            // Do not drop the creation-time check: accept exactly the staged
+            // timestamp, or (only after a rename) the saved ORIGINAL time.
+            bool allowedCreation = actual.CreationUtc == staged.CreationUtc ||
+                (!Eq(at, stage) && actual.CreationUtc == old.CreationUtc);
+            return actual.Identity.SameFile(staged.Identity) &&
+                actual.Identity.LinkCount == 1 &&
+                actual.Length == staged.Length &&
+                allowedCreation &&
+                actual.ModifiedUtc == staged.ModifiedUtc &&
+                actual.Attributes == staged.Attributes &&
+                actual.SecurityDescriptor.AsSpan().SequenceEqual(staged.SecurityDescriptor) &&
+                Eq(Safety.ComputeSha256(at, CancellationToken.None,
+                    allowDeleteSharing: true), record.CandidateSha256) &&
+                Safety.ByteEqual(at, candidate, CancellationToken.None,
+                    allowDeleteSharing: true);
+        }
+        string phase;
+        if (hasOriginal && hasStage && !hasRollback && !hasQuarantine &&
+            IsOld(original) && IsOptimized(stage))
+            phase = "Prepared";
+        else if (!hasOriginal && hasStage && hasRollback && !hasQuarantine &&
+            IsOld(rollback) && IsOptimized(stage))
+            phase = "OriginalSetAside";
+        else if (hasOriginal && !hasStage && hasRollback && !hasQuarantine &&
+            IsOld(rollback) && IsOptimized(original))
+            phase = "CandidateAtOriginal";
+        else if (!hasOriginal && !hasStage && hasRollback && hasQuarantine &&
+            IsOld(rollback) && IsOptimized(quarantine))
+            phase = "CandidateQuarantined";
+        else if (hasOriginal && !hasStage && !hasRollback && hasQuarantine &&
+            IsOld(original) && IsOptimized(quarantine))
+            phase = "OriginalRestored";
+        else
+        {
+            // CI-only diagnostic: a cross-directory NTFS rename can alter
+            // timestamps or security on the moved candidate. Never guess the
+            // winner or silently relax the guard before recording real values.
+            static string Probe(string path, FileSnapshot expected, string hash)
+            {
+                if (!File.Exists(path)) return "absent";
+                try
+                {
+                    var actual = Safety.Capture(path);
+                    return $"id={actual.Identity.SameFile(expected.Identity)} " +
+                        $"links={actual.Identity.LinkCount} " +
+                        $"len={actual.Length == expected.Length} " +
+                        $"creation={actual.CreationUtc.Ticks == expected.CreationUtc.Ticks} " +
+                        $"modified={actual.ModifiedUtc.Ticks == expected.ModifiedUtc.Ticks} " +
+                        $"attrs={actual.Attributes == expected.Attributes} " +
+                        $"ownerDacl={actual.SecurityDescriptor.AsSpan().SequenceEqual(expected.SecurityDescriptor)} " +
+                        $"sha={string.Equals(Safety.ComputeSha256(path, CancellationToken.None), hash, StringComparison.OrdinalIgnoreCase)} " +
+                        $"actualCreation={actual.CreationUtc:O} expectedCreation={expected.CreationUtc:O}";
+                }
+                catch (Exception ex) { return ex.GetType().Name; }
+            }
+            throw new InvalidDataException(
+                $"G4 cutover evidence ambiguous; preserve artifacts. " +
+                $"source={hasOriginal},stage={hasStage},rollback={hasRollback},quarantine={hasQuarantine}; " +
+                "old@" + (hasRollback ? "rollback=" + Probe(rollback, old, record.OriginalSha256) :
+                    hasOriginal ? "original=" + Probe(original, old, record.OriginalSha256) : "absent") +
+                "; optimized@" + (hasOriginal ? "original=" + Probe(original, staged, record.CandidateSha256) :
+                    hasQuarantine ? "quarantine=" + Probe(quarantine, staged, record.CandidateSha256) :
+                    hasStage ? "stage=" + Probe(stage, staged, record.CandidateSha256) : "absent"));
+        }
+        return new(record, original, candidate, stage, backup.Path,
+            rollback, quarantine, phase);
+    }
+
+    /// <summary>
+    /// CI-only, generated PNG. Unlinks no data; renames the authenticated
+    /// original to a same-parent rollback name, then moves an authenticated
+    /// staged PNG into the vacated original name by pinned NTFS file ID.
+    /// Both operations have no-replace semantics. Persistent receipt already
+    /// exists BEFORE either rename and remains untouched on interruption.
+    /// </summary>
+    internal static void CutoverGeneratedPngSynthetic(string original,
+        string candidate, string stageRoot, string backupRoot)
+    {
+        RequireGeneratedImageScope(Path.GetFullPath(original),
+            Path.GetFullPath(candidate), Path.GetFullPath(stageRoot),
+            Path.GetFullPath(backupRoot));
+        var ready = InspectPreparedCopies(original, candidate, stageRoot, backupRoot);
+        if (!ready.Complete)
+            throw new InvalidDataException("Unverified image preparation: " + ready.State);
+        using var sourceParents = NativeFile.PinnedDirectories.Open(
+            Path.GetDirectoryName(Path.GetFullPath(original))!, [original]);
+        using var stageParents = NativeFile.PinnedDirectories.Open(stageRoot,
+            [ready.Verified!.StagedPath]);
+        using var backupParents = NativeFile.PinnedDirectories.Open(backupRoot, []);
+        var p = InspectSyntheticPhase(original, candidate, stageRoot, backupRoot);
+        if (p.State != "Prepared")
+            throw new InvalidDataException("Expected prepared original ID and staged PNG");
+        using var sourcePinned = NativeFile.PinnedFile.Open(p.Original,
+            p.Receipt.Original!.Identity, p.Receipt.OriginalSha256);
+        using var stagePinned = NativeFile.PinnedFile.Open(p.Stage,
+            p.Receipt.Stage!.Identity, p.Receipt.CandidateSha256);
+        if (!Safety.SameSnapshot(p.Receipt.Original) ||
+            !Safety.SameSnapshot(p.Receipt.Stage) ||
+            !sourcePinned.PathStillMatches(p.Original) ||
+            !stagePinned.PathStillMatches(p.Stage))
+            throw new InvalidDataException("Source/stage changed before synthetic cutover");
+        sourceParents.AssertUnchanged();
+        stageParents.AssertUnchanged();
+        backupParents.AssertUnchanged();
+        sourcePinned.RenameNoReplace(p.Rollback);
+        FaultInjection.Hit("g4-after-original-rename");
+        if (!Safety.SameRenamedSnapshot(p.Receipt.Original, p.Rollback) ||
+            !stagePinned.PathStillMatches(p.Stage))
+            throw new InvalidDataException("Unsafe intermediate G4 original-id state");
+        stagePinned.RenameNoReplace(p.Original);
+        FaultInjection.Hit("g4-after-stage-rename");
+        if (InspectSyntheticPhase(original, candidate, stageRoot, backupRoot).State !=
+            "CandidateAtOriginal")
+            throw new InvalidDataException("G4 synthetic cutover verification failed");
+        // No commit or release authorization: every synthetic cutover must
+        // be restored from the original file ID before its test ends.
+    }
+
+    /// <summary>
+    /// CI-only replay after abrupt process death. Infer phase solely from
+    /// original ID + staged ID + independent verified backup + names; no
+    /// destructive cleanup. A foreign file or insufficient proof aborts.
+    /// </summary>
+    internal static string RestoreGeneratedPngSynthetic(string original,
+        string candidate, string stageRoot, string backupRoot)
+    {
+        RequireGeneratedImageScope(Path.GetFullPath(original),
+            Path.GetFullPath(candidate), Path.GetFullPath(stageRoot),
+            Path.GetFullPath(backupRoot));
+        using var sourceParents = NativeFile.PinnedDirectories.Open(
+            Path.GetDirectoryName(Path.GetFullPath(original))!, [original]);
+        using var stageParents = NativeFile.PinnedDirectories.Open(stageRoot, []);
+        using var backupParents = NativeFile.PinnedDirectories.Open(backupRoot, []);
+        var p = InspectSyntheticPhase(original, candidate, stageRoot, backupRoot);
+        if (p.State == "Prepared") return "OriginalUnchanged";
+        if (p.State == "OriginalRestored") return "OriginalRestored";
+        if (p.State == "CandidateAtOriginal")
+        {
+            using var candidatePinned = NativeFile.PinnedFile.Open(p.Original,
+                p.Receipt.Stage!.Identity, p.Receipt.CandidateSha256);
+            sourceParents.AssertUnchanged();
+            candidatePinned.RenameNoReplace(p.Quarantine);
+            FaultInjection.Hit("g4-after-candidate-quarantine");
+            p = InspectSyntheticPhase(original, candidate, stageRoot, backupRoot);
+        }
+        if (p.State is not ("OriginalSetAside" or "CandidateQuarantined"))
+            throw new InvalidDataException("G4 recovery state changed unexpectedly");
+        using (var oldPinned = NativeFile.PinnedFile.Open(p.Rollback,
+            p.Receipt.Original!.Identity, p.Receipt.OriginalSha256))
+        {
+            sourceParents.AssertUnchanged();
+            oldPinned.RenameNoReplace(p.Original);
+        }
+        FaultInjection.Hit("g4-after-original-restored");
+        var final = InspectSyntheticPhase(original, candidate, stageRoot, backupRoot);
+        if (final.State is not ("Prepared" or "OriginalRestored") ||
+            !Safety.SameSnapshot(p.Receipt.Original))
+            throw new InvalidDataException("G4 original restoration proof failed");
+        return final.State;
+    }
+
+    internal static string InspectGeneratedPngSynthetic(string original,
+        string candidate, string stageRoot, string backupRoot)
+    {
+        RequireGeneratedImageScope(Path.GetFullPath(original),
+            Path.GetFullPath(candidate), Path.GetFullPath(stageRoot),
+            Path.GetFullPath(backupRoot));
+        return InspectSyntheticPhase(original, candidate, stageRoot, backupRoot).State;
+    }
+#endif
+
     private static bool Inside(string path, string parent)
     {
         string p = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));

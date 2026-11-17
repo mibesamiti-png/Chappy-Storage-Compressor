@@ -329,11 +329,10 @@ public static class IndependentUndoEngine
         return new Result(alias, record, shared.Identity, detached.Identity, detached.Length);
     }
 
-#if CHAPPY_TESTING
     // Deliberate, generated-only recovery from a genuine post-File.Replace
     // crash. The original security and times are from completed history,
     // never from the potentially half-restored current alias.
-    internal static void RestoreMetadataAfterCrashSynthetic(string testRoot,
+    internal static void RestoreMetadataAfterCrashCore(string testRoot,
         FileSnapshot original, string master, string hash, uint expectedLinks)
     {
         string root = Safety.ValidateRoot(testRoot);
@@ -391,5 +390,4 @@ public static class IndependentUndoEngine
                 hash, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Interrupted Undo final metadata/identity validation failed");
     }
-#endif
 }

@@ -772,8 +772,38 @@ public static class ReplacementReadiness
         else if (hasOriginal && !hasStage && !hasRollback && hasQuarantine &&
             IsOld(original) && IsOptimized(quarantine))
             phase = "OriginalRestored";
-        else throw new InvalidDataException(
-            "G4 cutover evidence ambiguous; preserve all artifacts");
+        else
+        {
+            // CI-only diagnostic: a cross-directory NTFS rename can alter
+            // timestamps or security on the moved candidate. Never guess the
+            // winner or silently relax the guard before recording real values.
+            static string Probe(string path, FileSnapshot expected, string hash)
+            {
+                if (!File.Exists(path)) return "absent";
+                try
+                {
+                    var actual = Safety.Capture(path);
+                    return $"id={actual.Identity.SameFile(expected.Identity)} " +
+                        $"links={actual.Identity.LinkCount} " +
+                        $"len={actual.Length == expected.Length} " +
+                        $"creation={actual.CreationUtc.Ticks == expected.CreationUtc.Ticks} " +
+                        $"modified={actual.ModifiedUtc.Ticks == expected.ModifiedUtc.Ticks} " +
+                        $"attrs={actual.Attributes == expected.Attributes} " +
+                        $"ownerDacl={actual.SecurityDescriptor.AsSpan().SequenceEqual(expected.SecurityDescriptor)} " +
+                        $"sha={string.Equals(Safety.ComputeSha256(path, CancellationToken.None), hash, StringComparison.OrdinalIgnoreCase)} " +
+                        $"actualCreation={actual.CreationUtc:O} expectedCreation={expected.CreationUtc:O}";
+                }
+                catch (Exception ex) { return ex.GetType().Name; }
+            }
+            throw new InvalidDataException(
+                $"G4 cutover evidence ambiguous; preserve artifacts. " +
+                $"source={hasOriginal},stage={hasStage},rollback={hasRollback},quarantine={hasQuarantine}; " +
+                "old@" + (hasRollback ? "rollback=" + Probe(rollback, old, record.OriginalSha256) :
+                    hasOriginal ? "original=" + Probe(original, old, record.OriginalSha256) : "absent") +
+                "; optimized@" + (hasOriginal ? "original=" + Probe(original, staged, record.CandidateSha256) :
+                    hasQuarantine ? "quarantine=" + Probe(quarantine, staged, record.CandidateSha256) :
+                    hasStage ? "stage=" + Probe(stage, staged, record.CandidateSha256) : "absent"));
+        }
         return new(record, original, candidate, stage, backup.Path,
             rollback, quarantine, phase);
     }

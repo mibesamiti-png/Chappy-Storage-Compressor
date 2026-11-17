@@ -160,13 +160,15 @@ public static class ReplacementReadiness
         // journals; caller-supplied capacity rows are not trusted as file
         // authority. Full fidelity is checked again at this WPF preflight.
         var candidatesByKey = new Dictionary<string, (string Path, long SourceBytes,
-            long CandidateBytes)>(StringComparer.OrdinalIgnoreCase);
+            long CandidateBytes, string? SourceSha256, string? CandidateSha256)>(
+                StringComparer.OrdinalIgnoreCase);
         if (File.Exists(Path.Combine(output, ".chappy-png-batch-r16.json")))
         {
             foreach (var candidate in PngBatchJournalTools.ReadAudit(input, output, ct).Rows)
                 if (candidate.State == "CandidatePresent")
                     candidatesByKey.Add("PNG|" + candidate.RelativePath,
-                        (candidate.PreviewPath, candidate.SourceBytes, candidate.PreviewBytes));
+                        (candidate.PreviewPath, candidate.SourceBytes, candidate.PreviewBytes,
+                         candidate.SourceSha256, candidate.PreviewSha256));
         }
         string jpegPlan = Path.Combine(output, JpegBatchPreviewEngine.PlanName);
         if (File.Exists(jpegPlan))
@@ -176,7 +178,8 @@ public static class ReplacementReadiness
                          input, output, plan.ToolPath, ct).Rows)
                 if (candidate.Status == "Completed" && candidate.VerifiedSavingBytes > 0)
                     candidatesByKey.Add("JPG|" + candidate.RelativePath,
-                        (candidate.CandidatePath, candidate.SourceBytes, candidate.CandidateBytes));
+                        (candidate.CandidatePath, candidate.SourceBytes, candidate.CandidateBytes,
+                         candidate.SourceSha256, candidate.CandidateSha256));
         }
         var rows = new List<Row>();
         int feasible = 0, candidates = 0;
@@ -211,14 +214,22 @@ public static class ReplacementReadiness
                             out var saved) ||
                         saved.SourceBytes != row.SourceBytes ||
                         saved.CandidateBytes != row.CandidateBytes ||
-                        !Inside(saved.Path, output))
-                        throw new InvalidDataException("候補台帳の保存先・サイズが一致しません");
+                        !Inside(saved.Path, output) ||
+                        saved.SourceSha256 is not { Length: 64 } ||
+                        saved.CandidateSha256 is not { Length: 64 })
+                        throw new InvalidDataException(
+                            "候補台帳の保存先・サイズ・生成時原本SHA証拠が一致しません");
                     var fidelity = InspectCandidatePair(path, saved.Path, ct);
-                    eligible = fidelity.Verified;
+                    eligible = fidelity.Verified &&
+                        fidelity.OriginalSha256.Equals(saved.SourceSha256,
+                            StringComparison.OrdinalIgnoreCase) &&
+                        fidelity.CandidateSha256.Equals(saved.CandidateSha256,
+                            StringComparison.OrdinalIgnoreCase);
                     explanation = eligible ?
-                        "容量/独立バックアップ条件・元NTFS ID・画素/メタデータ再検査合格。" +
-                        " 原本置換はまだ無効" :
-                        fidelity.Reason;
+                        "容量/独立バックアップ条件・候補生成時の原本全バイト・" +
+                        "元NTFS ID・画素/メタデータ再検査合格。原本置換はまだ無効" :
+                        "生成時の原本/候補SHAと現在の実データが不一致、または" +
+                        "候補再検証不合格: " + fidelity.Reason;
                 }
             }
             catch (OperationCanceledException) { throw; }

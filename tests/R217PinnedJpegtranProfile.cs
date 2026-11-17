@@ -192,7 +192,7 @@ internal static class R217PinnedJpegtranProfile
             // provenance. Copy the real source-built executable to a NEW path:
             // the CI-only Core must refuse even the identical SHA when that
             // path was not authenticated by its exact pinned-source env proof.
-            string source = Path.Combine(input, "synthetic-0.jpg");
+            string testOriginal = Path.Combine(input, "synthetic-0.jpg");
             string unknown = Path.Combine(root, "untrusted-jpegtran.exe");
             string unknownDir = Path.Combine(root, "untrusted-binary");
             Directory.CreateDirectory(unknownDir);
@@ -200,16 +200,16 @@ internal static class R217PinnedJpegtranProfile
             File.Copy(tool, unknown);
             string unsafeOutput = Path.Combine(root, "untrusted-candidate-output");
             Directory.CreateDirectory(unsafeOutput);
-            string shaBeforeRejection = IndependentSha(source);
+            string shaBeforeRejection = IndependentSha(testOriginal);
             bool fakeRejected = false, fakeBatchRejected = false;
-            try { JpegLosslessPreviewEngine.CreatePreview(source, unsafeOutput, unknown); }
+            try { JpegLosslessPreviewEngine.CreatePreview(testOriginal, unsafeOutput, unknown); }
             catch (InvalidOperationException) { fakeRejected = true; }
             try { JpegBatchPreviewEngine.Run(input, unsafeOutput, unknown); }
             catch (InvalidOperationException) { fakeBatchRejected = true; }
             check(fakeRejected && fakeBatchRejected &&
                   Directory.EnumerateFiles(unsafeOutput, "*",
                       SearchOption.AllDirectories).Count() == 0 &&
-                  IndependentSha(source) == shaBeforeRejection,
+                  IndependentSha(testOriginal) == shaBeforeRejection,
                 "G4-02: identical executable SHA at UNAPPROVED CI path denied before native launch, plan or preview");
 
             // A named executable with a tampered binary digest also refuses.
@@ -223,9 +223,9 @@ internal static class R217PinnedJpegtranProfile
                 write.WriteByte((byte)(b ^ 0x1));
             }
             bool mismatchedRejected = false;
-            try { JpegLosslessPreviewEngine.CreatePreview(source, unsafeOutput, unknown); }
+            try { JpegLosslessPreviewEngine.CreatePreview(testOriginal, unsafeOutput, unknown); }
             catch (InvalidOperationException) { mismatchedRejected = true; }
-            check(mismatchedRejected && IndependentSha(source) == shaBeforeRejection &&
+            check(mismatchedRejected && IndependentSha(testOriginal) == shaBeforeRejection &&
                   !Directory.EnumerateFiles(unsafeOutput).Any(),
                 "G4-02: renamed jpegtran.exe with altered bytes denied without creating output");
 

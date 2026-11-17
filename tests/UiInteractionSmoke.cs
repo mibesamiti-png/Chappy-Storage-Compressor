@@ -83,6 +83,45 @@ internal static class UiInteractionSmoke
                     jpegBatchButton.IsEnabled,
                 "Actual WPF UI shows R2.17 and preview-only batch actions enabled while idle");
 
+            // UI acceptance: scanning all extensions is real behavior, not only a checkbox.
+            // The new detail window must accept non-image duplicates, list all
+            // paths and never make a mutating action available.
+            string allFileRoot = Path.Combine(testRoot, "all-file-types");
+            Directory.CreateDirectory(allFileRoot);
+            string textFile = Path.Combine(allFileRoot, "document.txt");
+            string binaryFile = Path.Combine(allFileRoot, "document-copy.bin");
+            File.WriteAllText(textFile, "generated all-extension duplicate fixture");
+            File.Copy(textFile, binaryFile);
+            File.SetCreationTimeUtc(binaryFile, File.GetCreationTimeUtc(textFile));
+            File.SetLastWriteTimeUtc(binaryFile, File.GetLastWriteTimeUtc(textFile));
+            var allFileResult = Scanner.Run(allFileRoot, mediaOnly.IsChecked == true,
+                null, CancellationToken.None);
+            Require(allFileResult.Groups.Count == 1 &&
+                    allFileResult.Groups[0].Files.Count == 2 &&
+                    allFileResult.Groups[0].Files.All(x => x.Identity.LinkCount == 1),
+                "UI: all-extension default finds a byte-exact TXT/BIN pair");
+            var detailsType = typeof(MainWindow).Assembly.GetType(
+                "ChappyStorageCompressor.DuplicateGroupDetailsWindow", throwOnError: true)!;
+            using (var _ = new MemoryStream()) // no persistent state or user file writes
+            {
+                var detail = (Window)Activator.CreateInstance(detailsType,
+                    BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
+                    args: new object[] { allFileResult.Groups[0] }, culture: null)!;
+                var detailGrid = (DataGrid)detailsType.GetField("_grid",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(detail)!;
+                var message = (TextBlock)detailsType.GetField("_previewMessage",
+                    BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(detail)!;
+                Require(detailGrid.Items.Count == 2 &&
+                        message.Text.Contains("画像以外のプレビューは表示しません",
+                            StringComparison.Ordinal) &&
+                        detail.Title.Contains("読み取り専用", StringComparison.Ordinal),
+                    "UI: full duplicate group details handle non-images read-only");
+                detail.Close();
+            }
+            Require(File.Exists(textFile) && File.Exists(binaryFile) &&
+                    OracleHash(textFile) == OracleHash(binaryFile),
+                "UI: read-only duplicate inspector preserves both original files");
+
             string originals = Path.Combine(testRoot, "synthetic-originals");
             Directory.CreateDirectory(originals);
             string left = Path.Combine(originals, "test-a.mp4");

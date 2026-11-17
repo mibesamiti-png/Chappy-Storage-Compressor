@@ -184,7 +184,7 @@ check('B2 G2-02: original per-file IDs are exposed only via verified durable gro
       'グループ元ファイルの個別履歴' in recovery_view and
       'CompletedGroupLedger.InspectOriginals(root, token)' in source and
       'groupOriginalRecordsReadOnlyVerified = ' in group_batch_tests)
-check('B2 G2-07: WPF selected risk review stays read-only after Yes and fresh snapshot check',
+check('B2 G2-07: default WPF selected risk review is read-only; generated fixture uses shared guarded Core',
       'SelectedMergeReviewButton' in window_xaml and
       'private async void SelectedMergeReview_Click(' in source and
       'DedupeFirstWorkflowPlan.InspectSelected(root, groups, token)' in source and
@@ -194,7 +194,14 @@ check('B2 G2-07: WPF selected risk review stays read-only after Yes and fresh sn
       'Safety.ByteEqual(full, group.Representative.Path, ct)' in selection_core and
       'ProductionMergeAuthorized => false' in selection_core and
       'b2SelectedRiskReviewRoutedClickVerified = ' in ui_test and
-      'MergeVerifiedGroups(' not in source)
+      'private bool _allowGeneratedOnlyMergeTest;' in source and
+      'CompletedGroupLedger.RequireSynthetic(root)' in source and
+      'CompletedGroupLedger.MergeVerifiedGroups(root, groups, token)' in source and
+      'string root = RequireSynthetic(input);' in group_ledger and
+      'root = CompletedGroupLedger.RequireSynthetic(root);' in dedupe_engine and
+      'b2GeneratedOnlySelectedMergeRoutedTwoConsentAndPersistedCore = ' in ui_test and
+      'b2NonSentinelWpfAndInternalCoreStillLocked = ' in ui_test and
+      'b2GeneratedSelectionNoConsentKeepsOriginalNtfsIds = ' in ui_test)
 recovery_window = (root/'RecoveryWindow.xaml.cs').read_text(encoding='utf-8')
 recovery_xaml = (root/'RecoveryWindow.xaml').read_text(encoding='utf-8')
 check('G3-01: restart Undo reidentification reads only authenticated persisted group and cannot invoke Restore',

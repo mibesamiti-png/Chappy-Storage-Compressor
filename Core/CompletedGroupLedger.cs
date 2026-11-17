@@ -545,7 +545,9 @@ public static class CompletedGroupLedger
         return new Summary(entries);
     }
 
-#if CHAPPY_TESTING
+    // The same strict generated-only guard protects the INTERNAL replay
+    // engine in normal Windows builds. Neither a WPF row nor a manifest can
+    // bypass this root/sentinel check to mutate ordinary user files.
     private static string RequireSynthetic(string input)
     {
         string root = Safety.ValidateRoot(input);
@@ -558,7 +560,6 @@ public static class CompletedGroupLedger
             throw new InvalidOperationException("Group merge/Undo is generated NTFS testing only");
         return root;
     }
-#endif
 
     // The exact same durable manifest authorization is compiled in both
     // normal and synthetic builds. It is read-only: it authorizes the
@@ -843,8 +844,25 @@ public static class CompletedGroupLedger
         Action<int>? afterDurableAlias = null,
         Action<string>? afterDurablePhase = null,
         Action<string, string>? testOnlyBeforeFinalUndoValidation = null,
+        Action<string, string>? testOnlyAfterFinalUndoValidation = null) =>
+        ResumeUndoCore(input, id, evidence, CancellationToken.None,
+            afterDurableAlias, afterDurablePhase, testOnlyBeforeFinalUndoValidation,
+            testOnlyAfterFinalUndoValidation);
+#endif
+
+    // G3-03: one authoritative group checkpoint and one resume algorithm.
+    // The previously test-only body is now in normal-build INTERNAL Core,
+    // but ordinary files are rejected by RequireSynthetic before any writes.
+    // Public product Undo, user confirmation, WPF Apply and image replacement
+    // remain disabled until G3/G5 acceptance and explicit user approval.
+    internal static int ResumeUndoCore(string input, string id, string evidence,
+        CancellationToken ct = default,
+        Action<int>? afterDurableAlias = null,
+        Action<string>? afterDurablePhase = null,
+        Action<string, string>? testOnlyBeforeFinalUndoValidation = null,
         Action<string, string>? testOnlyAfterFinalUndoValidation = null)
     {
+        ct.ThrowIfCancellationRequested();
         string root = RequireSynthetic(input);
         if (!Safe(root, evidence) || !Directory.Exists(evidence) ||
             Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any())
@@ -886,7 +904,7 @@ public static class CompletedGroupLedger
             {
                 int index = p.Detached.Count;
                 uint linksBefore = checked((uint)(2 + x.Aliases.Count - index));
-                IndependentUndoEngine.RestoreMetadataAfterCrashSynthetic(
+                IndependentUndoEngine.RestoreMetadataAfterCrashCore(
                     root, x.Aliases[index], x.Master, x.Hash, linksBefore);
                 p.Detached.Add(NativeFile.GetIdentity(x.Aliases[index].Path));
                 p.ActiveStage = null;
@@ -973,5 +991,4 @@ public static class CompletedGroupLedger
         File.Move(PathFor(root, id, "completed"), PathFor(root, id, "restored"));
         return p.Detached.Count;
     }
-#endif
 }

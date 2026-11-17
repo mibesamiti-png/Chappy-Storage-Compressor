@@ -129,6 +129,18 @@ check('B2 G2-03: production Core pins parent directory IDs without delete sharin
       'parent-dir-move' in parent_race and
       'VerifyPinnedParentAgainstExternalMove(parent, check, expectThrows);' in parent_race and
       'MergeVerifiedGroup(' not in source)
+group_batch_tests = (root/'tests/R217GroupLedgerResumeTests.cs').read_text(encoding='utf-8')
+check('B2 G2-04/05/06: guarded internal batch and capacity checkpoints',
+      'internal static IReadOnlyList<string> MergeVerifiedGroups(' in group_ledger and
+      'completed.Add(MergeVerifiedGroup(root, group, ct));' in group_ledger and
+      'Journal.AssertCleanBeforeMerge();' in group_ledger and
+      'CapacityGuard.AssertCanStart(root);\n                        NativeFile.NewHardLink(' in core and
+      'storeParents.AssertUnchanged();\n                        // Free space' in core and
+      'CapacityGuard.AssertCanStart(root);\n                        if (preparedGroupId' in core and
+      'VerifyMidTransactionCapacityRefusal(parent, check, expectThrows);' in group_batch_tests and
+      'VerifyKilledMultiGroupBatch(parent, check, expectThrows);' in group_batch_tests and
+      'self.Kill();' in group_batch_tests and
+      'MergeVerifiedGroups(' not in source)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

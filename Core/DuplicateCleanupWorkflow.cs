@@ -304,7 +304,21 @@ public static class DuplicateCleanupWorkflow
         pinned.RenameNoReplace(c.DestinationPath);
         checkpoint?.Invoke("after-stage-rename-before-receipt");
         if (!StagedAndValid(x, c) || !Matches(x.Keeper, x.Keeper.Path))
-            throw new InvalidDataException("Post-stage identity/content check failed");
+        {
+            var got = Safety.Capture(c.DestinationPath);
+            string why = "Post-stage identity/content check failed: " +
+                $"pathAbsent={!File.Exists(c.SourcePath)}, " +
+                $"sameId={got.Identity.VolumeSerial == c.Original.VolumeSerial && got.Identity.FileIndex == c.Original.FileIndex}, " +
+                $"singleLink={got.Identity.LinkCount == 1}, " +
+                $"length={got.Length == c.Original.Length}, " +
+                $"created={got.CreationUtc == c.Original.CreationUtc}, " +
+                $"modified={got.ModifiedUtc == c.Original.ModifiedUtc}, " +
+                $"attributes={got.Attributes == c.Original.Attributes}, " +
+                $"security={Convert.ToHexString(SHA256.HashData(got.SecurityDescriptor)) == c.Original.SecurityHash}, " +
+                $"sha={Safety.ComputeSha256(got.Path, CancellationToken.None) == c.Original.Sha256}, " +
+                $"keeper={Matches(x.Keeper, x.Keeper.Path)}";
+            throw new InvalidDataException(why);
+        }
         DurableJson(receipt, c.Original);
     }
 

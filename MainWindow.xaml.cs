@@ -743,7 +743,9 @@ public partial class MainWindow : Window
     {
         if (_busy || e.OriginalSource is not DependencyObject source) return;
         for (DependencyObject? current = source; current is not null;
-            current = System.Windows.Media.VisualTreeHelper.GetParent(current))
+            current = current is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D
+                ? System.Windows.Media.VisualTreeHelper.GetParent(current)
+                : (current as FrameworkContentElement)?.Parent)
         {
             if (current is DataGridRow)
             {

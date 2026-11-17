@@ -277,7 +277,7 @@ check('G3-05: same collision writer is compiled in normal Windows core but inacc
       'string root = RequireOwnedRoot(testRoot);' in collision_ledger and
       'Part35 only accepts generated sentinel NTFS root' in collision_ledger and
       'FileMode.CreateNew' in collision_ledger and
-      'g3NormalCompiledCollisionExportAfterRoutedWpfUndo = ' in ui_test and
+      'g3NormalCompiledCollisionExportAfterRoutedWpfUndo =' in ui_test and
       'ProductionMutationEnabled = false' in collision_ledger and
       '$r.g3NormalCompiledCollisionExportAfterRoutedWpfUndo -ne $true' in workflow)
 check('G3-07: real routed WPF Undo requires explicit generated-only opt-in and cannot act on user media',

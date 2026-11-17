@@ -214,8 +214,9 @@ check('G4-03: exact original NTFS metadata is copied to both independent files',
       'File.SetAttributes(target, source.Attributes);' in replacement_readiness)
 check('G4-03: stored/reloaded stage and backup refuse changed NTFS metadata',
       'staged.CreationUtc != old.CreationUtc' in replacement_readiness and
-      '!staged.SecurityDescriptor.AsSpan().SequenceEqual(old.SecurityDescriptor)' in replacement_readiness and
-      '!backup.SecurityDescriptor.AsSpan().SequenceEqual(old.SecurityDescriptor)' in replacement_readiness and
+      '!NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
+      '!NativeFile.SameOwnerGroupDacl(backup.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
+      'ConvertSecurityDescriptorToStringSecurityDescriptorW(' in native and
       'G4-03: 新規stage/別volumeバックアップとも元owner/group/DACL/日時/属性が完全一致' in test and
       'G4-03: stageの画素全バイトが正しくても元日時相違を再起動後拒否' in test)
 

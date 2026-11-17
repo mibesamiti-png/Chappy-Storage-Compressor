@@ -565,10 +565,11 @@ public static class DuplicateCleanupWorkflow
                     "Real shell recycle requires explicit synthetic-test opt-in on an interactive STA");
         }
 
+        DateTime startedUtc = DateTime.UtcNow;
         DurableJson(TrashIntentPath(root, id, index), new
         {
             Schema = 1, Id = id, Index = index, Kind = "WindowsShellRecycle",
-            c.SourcePath, c.DestinationPath,
+            c.SourcePath, c.DestinationPath, StartedUtc = startedUtc,
             Notice = "Attempt only. Outcome is unknown until independently verified."
         });
         try
@@ -584,8 +585,8 @@ public static class DuplicateCleanupWorkflow
         }
         catch (Exception ex)
         {
-            // The shell might have acted before returning an error. Retain
-            // ambiguous intent; do not retry, permanently delete or restore.
+            // The shell may have acted before returning an error. Never
+            // retry, permanently delete or restore this ambiguous operation.
             DurableJson(ShellOutcomePath(root, id, index), new
             {
                 Schema = 1, Id = id, Index = index, Kind = "ShellErrorNeedsManualReview",
@@ -595,14 +596,37 @@ public static class DuplicateCleanupWorkflow
             throw;
         }
 
-        // This intentionally remains UNKNOWN even when the path is gone.
-        // The shell can be configured with unusual recycle policies; only
-        // an independent bin receipt could promote it to verified success.
+        // Fake transports never generate a success receipt, even if they
+        // move the file to an artificial $R path. Only a genuinely requested
+        // Windows Shell operation may use the SID-scoped proof reader.
+        RecycleBinEvidence.Finding proof = testTransport is null
+            ? RecycleBinEvidence.VerifyForCurrentUser(c.DestinationPath, c.Original,
+                startedUtc, DateTime.UtcNow)
+            : new RecycleBinEvidence.Finding(false,
+                "Injected test transport is not an actual Windows Recycle Bin request");
+
         DurableJson(ShellOutcomePath(root, id, index), new
         {
-            Schema = 1, Id = id, Index = index, Kind = "ShellOutcomeNeedsManualReview",
+            Schema = 1, Id = id, Index = index,
+            Kind = proof.Verified
+                ? "ShellPairEvidenceRecordedSynthetic"
+                : "ShellOutcomeNeedsManualReview",
+            ProofReason = proof.Reason,
             OriginalStagedPathStillExists = File.Exists(c.DestinationPath)
         });
+        if (proof.Verified)
+        {
+            // Even this receipt is TEST-ONLY, not product deletion consent.
+            // The $R object can disappear later if the bin is emptied.
+            DurableJson(TrashReceiptPath(root, id, index), new
+            {
+                Schema = 1, Id = id, Index = index,
+                Kind = "VerifiedWindowsShellPairSynthetic",
+                IndexPath = proof.IndexPath, RecycledPath = proof.RecycledPath,
+                Original = c.DestinationPath, c.Original.Sha256,
+                c.Original.FileIndex, c.Original.VolumeSerial
+            });
+        }
     }
 
     /// <summary>

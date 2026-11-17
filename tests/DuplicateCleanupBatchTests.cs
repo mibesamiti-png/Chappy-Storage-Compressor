@@ -395,6 +395,94 @@ internal static class DuplicateCleanupBatchTests
                   noopId + ".item-0000.recycled.json")),
             "C: shell transport returning is NOT treated as recycle bin proof");
 
+        // C3: Independent Windows $I/$R proof. Test ONLY a generated fake
+        // recycle directory; no actual user Recycle Bin is opened by CI.
+        string proofSource = Path.Combine(testRoot, "forensic-source.txt");
+        File.WriteAllBytes(proofSource, RandomNumberGenerator.GetBytes(64 * 1024));
+        var proofSnapshot = Safety.Capture(proofSource);
+        string proofHash = Hash(proofSource);
+        var proofEvidence = new DuplicateCleanupWorkflow.FileEvidence(
+            proofSource, proofSnapshot.Length, proofSnapshot.CreationUtc,
+            proofSnapshot.ModifiedUtc, proofSnapshot.Attributes,
+            proofSnapshot.Identity.VolumeSerial, proofSnapshot.Identity.FileIndex,
+            Convert.ToHexString(SHA256.HashData(proofSnapshot.SecurityDescriptor)),
+            proofHash);
+        string fakeBin = Path.Combine(testRoot, "synthetic-pair-only");
+        Directory.CreateDirectory(fakeBin);
+        string iPath = Path.Combine(fakeBin, "$IABCDEF.txt");
+        string rPath = Path.Combine(fakeBin, "$RABCDEF.txt");
+        DateTime windowBegin = DateTime.UtcNow.AddMinutes(-1);
+        File.Move(proofSource, rPath); // generated file only
+        DateTime deleted = DateTime.UtcNow;
+        static void WriteIndex(string destination, string originalPath, long length,
+            DateTime deletedUtc, bool legacy)
+        {
+            using var mem = new MemoryStream();
+            using (var writer = new BinaryWriter(mem, Encoding.Unicode, leaveOpen: true))
+            {
+                writer.Write(legacy ? 1L : 2L);
+                writer.Write(length);
+                writer.Write(deletedUtc.ToFileTimeUtc());
+                if (legacy)
+                {
+                    if (originalPath.Length > 259)
+                        throw new InvalidOperationException("Generated v1 path too long");
+                    byte[] chars = Encoding.Unicode.GetBytes(originalPath + "\0");
+                    writer.Write(chars);
+                    writer.Write(new byte[520 - chars.Length]);
+                }
+                else
+                {
+                    writer.Write(originalPath.Length + 1);
+                    writer.Write(Encoding.Unicode.GetBytes(originalPath + "\0"));
+                }
+            }
+            File.WriteAllBytes(destination, mem.ToArray());
+        }
+        WriteIndex(iPath, proofSource, proofEvidence.Length, deleted, legacy: false);
+        var v2 = RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+            proofEvidence, windowBegin, DateTime.UtcNow);
+        check(v2.Verified && v2.IndexPath == iPath && v2.RecycledPath == rPath &&
+              NativeFile.GetIdentity(rPath).SameFile(proofSnapshot.Identity) &&
+              Hash(rPath) == proofHash,
+            "C: independent v2 recycle index and data require same original path, NTFS ID, SHA and bytes");
+        var wrongId = RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+            proofEvidence with { FileIndex = proofEvidence.FileIndex + 1 },
+            windowBegin, DateTime.UtcNow);
+        var wrongHash = RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+            proofEvidence with { Sha256 = new string('0', 64) },
+            windowBegin, DateTime.UtcNow);
+        check(!wrongId.Verified && !wrongHash.Verified,
+            "C: recycled data with the right name cannot pass mismatched ID or SHA");
+        var wrongTime = RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+            proofEvidence, DateTime.UtcNow.AddHours(3), DateTime.UtcNow.AddHours(4));
+        check(!wrongTime.Verified,
+            "C: stale recycle timestamp cannot be mistaken for current operation");
+        File.WriteAllBytes(iPath, new byte[] { 2, 0, 0 });
+        check(!RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+                  proofEvidence, windowBegin, DateTime.UtcNow).Verified,
+            "C: truncated index is never proof");
+        WriteIndex(iPath, proofSource, proofEvidence.Length, deleted, legacy: true);
+        check(RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+                  proofEvidence, windowBegin, DateTime.UtcNow).Verified,
+            "C: fixed-length v1 index also requires same independent proof");
+        string otherI = Path.Combine(fakeBin, "$I012345.txt");
+        File.Copy(iPath, otherI);
+        check(!RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+                  proofEvidence, windowBegin, DateTime.UtcNow).Verified,
+            "C: multiple original-path indexes are ambiguous, never promoted");
+        File.Delete(otherI); // generated index only
+        string parked = Path.Combine(fakeBin, "temporarily-parked.bin");
+        File.Move(rPath, parked);
+        check(!RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+                  proofEvidence, windowBegin, DateTime.UtcNow).Verified,
+            "C: missing matching $R payload refuses proof even if $I looks correct");
+        File.Move(parked, rPath);
+        File.WriteAllBytes(proofSource, Encoding.UTF8.GetBytes("foreign original occupant"));
+        check(!RecycleBinEvidence.VerifyInDirectory(fakeBin, proofSource,
+                  proofEvidence, windowBegin, DateTime.UtcNow).Verified,
+            "C: recycled source name occupied again cannot be treated as verified");
+
         string malformedRoot = CreateRoot(testRoot, "history-malformed-intent", 2);
         var (malformedPlan, malformedGroup, malformedKeeper, _) = Scan(malformedRoot);
         string malformedId = DuplicateCleanupWorkflow.BeginSynthetic(

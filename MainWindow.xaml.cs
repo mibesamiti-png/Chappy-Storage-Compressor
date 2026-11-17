@@ -36,6 +36,10 @@ public partial class MainWindow : Window
     // no path to production Core mutation. The on-disk file IDs are checked
     // AGAIN after the message box returns.
     private Func<string, bool> _confirmSelectedMergeRisk;
+    // G2-07: PRIVATE default-off CI opt-in. Only generated TEMP+sentinel
+    // roots may reach the normal-compiled INTERNAL merge transaction.
+    // Production MergeButton and the public DedupeEngine.Run stay locked.
+    private bool _allowGeneratedOnlyMergeTest;
     // Optional, per-window, inline progress taps for isolated WPF tests.
     // Production leaves them null. The real preview engines and their journals
     // run unchanged; the observer is invoked only AFTER the engine reports a
@@ -377,10 +381,21 @@ public partial class MainWindow : Window
         }
     }
 
-    // G2-07: WPF selected rows -> existing strict snapshot validation ->
-    // optional risk acknowledgement -> FRESH second validation.
-    // This method MUST NOT invoke MergeVerifiedGroups, DedupeEngine.Run, or
-    // any normal-build Undo. Even a Yes response only acknowledges the risk.
+    // G2-07: the EXISTING selected-row WPF consent flow is read-only in
+    // every ordinary installed product. CI can opt into one generated-only
+    // transaction via a private, default-off flag; internal Core independently
+    // rechecks the TEMP+sentinel and all immutable NTFS file evidence.
+    private bool SyntheticMergeSelectionAllowed(string root)
+    {
+        if (!_allowGeneratedOnlyMergeTest) return false;
+        try
+        {
+            CompletedGroupLedger.RequireSynthetic(root);
+            return true;
+        }
+        catch { return false; }
+    }
+
     private async void SelectedMergeReview_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _lastScan is null || GroupsGrid.SelectedItems.Count == 0)
@@ -391,6 +406,7 @@ public partial class MainWindow : Window
         var groups = rows.Select(row => row.Group).ToArray();
         _work = new CancellationTokenSource();
         CancellationToken token = _work.Token;
+        bool enteredSyntheticCore = false;
         Busy(true);
         ProgressText.Text = "選択した重複を再検証中";
         try
@@ -408,10 +424,13 @@ public partial class MainWindow : Window
                     "\n再検査に不一致があるため、確認・実行は禁止です。");
                 return;
             }
-            // This is NOT authorizing a merge: only ask whether the user
-            // understands that hardlinks share writes and Undo needs space.
-            if (!_confirmSelectedMergeRisk(review.Describe() +
-                "\n\n上記の危険性を理解しましたか？（どちらでもファイルは変更しません）"))
+            bool fixture = SyntheticMergeSelectionAllowed(root);
+            string firstPrompt = fixture ?
+                "\n\n【生成TEMP＋sentinel検証用】これは実際に元ファイルをハードリンク化します。" +
+                " 自分で用意した写真・動画では実行しないでください。" +
+                " 共有編集リスクとUndo追加容量を理解しましたか？" :
+                "\n\n上記の危険性を理解しましたか？（どちらでもファイルは変更しません）";
+            if (!_confirmSelectedMergeRisk(review.Describe() + firstPrompt))
             {
                 ProgressText.Text = "確認を中止（未実行）";
                 return;
@@ -433,21 +452,105 @@ public partial class MainWindow : Window
                         StringComparer.OrdinalIgnoreCase)).Any())
                 throw new InvalidOperationException(
                     "同意後の最終再検証で原本または記録が変わりました");
-            ProgressText.Text = "再検証済み・本番統合は無効";
-            Log($"選択 {groups.Length} 組の元ID・全バイト・容量を再照合しました。" +
-                " 同意は実行許可ではなく、元ファイルを変更していません。");
-            _showDedupePlan(refreshed.Describe() +
-                "\n\n最終再検証OK。ただしG3/G5未合格のため本番統合は実行できません。");
+
+            if (!fixture)
+            {
+                ProgressText.Text = "再検証済み・本番統合は無効";
+                Log($"選択 {groups.Length} 組の元ID・全バイト・容量を再照合しました。" +
+                    " 同意は実行許可ではなく、元ファイルを変更していません。");
+                _showDedupePlan(refreshed.Describe() +
+                    "\n\n最終再検証OK。ただしG3/G5未合格のため本番統合は実行できません。");
+                return;
+            }
+
+            // Only a disposable fixture explicitly opted into from WPF CI
+            // can reach this section. The Core entrypoints also enforce the
+            // same generated-only root independently of the WPF flag.
+            if (!SyntheticMergeSelectionAllowed(root) ||
+                !_confirmSelectedMergeRisk(
+                    "【生成した使い捨てNTFSファイルの実統合・最終同意】\n" +
+                    refreshed.Describe() +
+                    "\n\n今回だけ生成テストデータを実際に統合しますか？"))
+            {
+                ProgressText.Text = "生成テスト統合を中止（未実行）";
+                return;
+            }
+            token.ThrowIfCancellationRequested();
+            // One last read after the second consent. A previous UI review
+            // is never enough to grant a file mutation.
+            var final = await Task.Run(() =>
+                DedupeFirstWorkflowPlan.InspectSelected(root, groups, token), token);
+            if (!SyntheticMergeSelectionAllowed(root) ||
+                !ReferenceEquals(_lastScan, scan) ||
+                !root.Equals(PathBox.Text, StringComparison.OrdinalIgnoreCase) ||
+                GroupsGrid.SelectedItems.Count != rows.Length ||
+                rows.Any(row => !GroupsGrid.SelectedItems.Contains(row)) ||
+                !final.VerifiedForPreview ||
+                final.Groups.Count != refreshed.Groups.Count ||
+                final.Groups.Where((g, i) =>
+                    g.Representative != refreshed.Groups[i].Representative ||
+                    !g.Paths.SequenceEqual(refreshed.Groups[i].Paths,
+                        StringComparer.OrdinalIgnoreCase)).Any())
+                throw new InvalidDataException(
+                    "生成統合の開始直前に対象・元ID・容量・履歴が変更されました");
+            token.ThrowIfCancellationRequested();
+            long freeBefore = CapacityGuard.ReadAvailable(root).TargetBytes;
+            enteredSyntheticCore = true;
+            ProgressText.Text = "生成NTFSデータの実Core統合・永続記録を検証中";
+            var ids = await Task.Run(() =>
+                CompletedGroupLedger.MergeVerifiedGroups(root, groups, token), token);
+            var history = CompletedGroupLedger.Inspect(root);
+            if (ids.Count != groups.Length ||
+                ids.Distinct(StringComparer.OrdinalIgnoreCase).Count() != ids.Count ||
+                ids.Any(id => history.Entries.Count(x =>
+                    x.OperationId == id && x.State == "VerifiedCompleted") != 1))
+                throw new InvalidDataException(
+                    "生成統合後の全グループの永続完了履歴を確認できません。手動調査が必要");
+            long freeAfter = CapacityGuard.ReadAvailable(root).TargetBytes;
+            string freeDelta = (freeAfter >= freeBefore ? "+" : "-") +
+                GroupRow.HumanSize(Math.Abs(freeAfter - freeBefore));
+            // Scan snapshots are stale after hardlink consolidation; never
+            // allow any follow-up click to reuse those original NTFS IDs.
+            ClearScan();
+            ProgressText.Text = "生成テスト統合完了・本番統合は無効";
+            Log($"G2-07: 生成NTFS {ids.Count} グループの実Core統合と永続履歴を再照合。" +
+                " 一般ユーザーのファイルは変更不可。");
+            _showDedupePlan(
+                "【生成データ専用：選択した重複の実Core統合検証完了】\n" +
+                "グループ " + ids.Count + "件 / 操作ID:\n" +
+                string.Join("\n", ids) +
+                "\n対象ドライブ空き容量（観測）: " +
+                GroupRow.HumanSize(freeBefore) + " → " +
+                GroupRow.HumanSize(freeAfter) + "（差 " + freeDelta + "）" +
+                "\n※ 差分は他のI/Oと証拠保存分を含み、正味容量回復の保証ではありません。" +
+                "\n本番のMerge/Undo/画像原本置換は引き続き無効です。");
         }
         catch (OperationCanceledException)
         {
-            ProgressText.Text = "確認の検証を中止（未実行）";
+            if (enteredSyntheticCore)
+            {
+                ClearScan();
+                ProgressText.Text = "生成テスト統合を中断・履歴要確認";
+                _showDedupePlan("生成データの処理を中断。部分成功やprepared記録の可能性が" +
+                    "あるため、復旧履歴を再検査してください。原本や記録を自動削除しません。");
+            }
+            else ProgressText.Text = "確認の検証を中止（未実行）";
         }
         catch (Exception ex)
         {
-            ProgressText.Text = "選択した重複は要確認（未実行）";
-            _showDedupePlan("対象は変更していません。最終確認を拒否しました。\n" +
-                ex.Message);
+            if (enteredSyntheticCore)
+            {
+                ClearScan();
+                ProgressText.Text = "生成テスト統合の履歴は要確認";
+                _showDedupePlan("生成データの統合を停止。すでに一部変更された可能性があり、" +
+                    "履歴を保全して手動調査してください。\n" + ex.Message);
+            }
+            else
+            {
+                ProgressText.Text = "選択した重複は要確認（未実行）";
+                _showDedupePlan("対象は変更していません。最終確認を拒否しました。\n" +
+                    ex.Message);
+            }
         }
         finally
         {

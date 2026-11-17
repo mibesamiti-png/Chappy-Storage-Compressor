@@ -765,26 +765,33 @@ public static class ReplacementReadiness
             a.Equals(b, StringComparison.OrdinalIgnoreCase);
         string temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
         string dir = Path.GetDirectoryName(original) ??
-            throw new InvalidDataException("Missing PNG parent");
+            throw new InvalidDataException("Missing image parent");
         string root = Path.GetDirectoryName(dir) ??
             throw new InvalidDataException("Missing generated smoke root");
         string name = Path.GetFileName(root);
+        string candidateName = Path.GetFileName(candidate);
+        const string jpegPrefix = "g4.chappy-jpeg-preview-";
+        bool png = Eq(original, Path.Combine(root, "r16-variants", "rgba-multi.png")) &&
+            candidate.StartsWith(Path.Combine(root, "r16-variants-output") +
+                Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            candidate.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
+        bool jpeg = Eq(original, Path.Combine(root, "g4-jpeg-input", "g4.jpg")) &&
+            Eq(Path.GetDirectoryName(candidate)!, Path.Combine(root, "g4-jpeg-output")) &&
+            candidateName.StartsWith(jpegPrefix, StringComparison.Ordinal) &&
+            candidateName.EndsWith(".jpg", StringComparison.Ordinal) &&
+            Guid.TryParseExact(candidateName[jpegPrefix.Length..^4], "N", out _);
         if (!name.StartsWith("ChappyStorageSmoke_", StringComparison.Ordinal) ||
             !Guid.TryParseExact(name["ChappyStorageSmoke_".Length..], "N", out _) ||
             !root.StartsWith(temp + Path.DirectorySeparatorChar,
                 StringComparison.OrdinalIgnoreCase) ||
-            !Eq(original, Path.Combine(root, "r16-variants", "rgba-multi.png")) ||
-            !candidate.StartsWith(
-                Path.Combine(root, "r16-variants-output") +
-                Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
-            !candidate.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+            !(png || jpeg) ||
             !Path.GetDirectoryName(stageRoot)!.Equals(root,
                 StringComparison.OrdinalIgnoreCase) ||
             !Path.GetFileName(stageRoot).StartsWith("g4-cutover-",
                 StringComparison.Ordinal) ||
             !Directory.Exists(stageRoot) ||
             !Directory.Exists(backupRoot))
-            throw new InvalidDataException("G4 requires exact generated PNG smoke paths");
+            throw new InvalidDataException("G4 requires exact generated image smoke paths");
         string backupParent = Path.GetDirectoryName(backupRoot) ??
             throw new InvalidDataException("Missing generated backup parent");
         string backupName = Path.GetFileName(backupParent);
@@ -1264,7 +1271,7 @@ public static class ReplacementReadiness
     }
 
 #if CHAPPY_TESTING
-    internal static string InspectGeneratedPngSynthetic(string original,
+    internal static string InspectGeneratedImageSynthetic(string original,
         string candidate, string stageRoot, string backupRoot)
     {
         RequireImageMutationScope(original, candidate, stageRoot, backupRoot);

@@ -128,6 +128,9 @@ internal static class R217ValidImageBatchProfile
         encoder.Save(output);
     }
 
+    internal static void WriteGeneratedJpeg(string path, int width, int height) =>
+        WriteValidJpeg(path, width, height, Pixels(width, height, index: 0, noisy: false));
+
     private static string IndependentSha256(string file)
     {
         using var stream = File.OpenRead(file);

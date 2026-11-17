@@ -143,6 +143,35 @@ check('G4-03: JPEG and PNG readiness require journal-original and journal-candid
       'G4-03: PNG原本のサイズ/日時を元に戻してもSHA変化で旧候補を拒否' in test and
       'G4-03: 過去の原本SHA無しの候補台帳は不合格・手動確認のみ' in test)
 
+# G4-03: Copy-only production Core preparation must prove independent
+# volume, exact original/candidate full bytes, preserved originals, and
+# fail-closed foreign output. The source-changing Apply is still LOCKED.
+check('G4-03: independent NTFS backup + same-volume stage are copy-only',
+      'internal static PreparedCopies PrepareVerifiedCopies(' in replacement_readiness and
+      'NativeFile.PinnedDirectories.Open(sourceRoot, [original])' in replacement_readiness and
+      'NativeFile.PinnedDirectories.Open(backupRoot, [])' in replacement_readiness and
+      'originalDrive.Name.Equals(backupDrive.Name' in replacement_readiness and
+      'copy.Identity.VolumeSerial == originalSnapshot.Identity.VolumeSerial' in replacement_readiness and
+      'stagedSnapshot.Identity.VolumeSerial != originalSnapshot.Identity.VolumeSerial' in replacement_readiness and
+      'FileMode.CreateNew' in replacement_readiness and
+      'output.Flush(flushToDisk: true)' in replacement_readiness and
+      'Safety.ByteEqual(original, backedUp, ct)' in replacement_readiness and
+      'Safety.ByteEqual(candidate, staged, ct)' in replacement_readiness and
+      'var stagedFidelity = InspectCandidatePair(original, staged, ct);' in replacement_readiness and
+      'ProductionReplacementAuthorized => false;' in replacement_readiness and
+      'ActualFreedBytes => 0;' in replacement_readiness)
+check('G4-03: abnormal prep and foreign output remain safe; never mutate source path',
+      'Directory.EnumerateFileSystemEntries(stageRoot).Any()' in replacement_readiness and
+      'Directory.EnumerateFileSystemEntries(backupRoot).Any()' in replacement_readiness and
+      'G4-03: 原本と同じNTFSボリュームへの独立バックアップを拒否' in test and
+      'G4-03: 別NTFSの原本独立バックアップと元NTFS候補stageを全バイト照合' in test and
+      'G4-03: 他プロセスの原本排他writer中は独立バックアップ準備を拒否' in test and
+      'G4-03: 出力先の既存/異物ファイルに遭遇すれば変更せず停止' in test and
+      'G4-05: 元画像が既存ハードリンク共有なら独立stage準備を拒否' in test and
+      'File.Replace(' not in replacement_readiness and
+      'File.Delete(' not in replacement_readiness and
+      'File.Move(' not in replacement_readiness)
+
 # G4-02: official pinned JPEG executable provenance must be enforced by
 # the actual WinExe native execution path (not only by the CI test helper).
 wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')

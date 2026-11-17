@@ -323,6 +323,78 @@ internal static class R217GroupLedgerResumeTests
             "B2: a fully restored two-name manifest cannot authorize a second Undo");
     }
 
+    // B2: two independent groups pass through the SAME production-compiled
+    // prepared -> Core -> verified-completed path without creating a new ledger.
+    // Both retain an independently resumable synthetic Undo history.
+    private static void VerifySuccessiveGroupTransactions(string parent,
+        Action<bool, string> check, Action<Action, string> expectThrows)
+    {
+        string root = Path.Combine(parent, "r217-b2-two-successive-groups");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        GuardRoot(root);
+        string? priorJournal = Journal.TestFolderPath;
+        try
+        {
+            Journal.TestFolderPath = Path.Combine(root, "b2-successive-journal");
+            string a1 = Path.Combine(root, "first-a.mp4");
+            string a2 = Path.Combine(root, "first-b.mp4");
+            string b1 = Path.Combine(root, "second-a.mp4");
+            string b2 = Path.Combine(root, "second-b.mp4");
+            File.WriteAllBytes(a1, RandomNumberGenerator.GetBytes(180 * 1024));
+            File.WriteAllBytes(b1, RandomNumberGenerator.GetBytes(220 * 1024));
+            foreach (var pair in new[] { (a1, a2), (b1, b2) })
+            {
+                File.Copy(pair.Item1, pair.Item2);
+                File.SetCreationTimeUtc(pair.Item2,
+                    File.GetCreationTimeUtc(pair.Item1));
+                File.SetLastWriteTimeUtc(pair.Item2,
+                    File.GetLastWriteTimeUtc(pair.Item1));
+            }
+            var groups = Scanner.Run(root, true, null, CancellationToken.None)
+                .Groups.OrderBy(g => g.Representative.Length).ToList();
+            check(groups.Count == 2 &&
+                groups.All(g => g.Files.Count == 2 &&
+                    g.BlockReason(false) is null),
+                "B2: two separate byte-identical generated groups share one safe transaction plan");
+            if (groups.Count != 2)
+                throw new InvalidDataException("Missing two-group B2 synthetic fixture");
+            string firstId = CompletedGroupLedger.MergeSynthetic(root, groups[0]);
+            check(CompletedGroupLedger.Inspect(root).VerifiedCompleted == 1 &&
+                Journal.Pending().Count == 0,
+                "B2: first durable group committed before starting second");
+            string secondId = CompletedGroupLedger.MergeSynthetic(root, groups[1]);
+            var both = CompletedGroupLedger.Inspect(root);
+            check(firstId != secondId && both.VerifiedCompleted == 2 &&
+                both.NeedsReview == 0 &&
+                groups.All(g => g.Files.All(s =>
+                    NativeFile.SameFile(s.Path, g.Representative.Path))),
+                "B2: both groups have distinct durable receipts and correct NTFS link identities");
+            // A stale scan must never be accepted as another transaction.
+            expectThrows(() => CompletedGroupLedger.MergeSynthetic(root, groups[0]),
+                "B2: already consolidated group cannot be authorized by a stale scan");
+            check(CompletedGroupLedger.Inspect(root).VerifiedCompleted == 2,
+                "B2: rejected stale transaction did not disturb either committed group");
+
+            string evidence = Path.Combine(root, "b2-independent-evidence");
+            Directory.CreateDirectory(evidence);
+            int undoneFirst = CompletedGroupLedger.ResumeUndoSynthetic(
+                root, firstId, evidence);
+            int undoneSecond = CompletedGroupLedger.ResumeUndoSynthetic(
+                root, secondId, evidence);
+            var restored = CompletedGroupLedger.Inspect(root);
+            check(undoneFirst == 1 && undoneSecond == 1 &&
+                restored.VerifiedRestored == 2 && restored.NeedsReview == 0 &&
+                !NativeFile.SameFile(a1, a2) &&
+                !NativeFile.SameFile(b1, b2) &&
+                groups.All(g => g.Files.All(s =>
+                    Hash(s.Path) == g.Hash)),
+                "B2: successive groups independently Undo to separate NTFS IDs and exact bytes");
+        }
+        finally { Journal.TestFolderPath = priorJournal; }
+    }
+
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)
     {
@@ -439,6 +511,7 @@ internal static class R217GroupLedgerResumeTests
 
             VerifyTwoNameUnifiedLedger(parent, check, expectThrows);
             VerifyPreparedGroupPromotion(parent, check, expectThrows);
+            VerifySuccessiveGroupTransactions(parent, check, expectThrows);
             // The helper uses a separately guarded generated journal folder.
             Journal.TestFolderPath = Path.Combine(root, "part27-journal");
 

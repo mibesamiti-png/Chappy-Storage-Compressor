@@ -141,6 +141,20 @@ check('B2 G2-04/05/06: guarded internal batch and capacity checkpoints',
       'VerifyKilledMultiGroupBatch(parent, check, expectThrows);' in group_batch_tests and
       'self.Kill();' in group_batch_tests and
       'MergeVerifiedGroups(' not in source)
+check('B2 G2-05/06: real-worker crash boundaries and isolated group failure',
+      'FaultInjection.Hit("group-core-verified");' in group_ledger and
+      'FaultInjection.Hit("group-completed");' in group_ledger and
+      'private static readonly string[] BatchCrashCheckpoints' in group_batch_tests and
+      all(x in group_batch_tests for x in [
+          '"journal-recorded", "backup-renamed", "new-link-created"',
+          '"pre-backup-delete", "backup-deleted"',
+          '"group-core-verified", "group-completed"'
+      ]) and
+      'foreach (string checkpoint in BatchCrashCheckpoints)' in group_batch_tests and
+      'KillWorker(root, "merge-batch:" + checkpoint, signal)' in group_batch_tests and
+      'VerifyBatchSourceSwapIsolation(parent, check, expectThrows);' in group_batch_tests and
+      'actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length' in group_batch_tests and
+      'MergeVerifiedGroups(' not in source)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

@@ -9,6 +9,12 @@ internal static class R217GroupLedgerResumeTests
 {
     private const string Flag = "--r217-part27-generated-group-undo-kill";
     private const string Guard = "CHAPPY_PART27_GROUP_UNDO_GENERATED_ONLY";
+    private static readonly string[] BatchCrashCheckpoints =
+    [
+        "journal-recorded", "backup-renamed", "new-link-created",
+        "pre-backup-delete", "backup-deleted",
+        "group-core-verified", "group-completed"
+    ];
     private static string Hash(string path) => Safety.ComputeSha256(path, CancellationToken.None);
 
     public static bool IsChild(string[] args) => args.Length > 0 && args[0] == Flag;
@@ -28,9 +34,16 @@ internal static class R217GroupLedgerResumeTests
     public static int RunChild(string[] args)
     {
         if (args.Length != 4 || args[0] != Flag ||
-            Environment.GetEnvironmentVariable(Guard) != "generated-only" ||
-            (args[2] != "merge-batch" && !Guid.TryParseExact(args[2], "N", out _)))
+            Environment.GetEnvironmentVariable(Guard) != "generated-only")
             throw new InvalidOperationException("Part27 worker not authorized");
+        string? crashPoint = args[2] == "merge-batch" ? "backup-deleted" :
+            args[2].StartsWith("merge-batch:", StringComparison.Ordinal)
+                ? args[2]["merge-batch:".Length..] : null;
+        if (crashPoint is not null &&
+            !BatchCrashCheckpoints.Contains(crashPoint, StringComparer.Ordinal))
+            throw new InvalidOperationException("Unknown generated Core crash checkpoint");
+        if (crashPoint is null && !Guid.TryParseExact(args[2], "N", out _))
+            throw new InvalidOperationException("Unknown generated Undo receipt");
         string root = Path.GetFullPath(args[1]);
         GuardRoot(root);
         string signal = Path.GetFullPath(args[3]);
@@ -38,29 +51,30 @@ internal static class R217GroupLedgerResumeTests
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Part27 checkpoint outside generated root");
         Journal.TestFolderPath = Path.Combine(root, "part27-journal");
-        if (args[2] == "merge-batch")
+        if (crashPoint is not null)
         {
             // Genuine OS process termination, never an exception unwinding
             // or a simulated power loss. The first group must have committed
-            // before stopping inside the second group's REAL Core cutover.
+            // before stopping at each critical transition of the second group.
             var batch = Scanner.Run(root, true, null, CancellationToken.None)
                 .Groups.OrderBy(g => g.Representative.Length).ToList();
             if (batch.Count != 3 || batch[0].Files.Count != 2 ||
                 batch[1].Files.Count != 3 || batch[2].Files.Count != 2)
                 throw new InvalidDataException("Generated-only batch kill fixture mismatch");
-            int deletedAliases = 0;
+            int reached = 0;
             FaultInjection.OnCheckpoint = checkpoint =>
             {
-                if (checkpoint != "backup-deleted" || ++deletedAliases != 2)
+                if (checkpoint != crashPoint || ++reached != 2)
                     return;
                 using (var stream = new FileStream(signal, FileMode.CreateNew,
                     FileAccess.Write, FileShare.None))
                 {
-                    stream.Write("second-group-first-alias-backup-deleted"u8);
+                    stream.Write(System.Text.Encoding.UTF8.GetBytes(
+                        "second-group-" + crashPoint));
                     stream.Flush(flushToDisk: true);
                 }
                 using var self = Process.GetCurrentProcess();
-                self.Kill();
+                self.Kill(); // exact generated worker, not user processes
                 Thread.Sleep(Timeout.Infinite);
             };
             CompletedGroupLedger.MergeVerifiedGroups(root, batch, CancellationToken.None);
@@ -502,13 +516,216 @@ internal static class R217GroupLedgerResumeTests
         }
     }
 
-    // B2 G2-05/G2-06: kill an actual worker after the first verified group
-    // commits and immediately after the second group's first backup deletion.
-    // A third group may not begin; all original content stays addressable.
+    // B2 G2-05/G2-06: reuse the REAL Core + child-process kill for every
+    // durable journal/cutover boundary, and both sides of group completion.
+    // A separate generated root and journal isolate every crash scenario.
     private static void VerifyKilledMultiGroupBatch(string parent,
         Action<bool, string> check, Action<Action, string> expectThrows)
     {
-        string root = Path.Combine(parent, "r217-b2-three-group-kill");
+        foreach (string checkpoint in BatchCrashCheckpoints)
+        {
+            string root = Path.Combine(parent, "r217-b2-kill-" + checkpoint);
+            Directory.CreateDirectory(root);
+            File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
+                "Part23 synthetic data only");
+            GuardRoot(root);
+            string? previousJournal = Journal.TestFolderPath;
+            try
+            {
+                Journal.TestFolderPath = Path.Combine(root, "part27-journal");
+                for (int g = 0; g < 3; g++)
+                {
+                    string first = Path.Combine(root, $"group-{g}-a.mp4");
+                    File.WriteAllBytes(first, RandomNumberGenerator.GetBytes(
+                        (g + 2) * 64 * 1024));
+                    int count = g == 1 ? 3 : 2;
+                    for (int i = 1; i < count; i++)
+                    {
+                        string alias = Path.Combine(root,
+                            $"group-{g}-{(char)('a' + i)}.mp4");
+                        File.Copy(first, alias);
+                        File.SetCreationTimeUtc(alias, File.GetCreationTimeUtc(first));
+                        File.SetLastWriteTimeUtc(alias, File.GetLastWriteTimeUtc(first));
+                    }
+                }
+                var groups = Scanner.Run(root, true, null, CancellationToken.None)
+                    .Groups.OrderBy(x => x.Representative.Length).ToList();
+                check(groups.Count == 3 && groups[0].Files.Count == 2 &&
+                    groups[1].Files.Count == 3 && groups[2].Files.Count == 2 &&
+                    groups.All(x => x.BlockReason(false) is null),
+                    "B2: independent 2/3/2 generated groups before kill at " + checkpoint);
+                if (groups.Count != 3)
+                    throw new InvalidDataException("B2 crash matrix fixture is incomplete");
+                var original = groups.SelectMany(g => g.Files).ToDictionary(
+                    x => x.Path, x => x.Identity, StringComparer.OrdinalIgnoreCase);
+                var firstGroup = groups[0];
+                var second = groups[1];
+                var third = groups[2];
+                string firstMaster = Path.Combine(Safety.StorePath(root),
+                    firstGroup.Hash + ".mp4");
+                string secondMaster = Path.Combine(Safety.StorePath(root),
+                    second.Hash + ".mp4");
+                string thirdMaster = Path.Combine(Safety.StorePath(root),
+                    third.Hash + ".mp4");
+                string signal = Path.Combine(root, "b2-merge-killed.signal");
+                int exit = KillWorker(root, "merge-batch:" + checkpoint, signal);
+
+                bool afterAllAliases = checkpoint is
+                    "group-core-verified" or "group-completed";
+                bool completedSecond = checkpoint == "group-completed";
+                bool aliasLinked = checkpoint is "new-link-created" or
+                    "pre-backup-delete" or "backup-deleted" ||
+                    afterAllAliases;
+                bool backupExpected = checkpoint is "backup-renamed" or
+                    "new-link-created" or "pre-backup-delete";
+                bool pendingExpected = !afterAllAliases;
+                uint secondLinks = afterAllAliases ? 4u :
+                    aliasLinked ? 3u : 2u;
+
+                var summary = CompletedGroupLedger.Inspect(root);
+                var journals = Journal.Pending();
+                bool firstCommitted = File.Exists(firstMaster) &&
+                    NativeFile.GetIdentity(firstMaster).LinkCount == 3 &&
+                    firstGroup.Files.All(file =>
+                        File.Exists(file.Path) &&
+                        NativeFile.SameFile(file.Path, firstMaster) &&
+                        Hash(file.Path) == firstGroup.Hash);
+                bool secondMasterValid = File.Exists(secondMaster) &&
+                    NativeFile.GetIdentity(secondMaster).LinkCount == secondLinks &&
+                    NativeFile.GetIdentity(second.Representative.Path)
+                        .SameFile(original[second.Representative.Path]) &&
+                    NativeFile.SameFile(second.Representative.Path, secondMaster) &&
+                    Hash(second.Representative.Path) == second.Hash;
+                FileSnapshot firstAlias = second.Files[1];
+                FileSnapshot lastAlias = second.Files[2];
+                bool firstAliasValid = checkpoint == "backup-renamed"
+                    ? !File.Exists(firstAlias.Path)
+                    : File.Exists(firstAlias.Path) &&
+                      Hash(firstAlias.Path) == second.Hash &&
+                      (aliasLinked
+                          ? NativeFile.SameFile(firstAlias.Path, secondMaster)
+                          : NativeFile.GetIdentity(firstAlias.Path)
+                                .SameFile(original[firstAlias.Path]));
+                bool lastAliasValid = File.Exists(lastAlias.Path) &&
+                    Hash(lastAlias.Path) == second.Hash &&
+                    (afterAllAliases
+                        ? NativeFile.SameFile(lastAlias.Path, secondMaster)
+                        : NativeFile.GetIdentity(lastAlias.Path)
+                            .SameFile(original[lastAlias.Path]));
+                bool journalValid = pendingExpected
+                    ? journals.Count == 1 &&
+                      journals[0].OriginalPath.Equals(firstAlias.Path,
+                          StringComparison.OrdinalIgnoreCase) &&
+                      journals[0].IndependentIdentity is { } identity &&
+                      identity.SameFile(original[firstAlias.Path]) &&
+                      (backupExpected
+                          ? File.Exists(journals[0].BackupPath) &&
+                            NativeFile.GetIdentity(journals[0].BackupPath)
+                                .SameFile(original[firstAlias.Path]) &&
+                            Hash(journals[0].BackupPath) == second.Hash
+                          : !File.Exists(journals[0].BackupPath))
+                    : journals.Count == 0;
+                bool historyValid = summary.Entries.Count == 2 &&
+                    summary.VerifiedCompleted == (completedSecond ? 2 : 1) &&
+                    summary.NeedsReview == (completedSecond ? 0 : 1) &&
+                    summary.Entries.Any(entry =>
+                        entry.State == "VerifiedCompleted" &&
+                        entry.AliasCount == 1) &&
+                    (completedSecond
+                        ? summary.Entries.Any(entry =>
+                            entry.State == "VerifiedCompleted" &&
+                            entry.AliasCount == 2)
+                        : summary.Entries.Any(entry =>
+                            entry.State == "ManualReview"));
+                bool thirdUnchanged = !File.Exists(thirdMaster) &&
+                    third.Files.All(file => File.Exists(file.Path) &&
+                        NativeFile.GetIdentity(file.Path)
+                            .SameFile(original[file.Path]) &&
+                        NativeFile.GetIdentity(file.Path).LinkCount == 1 &&
+                        Hash(file.Path) == third.Hash);
+                bool killed = exit != 0 &&
+                    File.Exists(signal) && File.ReadAllText(signal) ==
+                        "second-group-" + checkpoint;
+                check(killed && historyValid && firstCommitted &&
+                      secondMasterValid && firstAliasValid && lastAliasValid &&
+                      journalValid && thirdUnchanged &&
+                      Journal.UnresolvedRecordFiles().Count == 0,
+                    "B2 G2-05/06: REAL child kill at " + checkpoint +
+                    " preserves receipt classification, original NTFS IDs and untouched third group");
+                if (!(killed && historyValid && firstCommitted &&
+                      secondMasterValid && firstAliasValid && lastAliasValid &&
+                      journalValid && thirdUnchanged))
+                    throw new InvalidDataException("B2 generated crash state invalid at " +
+                        checkpoint + ": history=" + historyValid +
+                        " master=" + secondMasterValid + " alias=" +
+                        firstAliasValid + "/" + lastAliasValid + " journal=" +
+                        journalValid + " third=" + thirdUnchanged);
+
+                // Only completed groups may count towards verified logical
+                // savings; an incomplete alias is not a success receipt.
+                long verifiedSavings = firstGroup.Savings +
+                    (completedSecond ? second.Savings : 0);
+                long expectedVerifiedSavings = completedSecond ?
+                    firstGroup.Files[1].Length + second.Files[1].Length +
+                        second.Files[2].Length : firstGroup.Files[1].Length;
+                check(verifiedSavings == expectedVerifiedSavings &&
+                    NativeFile.GetIdentity(firstMaster).LinkCount == 3 &&
+                    NativeFile.GetIdentity(secondMaster).LinkCount == secondLinks,
+                    "B2 G2-06: verified group receipt count and logical savings exclude partial uncommitted aliases at " +
+                        checkpoint);
+
+                string before = string.Join("|", summary.Entries
+                    .OrderBy(x => x.OperationId)
+                    .Select(x => x.OperationId + ":" + x.State));
+                var again = CompletedGroupLedger.Inspect(root);
+                check(before == string.Join("|", again.Entries
+                        .OrderBy(x => x.OperationId)
+                        .Select(x => x.OperationId + ":" + x.State)) &&
+                    journals.Count == Journal.Pending().Count &&
+                    third.Files.All(file =>
+                        NativeFile.GetIdentity(file.Path)
+                            .SameFile(original[file.Path])),
+                    "B2 G2-05: repeated restart-equivalent inspection never adopts partial evidence or modifies later originals at " +
+                        checkpoint);
+
+                if (!completedSecond)
+                {
+                    expectThrows(() => CompletedGroupLedger.MergeVerifiedGroups(
+                        root, [third], CancellationToken.None),
+                        "B2 G2-06: incomplete prior group blocks the next group at " +
+                            checkpoint);
+                    check(!File.Exists(thirdMaster) &&
+                        CompletedGroupLedger.Inspect(root).NeedsReview == 1 &&
+                        third.Files.All(file =>
+                            NativeFile.GetIdentity(file.Path)
+                                .SameFile(original[file.Path])),
+                        "B2 G2-06: refused continuation preserves all subsequent independent IDs at " +
+                            checkpoint);
+                }
+                else
+                {
+                    // The earlier transaction really completed. Resuming
+                    // untouched third group requires a NEW explicit call.
+                    var receipts = CompletedGroupLedger.MergeVerifiedGroups(
+                        root, [third], CancellationToken.None);
+                    check(receipts.Count == 1 &&
+                        CompletedGroupLedger.Inspect(root).VerifiedCompleted == 3 &&
+                        third.Files.All(file =>
+                            NativeFile.SameFile(file.Path, thirdMaster) &&
+                            Hash(file.Path) == third.Hash),
+                        "B2 G2-06: after a fully committed crash, an explicit subsequent invocation can safely complete the untouched group");
+                }
+            }
+            finally { Journal.TestFolderPath = previousJournal; }
+        }
+    }
+
+    // An ordinary, deterministic group-2 source swap must stop a batch too:
+    // the successful prior group remains committed and group 3 stays intact.
+    private static void VerifyBatchSourceSwapIsolation(string parent,
+        Action<bool, string> check, Action<Action, string> expectThrows)
+    {
+        string root = Path.Combine(parent, "r217-b2-stale-middle-group");
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
             "Part23 synthetic data only");
@@ -520,72 +737,51 @@ internal static class R217GroupLedgerResumeTests
             for (int g = 0; g < 3; g++)
             {
                 string first = Path.Combine(root, $"group-{g}-a.mp4");
-                File.WriteAllBytes(first, RandomNumberGenerator.GetBytes(
-                    (g + 2) * 64 * 1024));
-                int count = g == 1 ? 3 : 2;
-                for (int i = 1; i < count; i++)
-                {
-                    string alias = Path.Combine(root, $"group-{g}-{(char)('a' + i)}.mp4");
-                    File.Copy(first, alias);
-                    File.SetCreationTimeUtc(alias, File.GetCreationTimeUtc(first));
-                    File.SetLastWriteTimeUtc(alias, File.GetLastWriteTimeUtc(first));
-                }
+                File.WriteAllBytes(first,
+                    RandomNumberGenerator.GetBytes((g + 2) * 64 * 1024));
+                string alias = Path.Combine(root, $"group-{g}-b.mp4");
+                File.Copy(first, alias);
+                File.SetCreationTimeUtc(alias, File.GetCreationTimeUtc(first));
+                File.SetLastWriteTimeUtc(alias, File.GetLastWriteTimeUtc(first));
             }
             var groups = Scanner.Run(root, true, null, CancellationToken.None)
-                .Groups.OrderBy(x => x.Representative.Length).ToList();
-            check(groups.Count == 3 && groups[0].Files.Count == 2 &&
-                  groups[1].Files.Count == 3 && groups[2].Files.Count == 2 &&
-                  groups.All(x => x.BlockReason(false) is null),
-                "B2: generated batch has 2-name, 3-name and 2-name groups before real worker kill");
-            if (groups.Count != 3)
-                throw new InvalidDataException("Three-group generated kill fixture missing");
-            var before = groups.SelectMany(g => g.Files).ToDictionary(
-                x => x.Path, x => x.Identity, StringComparer.OrdinalIgnoreCase);
-            string signal = Path.Combine(root, "b2-merge-killed.signal");
-            int exit = KillWorker(root, "merge-batch", signal);
+                .Groups.OrderBy(g => g.Representative.Length).ToList();
+            if (groups.Count != 3) throw new InvalidDataException(
+                "B2 independent failure fixture incomplete");
+            var thirdIds = groups[2].Files.Select(x => x.Identity).ToArray();
+            var altered = groups[1].Files[1];
+            string moved = Path.Combine(root, "moved-middle-original.mp4");
+            File.Move(altered.Path, moved);
+            File.Copy(moved, altered.Path);
+            File.SetCreationTimeUtc(altered.Path, File.GetCreationTimeUtc(moved));
+            File.SetLastWriteTimeUtc(altered.Path, File.GetLastWriteTimeUtc(moved));
+            check(Hash(altered.Path) == groups[1].Hash &&
+                !NativeFile.GetIdentity(altered.Path).SameFile(altered.Identity),
+                "B2 G2-06: same-byte independent source identity changes between scan and group transaction");
+            expectThrows(() => CompletedGroupLedger.MergeVerifiedGroups(
+                root, groups, CancellationToken.None),
+                "B2 G2-06: middle group must reject a stale exact-hash foreign NTFS identity");
             var summary = CompletedGroupLedger.Inspect(root);
-            var pending = Journal.Pending();
             string firstMaster = Path.Combine(Safety.StorePath(root),
                 groups[0].Hash + ".mp4");
-            string secondMaster = Path.Combine(Safety.StorePath(root),
+            string middleMaster = Path.Combine(Safety.StorePath(root),
                 groups[1].Hash + ".mp4");
-            string thirdMaster = Path.Combine(Safety.StorePath(root),
+            string lastMaster = Path.Combine(Safety.StorePath(root),
                 groups[2].Hash + ".mp4");
-            bool firstSaved = summary.VerifiedCompleted == 1 &&
-                groups[0].Files.All(f => NativeFile.SameFile(f.Path, firstMaster) &&
-                    Hash(f.Path) == groups[0].Hash);
-            bool secondStopped = summary.NeedsReview == 1 &&
-                pending.Count == 1 &&
-                pending[0].OriginalPath.StartsWith(
-                    Path.Combine(root, "group-1-"), StringComparison.OrdinalIgnoreCase) &&
-                File.Exists(secondMaster) &&
-                groups[1].Files.All(f => File.Exists(f.Path) &&
-                    Hash(f.Path) == groups[1].Hash);
-            bool thirdUnchanged = !File.Exists(thirdMaster) &&
-                groups[2].Files.All(f =>
-                    NativeFile.GetIdentity(f.Path).SameFile(before[f.Path]) &&
-                    NativeFile.GetIdentity(f.Path).LinkCount == 1 &&
-                    Hash(f.Path) == groups[2].Hash);
-            check(exit != 0 && File.Exists(signal) &&
-                File.ReadAllText(signal) ==
-                    "second-group-first-alias-backup-deleted" &&
-                firstSaved && secondStopped && thirdUnchanged &&
+            check(summary.VerifiedCompleted == 1 && summary.NeedsReview == 0 &&
+                NativeFile.SameFile(groups[0].Files[0].Path, firstMaster) &&
+                NativeFile.SameFile(groups[0].Files[1].Path, firstMaster) &&
+                !File.Exists(middleMaster) && !File.Exists(lastMaster) &&
+                NativeFile.GetIdentity(moved).SameFile(altered.Identity) &&
+                Hash(moved) == groups[1].Hash &&
+                groups[2].Files.Select((file, i) =>
+                    NativeFile.GetIdentity(file.Path)
+                        .SameFile(thirdIds[i]) &&
+                    NativeFile.GetIdentity(file.Path).LinkCount == 1 &&
+                    Hash(file.Path) == groups[2].Hash).All(x => x) &&
+                Journal.Pending().Count == 0 &&
                 Journal.UnresolvedRecordFiles().Count == 0,
-                "B2: genuine process kill leaves completed group verified, interrupted group ManualReview, and later group untouched");
-            string stateBefore = string.Join("|", summary.Entries
-                .OrderBy(x => x.OperationId).Select(x => x.OperationId + ":" + x.State));
-            var again = CompletedGroupLedger.Inspect(root);
-            check(stateBefore == string.Join("|", again.Entries
-                    .OrderBy(x => x.OperationId).Select(x => x.OperationId + ":" + x.State)) &&
-                pending.Count == Journal.Pending().Count &&
-                groups.All(g => g.Files.All(f => Hash(f.Path) == g.Hash)),
-                "B2: repeated post-kill inspection never adopts incomplete group or changes user-visible bytes");
-            expectThrows(() => CompletedGroupLedger.MergeVerifiedGroups(root,
-                [groups[2]], CancellationToken.None),
-                "B2: next group cannot mutate while interrupted group still has a pending journal");
-            check(thirdUnchanged && !File.Exists(thirdMaster) &&
-                CompletedGroupLedger.Inspect(root).VerifiedCompleted == 1,
-                "B2: rejected next-group attempt cannot change prior completion or untouched originals");
+                "B2 G2-06: failed middle group cannot change verified first group, foreign original, or unstarted third group");
         }
         finally { Journal.TestFolderPath = previousJournal; }
     }
@@ -709,6 +905,7 @@ internal static class R217GroupLedgerResumeTests
             VerifySuccessiveGroupTransactions(parent, check, expectThrows);
             VerifyMidTransactionCapacityRefusal(parent, check, expectThrows);
             VerifyKilledMultiGroupBatch(parent, check, expectThrows);
+            VerifyBatchSourceSwapIsolation(parent, check, expectThrows);
             // The helper uses a separately guarded generated journal folder.
             Journal.TestFolderPath = Path.Combine(root, "part27-journal");
 
@@ -727,6 +924,10 @@ internal static class R217GroupLedgerResumeTests
                     explicitResumeFinalDetachedAliases = recovered,
                     allBytesTimesOwnerDaclAndNtfsIdsVerified = originals,
                     completedHistoryRestored = restored.VerifiedRestored == 1,
+                    actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
+                    actualCoreKillCheckpoints = BatchCrashCheckpoints,
+                    repeatedCrashInspectionAndGroupIsolationTested = true,
+                    middleGroupSameShaForeignIdRefused = true,
                     productionMergeEnabled = false,
                     productionUndoEnabled = CompletedGroupLedger.ProductionMutationEnabled,
                     actualUserFilesTouched = false,

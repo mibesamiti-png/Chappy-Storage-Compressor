@@ -593,6 +593,43 @@ static class Program
             Safety.ComputeSha256(b, CancellationToken.None) == bh &&
             Safety.ComputeSha256(corrupt, CancellationToken.None) == ch,
             "R1.6: 一括実行後も入力原本は全バイト不変");
+        // G4-03: the preview ledger needs the original SHA recorded DURING
+        // candidate creation; matching the *current* source to itself is not
+        // sufficient evidence when users can restore size and timestamps.
+        var pngProof = PngBatchJournalTools.ReadAudit(input, previews);
+        Check(pngProof.Rows.Count(x => x.State == "CandidatePresent") == 2 &&
+            pngProof.Rows.Where(x => x.State == "CandidatePresent").All(x =>
+                x.SourceSha256 is { Length: 64 } &&
+                x.PreviewSha256 is { Length: 64 } &&
+                x.SourceSha256 == Safety.ComputeSha256(
+                    Path.Combine(input, x.RelativePath), CancellationToken.None) &&
+                x.PreviewSha256 == Safety.ComputeSha256(
+                    x.PreviewPath, CancellationToken.None)),
+            "G4-03: PNG候補と当時の原本SHAを独立ジャーナルから再読し全バイト照合");
+        byte[] originalA = File.ReadAllBytes(a);
+        DateTime beforeA = File.GetLastWriteTimeUtc(a);
+        try
+        {
+            byte[] sameLengthChanged = (byte[])originalA.Clone();
+            sameLengthChanged[50] ^= 1;
+            File.WriteAllBytes(a, sameLengthChanged);
+            File.SetLastWriteTimeUtc(a, beforeA);
+            Check(new FileInfo(a).Length == originalA.Length &&
+                File.GetLastWriteTimeUtc(a) == beforeA &&
+                PngBatchJournalTools.ReadAudit(input, previews).Rows.Any(x =>
+                    x.RelativePath == "a.png" && x.State == "NeedsReview" &&
+                    x.EstimatedSavingBytes == 0),
+                "G4-03: PNG原本のサイズ/日時を元に戻してもSHA変化で旧候補を拒否");
+        }
+        finally
+        {
+            File.WriteAllBytes(a, originalA);
+            File.SetLastWriteTimeUtc(a, beforeA);
+        }
+        Check(PngBatchJournalTools.ReadAudit(input, previews).Rows.Any(x =>
+                x.RelativePath == "a.png" && x.State == "CandidatePresent" &&
+                x.SourceSha256 == ah),
+            "G4-03: 元データ完全復帰で生成当時の証拠と一致し、原本未置換");
         int candidateCount = Directory.GetFiles(Path.Combine(previews, "chappy-png-previews"), "*.png").Length;
         var afterRunAgain = PngBatchPreviewEngine.Run(input, previews);
         Check(afterRunAgain.Optimized == 2 &&

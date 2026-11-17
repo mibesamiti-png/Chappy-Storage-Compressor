@@ -54,7 +54,7 @@ dotnet run -c Release --project "tests\ChappyStorageCompressor.UiSmokeTests.cspr
 if errorlevel 1 goto failUiTests
 
 echo [4/4] Publishing self-contained Windows executable...
-dotnet publish "ChappyStorageCompressor.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o "dist\win-x64" > "%LOGDIR%\publish.log" 2>&1
+dotnet publish "ChappyStorageCompressor.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:Version=1.0.0-rc.1 -o "dist\win-x64" > "%LOGDIR%\publish.log" 2>&1
 if errorlevel 1 goto failPublish
 rem Copy EXACTLY the source-verified tool whose SHA was embedded into the app.
 rem The CI workflow copies the pinned upstream license and audits this binary.
@@ -64,6 +64,8 @@ if defined CHAPPY_R217_SIMD_SHA256 (
   if errorlevel 1 goto failPublish
   powershell -NoProfile -NonInteractive -Command "$s=(Get-FileHash -LiteralPath 'dist\win-x64\jpegtran.exe' -Algorithm SHA256).Hash; if ($s -ne $env:CHAPPY_R217_SIMD_SHA256) { exit 9 }"
   if errorlevel 1 goto failToolPin
+  pwsh -NoLogo -NoProfile -NonInteractive -File "bootstrap\WriteV1ReleaseCandidate.ps1"
+  if errorlevel 1 goto failPublish
 )
 
 echo PASS: Build, synthetic safety tests, routed WPF UI events and publish. > "%LOGDIR%\RESULT.txt"

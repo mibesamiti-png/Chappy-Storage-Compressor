@@ -10,6 +10,21 @@ Windows向け **完全一致ファイルの重複調査** と **PNG/JPG完全無
 
 > ⚠️ **開発中です。大切な写真・動画の原本には使用しないでください。** 通常版のハードリンク統合・原本置換は安全のため無効です。GitHub Actionsの合格は製品の安全性保証ではありません。
 
+## v1.0 配布候補を確認する
+
+Windows x64用の候補は、成功したWindows Actionsの `chappy-win-x64-unverified` にまとまっています。正式リリースと解禁は [Issue #54](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/54) で判定します。
+
+1. ZIPを新しい空フォルダに展開します。更新時は旧フォルダと復旧レシートを保管し、新しい版を別フォルダへ展開します。
+2. `BUILD-MANIFEST.json` でRC版、ビルド元コミット、バンドルされた実行ファイルの署名状態を確認します。PowerShellの `Get-FileHash -Algorithm SHA256 -LiteralPath .\ChappyStorageCompressor.exe` と `jpegtran.exe` の値を `SHA256SUMS.txt` と照合します。
+3. `ChappyStorageCompressor.exe` を起動し、人工または複製した画像・動画のフォルダで読み取り専用スキャンを行います。PNG/JPG一括候補には入力と別の出力先を選び、JPGには同梱の `jpegtran.exe` を指定します。
+4. 画像準備で、元ドライブ上の空のステージ先と別NTFSドライブ上の空のバックアップ先を選びます。復旧ウィザードの「画像の復旧記録」から `.chappy-g4-preparation.json` を開きます。要手動確認の場合はレシート・バックアップ・ステージを保存し、コピー元と記録を照合します。
+
+同梱jpegtranは libjpeg-turbo 3.2.1 の固定コミット `7b4993786d856cbccabfc0ed2f923ba000e326cc` からWindows CIでビルドし、ライセンスを同梱します。候補サイズは論理バイト数です。バックアップと退避原本を保持している間、候補のサイズ差は回復容量として計上しません。通常の配布候補では原本置換・重複統合・独立Undoはロック中です。
+
+**Windows実機・独立レビューで記録する項目**
+
+ビルド元SHA、Windows環境、使用した人工データを記録し、実際のマウスとキーボードで選択・停止・再開・確認取消・既存ファイルとの衝突・復旧画面の表示を確認します。生成データでの適用とUndoは同じビルド元の検証結果と突き合わせ、実機で確認できた範囲を明記します。署名、ハッシュ、既知制限、未検証操作を独立した確認者が [Issue #54](https://github.com/mibesamiti-png/Chappy-Storage-Compressor/issues/54) に記録してから、正式解禁とタグの判断に進みます。
+
 ## R2.7：ソースを直接GitHub管理
 
 従来はZIP内のC#を展開し、CI上で一時修正を加えてテストしていました。R2.7では `Core/`、`tests/`、`tools/` とWPFソースをGitで直接管理してCIで検証しています。

@@ -192,7 +192,7 @@ internal static class R217PinnedJpegtranProfile
             // provenance. Copy the real source-built executable to a NEW path:
             // the CI-only Core must refuse even the identical SHA when that
             // path was not authenticated by its exact pinned-source env proof.
-            string testOriginal = Path.Combine(input, "synthetic-0.jpg");
+            string testOriginal = Path.Combine(input, "synthetic-00.jpg");
             string unknown = Path.Combine(root, "untrusted-jpegtran.exe");
             string unknownDir = Path.Combine(root, "untrusted-binary");
             Directory.CreateDirectory(unknownDir);

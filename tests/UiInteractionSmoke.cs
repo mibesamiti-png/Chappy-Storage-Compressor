@@ -246,7 +246,10 @@ internal static class UiInteractionSmoke
 
             // G2-07: even reflection-enabling the PRIVATE test flag on an
             // ordinary non-sentinel folder can only return the read-only plan.
-            SetPrivate(window, "_allowGeneratedOnlyMergeTest", true);
+            var generatedMergeFlag = typeof(MainWindow).GetField(
+                "_allowGeneratedOnlyMergeTest", BindingFlags.NonPublic | BindingFlags.Instance) ??
+                throw new InvalidOperationException("G2-07 private fixture safety switch missing");
+            generatedMergeFlag.SetValue(window, true);
             SetPrivate(window, "_confirmSelectedMergeRisk",
                 new Func<string, bool>(_ => true));
             afterRiskText = "";
@@ -264,7 +267,7 @@ internal static class UiInteractionSmoke
                 !Directory.Exists(Safety.StorePath(originals));
             Require(g207NormalRootForcedFlagStillLocked,
                 "G2-07: forced private fixture flag on non-sentinel root cannot authorize any merge");
-            SetPrivate(window, "_allowGeneratedOnlyMergeTest", false);
+            generatedMergeFlag.SetValue(window, false);
             // The INTERNAL Core must refuse a non-sentinel root even if a
             // caller bypasses the WPF gate and supplies a genuine scan group.
             var internalBatchMerge = typeof(CompletedGroupLedger).GetMethod(
@@ -342,7 +345,7 @@ internal static class UiInteractionSmoke
             g2Groups.SelectedItems.Add(g2Groups.Items[1]);
             Require(g2Selected.IsEnabled && !g2Merge.IsEnabled,
                 "G2-07: both generated groups are selected, public Merge stays locked");
-            SetPrivate(mergeView, "_allowGeneratedOnlyMergeTest", true);
+            generatedMergeFlag.SetValue(mergeView, true);
             string g207RiskText = "", g207ResultText = "";
             bool g207AllowConsent = false;
             int g207ConsentCalls = 0;

@@ -221,6 +221,26 @@ internal static class R217GroupIntraAliasCrashTests
                     attackedEvidenceRefused &=
                         CompletedGroupLedger.Inspect(root).Entries.Single(e =>
                             e.OperationId == f.First).State == expected;
+
+                    // G3-06: valid stage alone is not enough: the saved
+                    // per-alias sidecar must match the same original/master
+                    // identity and byte evidence, or no replay is permitted.
+                    string receipt = Directory.GetFiles(
+                        Path.Combine(root, "part28-evidence"),
+                        "*.part23-undo.json").Single();
+                    byte[] authenticReceipt = File.ReadAllBytes(receipt);
+                    File.AppendAllText(receipt, "G3-UNTRUSTED-EVIDENCE");
+                    string tamperedReceiptHash = Hash(receipt);
+                    expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root,
+                        f.First, Path.Combine(root, "part28-evidence")),
+                        "G3-06: altered durable per-alias receipt refuses a valid staged Undo");
+                    attackedEvidenceRefused &=
+                        Hash(receipt) == tamperedReceiptHash &&
+                        NativeFile.SameFile(f.FirstMaster,
+                            f.Originals.Values.Single(x =>
+                                Path.GetFileName(x.Path) == "group-a1.mp4").Path);
+                    // Restore only our known test-owned JSON bytes.
+                    File.WriteAllBytes(receipt, authenticReceipt);
                 }
                 if (phase == "post-cutover-before-metadata")
                 {
@@ -315,6 +335,8 @@ internal static class R217GroupIntraAliasCrashTests
                     supportedGroupCountPerScenario = 2,
                     tamperedStageAndExternalAliasRefused = true,
                     fullOriginalBytesAndOwnerDaclRestored = true,
+                    crossLedgerReplayUsesNormalCompiledCore = true,
+                    modifiedSavedUndoSidecarRefused = true,
                     productionMergeEnabled = false,
                     productionUndoEnabled = CompletedGroupLedger.ProductionMutationEnabled,
                     realUserMediaTouched = false,

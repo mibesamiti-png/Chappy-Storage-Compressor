@@ -97,9 +97,9 @@
               <TextBlock Text="重複グループ" Foreground="#AAAAAA" FontSize="11" HorizontalAlignment="Center"/>
             </StackPanel>
             <StackPanel Grid.Column="1" HorizontalAlignment="Center">
-              <TextBlock x:Name="ScannedCountText" Text="—" FontSize="24" FontWeight="SemiBold"
+              <TextBlock x:Name="DuplicateFileCountText" Text="—" FontSize="24" FontWeight="SemiBold"
                          HorizontalAlignment="Center"/>
-              <TextBlock Text="調査対象ファイル" Foreground="#AAAAAA" FontSize="11" HorizontalAlignment="Center"/>
+              <TextBlock Text="重複ファイル" Foreground="#AAAAAA" FontSize="11" HorizontalAlignment="Center"/>
             </StackPanel>
             <StackPanel Grid.Column="2" HorizontalAlignment="Center">
               <TextBlock x:Name="SavingsText" Text="—" FontSize="24" FontWeight="SemiBold"
@@ -160,6 +160,8 @@
                           Checked="OptionsChanged" Unchecked="OptionsChanged"
                           ToolTip="日時が違うファイルも完全一致として検索されます。この設定は統合候補の安全判定を変更するため注意。"/>
                 <StackPanel Orientation="Horizontal" Margin="0,3,0,8">
+                  <TextBlock Text="調査対象：" Foreground="#AFAFAF"/>
+                  <TextBlock x:Name="ScannedCountText" Text="—" Margin="0,0,18,0"/>
                   <TextBlock Text="厳格な統合候補：" Foreground="#AFAFAF"/>
                   <TextBlock x:Name="SafeCountText" Text="—"/>
                   <TextBlock Text=" グループ" Foreground="#AFAFAF"/>

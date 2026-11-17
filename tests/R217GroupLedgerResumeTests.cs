@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
 using ChappyStorageCompressor.Core;
 
 // Part27: real Core four-name synthetic merge, group-level persisted history,
@@ -16,6 +18,39 @@ internal static class R217GroupLedgerResumeTests
         "group-core-verified", "group-completed"
     ];
     private static string Hash(string path) => Safety.ComputeSha256(path, CancellationToken.None);
+
+    // The SAME real Core generated files are measured at each crash boundary.
+    // GetCompressedFileSizeW returns the allocated size of the data stream,
+    // not the logical file length. Count each NTFS volume/file ID exactly ONCE
+    // so shared aliases and store master cannot inflate physical usage.
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode,
+        EntryPoint = "GetCompressedFileSizeW", SetLastError = true)]
+    private static extern uint GetAllocatedLow(string name, out uint high);
+
+    private static long AllocatedBytes(string path)
+    {
+        uint low = GetAllocatedLow(path, out uint high);
+        int error = Marshal.GetLastWin32Error();
+        if (low == uint.MaxValue && error != 0)
+            throw new Win32Exception(error, "NTFS allocation unavailable: " + path);
+        return checked((long)(((ulong)high << 32) | low));
+    }
+
+    private static (long Bytes, int UniqueIds) UniqueAllocated(
+        IEnumerable<string> sourcePaths)
+    {
+        var ids = new HashSet<(uint Volume, ulong Index)>();
+        long total = 0;
+        foreach (string path in sourcePaths.Where(File.Exists))
+        {
+            FileIdentity id = NativeFile.GetIdentity(path);
+            if (ids.Add((id.VolumeSerial, id.FileIndex)))
+                total = checked(total + AllocatedBytes(path));
+        }
+        return (total, ids.Count);
+    }
+
+
 
     public static bool IsChild(string[] args) => args.Length > 0 && args[0] == Flag;
 
@@ -558,6 +593,14 @@ internal static class R217GroupLedgerResumeTests
                     throw new InvalidDataException("B2 crash matrix fixture is incomplete");
                 var original = groups.SelectMany(g => g.Files).ToDictionary(
                     x => x.Path, x => x.Identity, StringComparer.OrdinalIgnoreCase);
+                string[] sourceNames = groups.SelectMany(g =>
+                    g.Files.Select(f => f.Path)).ToArray();
+                var baselineAllocation = UniqueAllocated(sourceNames);
+                check(baselineAllocation.UniqueIds == 7 &&
+                    baselineAllocation.Bytes >=
+                        groups.Sum(g => g.Files.Sum(f => f.Length)),
+                    "B2 G2-06: seven independent original NTFS IDs have allocated bytes before real Core mutation at " +
+                        checkpoint);
                 var firstGroup = groups[0];
                 var second = groups[1];
                 var third = groups[2];
@@ -584,6 +627,30 @@ internal static class R217GroupLedgerResumeTests
 
                 var summary = CompletedGroupLedger.Inspect(root);
                 var journals = Journal.Pending();
+                // The observed storage after a killed worker includes the
+                // relocated original in a pending backup, if present. A
+                // committed link's original file ID no longer consumes space.
+                string[] masters = [firstMaster, secondMaster, thirdMaster];
+                var allocated = UniqueAllocated(sourceNames.Concat(masters)
+                    .Concat(journals.Select(j => j.BackupPath)));
+                long measuredFreed = baselineAllocation.Bytes - allocated.Bytes;
+                bool afterOneAliasDeleted = checkpoint == "backup-deleted";
+                int expectedRemainingIds = afterAllAliases ? 4 :
+                    afterOneAliasDeleted ? 5 : 6;
+                long expectedFreed = firstGroup.Files[1].Length +
+                    (afterAllAliases ? second.Savings :
+                        afterOneAliasDeleted ? second.Files[1].Length : 0);
+                // Source data lengths are integral NTFS clusters in these
+                // synthetic fixtures; exact unique-ID allocation must match
+                // the physical, not just logical, released bytes.
+                check(allocated.UniqueIds == expectedRemainingIds &&
+                    measuredFreed == expectedFreed &&
+                    allocated.Bytes > 0,
+                    "B2 G2-06: real Core partial crash at " + checkpoint +
+                        " has exact distinct-ID NTFS allocation delta; recovered=" +
+                        measuredFreed + ", verified-receipts-only=" +
+                        firstGroup.Files[1].Length +
+                        (completedSecond ? second.Savings : 0));
                 bool firstCommitted = File.Exists(firstMaster) &&
                     NativeFile.GetIdentity(firstMaster).LinkCount == 3 &&
                     firstGroup.Files.All(file =>
@@ -926,6 +993,8 @@ internal static class R217GroupLedgerResumeTests
                     completedHistoryRestored = restored.VerifiedRestored == 1,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
+                    actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill = true,
+                    partialFailedGroupAllocationNeverCountedAsVerifiedReceipt = true,
                     repeatedCrashInspectionAndGroupIsolationTested = true,
                     middleGroupSameShaForeignIdRefused = true,
                     productionMergeEnabled = false,

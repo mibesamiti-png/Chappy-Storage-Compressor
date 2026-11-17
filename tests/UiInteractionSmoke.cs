@@ -995,6 +995,26 @@ internal static class UiInteractionSmoke
                     !mergeButton.IsEnabled,
                 "R2.17 part 15: repeat attempt still selects tool/output and explicitly refuses");
 
+            // Verify the installed WinExe's Core boundary, including direct callers.
+            foreach (string methodName in new[] { "ApplyPreparedImage", "RestorePreparedImage" })
+            {
+                var imageMutation = typeof(ReplacementReadiness).GetMethod(
+                    methodName, BindingFlags.NonPublic | BindingFlags.Static) ??
+                    throw new InvalidOperationException("G4 normal-build image Core missing");
+                bool productionDenied = false;
+                try
+                {
+                    imageMutation.Invoke(null, [left, right, originals, originals]);
+                }
+                catch (TargetInvocationException ex) when
+                    (ex.InnerException is NotSupportedException)
+                {
+                    productionDenied = true;
+                }
+                Require(productionDenied && OracleHash(left) == beforeA && OracleHash(right) == beforeB,
+                    "G4 production image mutation refuses direct calls before touching files");
+            }
+
             // R2.17 part 16: successfully run BOTH real preview engines through
             // the original WPF Click event. No test-executable substitution:
             // Actions supplies its independently pinned official jpegtran.exe.

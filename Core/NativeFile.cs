@@ -255,7 +255,8 @@ public static class NativeFile
     // Callers own journaling, root confinement, alias-count and Undo decisions.
     private const uint DeleteAccess = 0x00010000;
     private const uint ReadAttributes = 0x00000080;
-    private const uint FileShareReadDelete = 0x00000001 | 0x00000004;
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareReadDelete = FileShareRead | 0x00000004;
     private const uint OpenExisting = 3;
     private const uint OpenReparsePoint = 0x00200000;
     private const int FileRenameInfo = 3;
@@ -423,7 +424,7 @@ public static class NativeFile
         internal FileIdentity CurrentHandleIdentity => IdentityFromHandle(_handle);
 
         internal static PinnedFile Open(string path, FileIdentity expected,
-            string hash, bool requireIndependent = true)
+            string hash, bool requireIndependent = true, bool denyDeleteSharing = false)
         {
             string full = Path.GetFullPath(path);
             if (!File.Exists(full) || !Safety.EligibleAttributes(
@@ -431,7 +432,8 @@ public static class NativeFile
                 HasNamedDataStreams(full))
                 throw new InvalidDataException("Pinned NTFS file must be regular without ADS");
             SafeFileHandle handle = CreateFilePinned(Extended(full),
-                DeleteAccess | ReadAttributes, FileShareReadDelete, IntPtr.Zero,
+                DeleteAccess | ReadAttributes,
+                denyDeleteSharing ? FileShareRead : FileShareReadDelete, IntPtr.Zero,
                 OpenExisting, OpenReparsePoint, IntPtr.Zero);
             if (handle.IsInvalid)
             {

@@ -188,6 +188,54 @@ internal static class R217PinnedJpegtranProfile
             check(originals.Count == Count && markers.Count == Count,
                 "R2.17: eight valid baseline JPEG images independently decoded and marker-audited");
 
+            // G4-02: the executable name/extension is not evidence of its
+            // provenance. Copy the real source-built executable to a NEW path:
+            // the CI-only Core must refuse even the identical SHA when that
+            // path was not authenticated by its exact pinned-source env proof.
+            string source = Path.Combine(input, "synthetic-0.jpg");
+            string unknown = Path.Combine(root, "untrusted-jpegtran.exe");
+            string unknownDir = Path.Combine(root, "untrusted-binary");
+            Directory.CreateDirectory(unknownDir);
+            unknown = Path.Combine(unknownDir, "jpegtran.exe");
+            File.Copy(tool, unknown);
+            string unsafeOutput = Path.Combine(root, "untrusted-candidate-output");
+            Directory.CreateDirectory(unsafeOutput);
+            string shaBeforeRejection = IndependentSha(source);
+            bool fakeRejected = false, fakeBatchRejected = false;
+            try { JpegLosslessPreviewEngine.CreatePreview(source, unsafeOutput, unknown); }
+            catch (InvalidOperationException) { fakeRejected = true; }
+            try { JpegBatchPreviewEngine.Run(input, unsafeOutput, unknown); }
+            catch (InvalidOperationException) { fakeBatchRejected = true; }
+            check(fakeRejected && fakeBatchRejected &&
+                  Directory.EnumerateFiles(unsafeOutput, "*",
+                      SearchOption.AllDirectories).Count() == 0 &&
+                  IndependentSha(source) == shaBeforeRejection,
+                "G4-02: identical executable SHA at UNAPPROVED CI path denied before native launch, plan or preview");
+
+            // A named executable with a tampered binary digest also refuses.
+            // No arbitrary executable may be launched as a jpegtran substitute.
+            using (var write = new FileStream(unknown, FileMode.Open,
+                       FileAccess.ReadWrite, FileShare.None))
+            {
+                write.Position = Math.Min(1234, write.Length - 1);
+                int b = write.ReadByte();
+                write.Position -= 1;
+                write.WriteByte((byte)(b ^ 0x1));
+            }
+            bool mismatchedRejected = false;
+            try { JpegLosslessPreviewEngine.CreatePreview(source, unsafeOutput, unknown); }
+            catch (InvalidOperationException) { mismatchedRejected = true; }
+            check(mismatchedRejected && IndependentSha(source) == shaBeforeRejection &&
+                  !Directory.EnumerateFiles(unsafeOutput).Any(),
+                "G4-02: renamed jpegtran.exe with altered bytes denied without creating output");
+
+            // The real upstream-pinned generated tool is accepted and held
+            // with a read-only lease (no writable or replaceable path).
+            using (var authorized = JpegLosslessPreviewEngine.OpenTrustedTool(tool))
+                check(authorized.CanRead && !authorized.CanWrite &&
+                      authorized.Length > 1024,
+                    "G4-02: CI-verified official source-built executable pinned by SHA and read-only handle");
+
             // The production engine, not a synthetic jpegtran stub, is timed.
             var progress = new InlineProgress();
             long beforeAllocated = GC.GetAllocatedBytesForCurrentThread();

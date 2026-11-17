@@ -781,6 +781,7 @@ public static class CompletedGroupLedger
             throw new InvalidDataException("Only clean 2-33 independent exact duplicates supported");
         foreach (FileSnapshot s in group.Files)
         {
+            ReplacementReadiness.AssertNoPendingImageReplacement(s.Path);
             if (!Safe(root, s.Path) ||
                 !Safety.ContainedRegularSource(root, s.Path) ||
                 !Safety.SameSnapshot(s) ||

@@ -128,6 +128,7 @@ internal static class G4ImageAcceptanceTests
         File.Delete(rollback); // Simulate loss of the retired original on the disposable fixture.
         long remainingAllocation = Allocation(source);
         long freeWithoutRollback = drive.AvailableFreeSpace;
+        AssertImageBlocksMerge(source, candidate, fidelity.CandidateSha256, check);
         check(remainingAllocation == stageAllocation && appliedAllocation - remainingAllocation == originalAllocation,
             "G4-06: exact NTFS allocation after fixture rollback removal");
 
@@ -164,6 +165,40 @@ internal static class G4ImageAcceptanceTests
         File.Copy(candidate, Path.Combine(fixture, "candidate.jpg"));
 
         AssertDedupeConflict(root, backupRoot, source, candidate, fidelity, check);
+    }
+
+    private static void AssertImageBlocksMerge(string source, string candidate, string hash,
+        Action<bool, string> check)
+    {
+        string input = Path.GetDirectoryName(source)!;
+        File.WriteAllText(Path.Combine(input, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        string twin = Path.Combine(input, "applied-twin.jpg");
+        var snapshot = Safety.Capture(source);
+        File.Copy(candidate, twin);
+        File.SetCreationTimeUtc(twin, snapshot.CreationUtc);
+        File.SetLastWriteTimeUtc(twin, snapshot.ModifiedUtc);
+        var group = new DuplicateGroup { Hash = hash, Files = [Safety.Capture(twin), snapshot] };
+        bool blocked = false;
+        try { CompletedGroupLedger.MergeSynthetic(input, group); }
+        catch (InvalidDataException ex) when (ex.Message.StartsWith("画像の適用・復元記録", StringComparison.Ordinal))
+        {
+            blocked = true;
+        }
+        check(blocked && !Directory.Exists(Safety.StorePath(input)) &&
+            Safety.SameSnapshot(snapshot) && Safety.ByteEqual(source, twin, CancellationToken.None) &&
+            !NativeFile.SameFile(source, twin),
+            "G4-05: applied JPEG denies real merge before creating history, even without rollback");
+        bool directBlocked = false;
+        try { DedupeEngine.Run(input, [group], false, null, CancellationToken.None); }
+        catch (InvalidDataException ex) when (ex.Message.StartsWith("画像の適用・復元記録", StringComparison.Ordinal))
+        {
+            directBlocked = true;
+        }
+        check(directBlocked && !Directory.Exists(Safety.StorePath(input)) &&
+            Safety.SameSnapshot(snapshot) && !NativeFile.SameFile(source, twin),
+            "G4-05: direct merge denies the active image without group preparation");
+        File.Delete(twin); // Generated fixture only.
     }
 
     private static void AssertDedupeConflict(string root, string backupRoot, string source,

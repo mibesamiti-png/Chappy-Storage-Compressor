@@ -844,11 +844,14 @@ static class Program
                             // Each scenario gets fresh independent copies and
                             // a new permanent receipt, never a user-file path.
                             foreach (var (checkpoint, backupOnly) in new[] {
+                                ("g4-after-image-reservation", false),
                                 ("g4-after-original-rename", false),
                                 ("g4-after-stage-rename", false),
                                 ("g4-after-apply-record", false),
                                 ("g4-after-candidate-quarantine", false),
                                 ("g4-after-original-restored", false),
+                                ("g4-after-backup-stage-create", true),
+                                ("g4-before-backup-restore-record", true),
                                 ("g4-after-backup-restore-record", true),
                                 ("g4-after-candidate-quarantine", true),
                                 ("g4-after-original-restored", true)
@@ -972,6 +975,20 @@ static class Program
                                     testStage, testBackup, checkpoint, killDuringRecovery, Check);
                                 string interrupted = ReplacementReadiness.InspectGeneratedImageSynthetic(
                                     source, preview.PreviewPath!, testStage, testBackup);
+                                string? orphan = null;
+                                FileIdentity? orphanId = null;
+                                string? orphanHash = null;
+                                if (checkpoint is "g4-after-backup-stage-create" or "g4-before-backup-restore-record")
+                                {
+                                    string token = Path.GetFileNameWithoutExtension(image.StagedPath)
+                                        [".chappy-g4-stage-".Length..];
+                                    orphan = Directory.GetFiles(Path.GetDirectoryName(source)!,
+                                        Path.GetFileName(source) + ".chappy-g4-restore-" + token + "-*.stage").Single();
+                                    orphanId = NativeFile.GetIdentity(orphan);
+                                    orphanHash = Safety.ComputeSha256(orphan, CancellationToken.None);
+                                    Check(new FileInfo(orphan).Length == (checkpoint == "g4-after-backup-stage-create" ?
+                                        0 : startSnapshot.Length), "G4-04: ID記録前の孤立ステージを特定");
+                                }
                                 var readOnlyReview = ReplacementReadiness.InspectImageTransaction(image.ReceiptPath);
                                 string expectedReview = checkpoint == "g4-after-backup-restore-record" ?
                                     "BackupRestorePrepared" : interrupted;
@@ -981,10 +998,12 @@ static class Program
                                     readOnlyReview.ActualFreedBytes == 0,
                                     "G4-06: 画像復旧画面の読取経路が停止状態と別NTFSバックアップを確認");
                                 string expectedInterrupted = checkpoint switch {
+                                    "g4-after-image-reservation" => "Prepared",
                                     "g4-after-original-rename" => "OriginalSetAside",
                                     "g4-after-stage-rename" => "CandidateAtOriginal",
                                     "g4-after-apply-record" => "Applied",
-                                    "g4-after-backup-restore-record" => "AppliedWithoutRollback",
+                                    "g4-after-backup-stage-create" or "g4-before-backup-restore-record" or
+                                        "g4-after-backup-restore-record" => "AppliedWithoutRollback",
                                     "g4-after-candidate-quarantine" => backupOnly ?
                                         "BackupCandidateQuarantined" : "CandidateQuarantined",
                                     _ => backupOnly ? "BackupRestored" : "OriginalRestored"
@@ -996,7 +1015,7 @@ static class Program
                                     source, preview.PreviewPath!, testStage, testBackup);
                                 FileSnapshot after = Safety.Capture(source);
                                 Check((backupOnly ? restored == "BackupRestored" :
-                                        restored is "Prepared" or "OriginalRestored") &&
+                                        restored is "Prepared" or "OriginalUnchanged" or "OriginalRestored") &&
                                     after.Identity.LinkCount == 1 &&
                                     after.Identity.SameFile(startSnapshot.Identity) == !backupOnly &&
                                     after.Attributes == startSnapshot.Attributes &&
@@ -1014,6 +1033,13 @@ static class Program
                                         testBackup) is "OriginalUnchanged" or "OriginalRestored" or "BackupRestored" &&
                                     Safety.SameSnapshot(after),
                                     "G4-04: 二重リカバリーは冪等かつ元画像未変更: " + scenario);
+                                if (orphan is not null)
+                                    Check(!after.Identity.SameFile(orphanId!) &&
+                                        NativeFile.GetIdentity(orphan).SameFile(orphanId!) &&
+                                        Safety.ComputeSha256(orphan, CancellationToken.None) == orphanHash,
+                                        "G4-04: ID未記録の孤立ファイルを保持し、新しいIDで復元");
+                                Check(!File.Exists(source + ".chappy-g4-active.json"),
+                                    "G4-05: 復元成功後に限り画像の予約が解除される");
                                 Check(File.Exists(image.BackupPath) &&
                                     File.Exists(image.ReceiptPath) && Safety.SameSnapshot(after),
                                     "G4-04: 復元後も独立原本backupとレシートは自動削除しない: " +

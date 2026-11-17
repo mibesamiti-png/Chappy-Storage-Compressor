@@ -17,7 +17,8 @@ internal static class R217PathSwapRaceTests
     private static readonly HashSet<string> Modes = new(StringComparer.Ordinal)
     {
         "backup-move-foreign-alias", "backup-swap-same-bytes",
-        "shared-alias-move-foreign", "shared-alias-delete", "stage-delete"
+        "shared-alias-move-foreign", "shared-alias-delete", "stage-delete",
+        "parent-dir-move"
     };
 
     public static bool IsChild(string[] args) =>
@@ -66,8 +67,11 @@ internal static class R217PathSwapRaceTests
         bool isStage = Regex.IsMatch(args[3],
             @"^\.chappy-part23-undo-[0-9a-f]{32}\.stage$",
             RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
-        if (File.Exists(ready) || !File.Exists(target))
+        bool parentMode = args[2] == "parent-dir-move";
+        if (File.Exists(ready) ||
+            (parentMode ? !Directory.Exists(target) : !File.Exists(target)))
             throw new InvalidDataException("Part32 expected a new generated signal and original path");
+        string signalText = "part32-external-process-finished";
         switch (args[2])
         {
             case "backup-move-foreign-alias" when isBackup:
@@ -92,19 +96,29 @@ internal static class R217PathSwapRaceTests
             case "stage-delete" when isStage:
                 File.Delete(target);
                 break;
+            case "parent-dir-move" when args[3] == "part32-parent":
+                try
+                {
+                    Directory.Move(target, OwnedFile(root, "part32-parent-renamed"));
+                    signalText = "part32-parent-move-succeeded";
+                }
+                catch (IOException) { signalText = "part32-parent-move-blocked"; }
+                catch (UnauthorizedAccessException) { signalText = "part32-parent-move-blocked"; }
+                break;
             default:
                 throw new InvalidDataException("Part32 adversary mode and target mismatch");
         }
         using (var marker = new FileStream(ready, FileMode.CreateNew,
             FileAccess.Write, FileShare.None))
         {
-            marker.Write("part32-external-process-finished"u8);
+            marker.Write(System.Text.Encoding.UTF8.GetBytes(signalText));
             marker.Flush(flushToDisk: true);
         }
         return 0;
     }
 
-    private static void ExternalChange(string root, string mode, string target)
+    private static void ExternalChange(string root, string mode, string target,
+        string expectedSignal = "part32-external-process-finished")
     {
         string executable = Environment.ProcessPath ??
             throw new InvalidOperationException("Part32 test executable not available");
@@ -136,7 +150,7 @@ internal static class R217PathSwapRaceTests
             }
         }
         if (File.ReadAllText(Path.Combine(root, "part32-race-complete.signal"))
-                != "part32-external-process-finished")
+                != expectedSignal)
             throw new IOException("Part32 did not observe the external process's durable signal");
     }
 
@@ -172,6 +186,110 @@ internal static class R217PathSwapRaceTests
     private static string Hash(string path) =>
         Safety.ComputeSha256(path, CancellationToken.None);
 
+    // B2 G2-03: a separate process tries to rename the DIRECTORY holding an
+    // authenticated alias while the real Core transaction is in flight.
+    // A parent name must not redirect a later filename operation to a new tree.
+    private static void VerifyPinnedParentAgainstExternalMove(string parent,
+        Action<bool, string> check, Action<Action, string> expectThrows)
+    {
+        string root = Path.Combine(parent, "r217-part32-parent-identity");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        string nested = Path.Combine(root, "part32-parent");
+        Directory.CreateDirectory(nested);
+        string source = Path.Combine(root, "part32-a.mp4");
+        string alias = Path.Combine(nested, "part32-b.mp4");
+        File.WriteAllBytes(source, RandomNumberGenerator.GetBytes(260 * 1024));
+        File.Copy(source, alias);
+        File.SetCreationTimeUtc(alias, File.GetCreationTimeUtc(source));
+        File.SetLastWriteTimeUtc(alias, File.GetLastWriteTimeUtc(source));
+        string? oldJournal = Journal.TestFolderPath;
+        try
+        {
+            Journal.TestFolderPath = Path.Combine(root, "part32-parent-journal");
+            var scan = Scanner.Run(root, true, null, CancellationToken.None);
+            check(scan.Groups.Count == 1 &&
+                scan.Groups[0].Files.Count == 2 &&
+                scan.Groups[0].BlockReason(false) is null,
+                "B2 G2-03: real Scanner accepts generated duplicates across nested parent");
+            if (scan.Groups.Count != 1)
+                throw new InvalidDataException("Parent directory race fixture missing group");
+            var group = scan.Groups.Single();
+            var oldAlias = NativeFile.GetIdentity(alias);
+            int attempted = 0;
+            try
+            {
+                FaultInjection.OnCheckpoint = point =>
+                {
+                    if (point != "journal-recorded") return;
+                    attempted++;
+                    ExternalChange(root, "parent-dir-move", nested,
+                        "part32-parent-move-blocked");
+                };
+                string id = CompletedGroupLedger.MergeSynthetic(root, group);
+                check(attempted == 1 &&
+                    CompletedGroupLedger.Inspect(root).VerifiedCompleted == 1 &&
+                    !Directory.Exists(Path.Combine(root, "part32-parent-renamed")) &&
+                    Directory.Exists(nested) &&
+                    NativeFile.SameFile(source, alias) &&
+                    NativeFile.GetIdentity(alias).SameFile(
+                        NativeFile.GetIdentity(source)) &&
+                    !NativeFile.GetIdentity(alias).SameFile(oldAlias) &&
+                    Journal.Pending().Count == 0,
+                    "B2 G2-03: real external process cannot move held alias parent during durable Core commit");
+                // The directory is no longer pinned after the transaction.
+                // A later external rename must invalidate read-only history,
+                // not be silently adopted as successful Undo evidence.
+                Directory.Move(nested, Path.Combine(root, "part32-parent-renamed"));
+                check(CompletedGroupLedger.Inspect(root).NeedsReview == 1,
+                    "B2 G2-03: post-transaction parent rename downgrades persisted history to ManualReview");
+            }
+            finally { FaultInjection.OnCheckpoint = null; }
+        }
+        finally { Journal.TestFolderPath = oldJournal; }
+
+        // A path can still point at equal bytes after its parent is replaced.
+        // The original NTFS IDs, not identical content, determine authorization.
+        string swapped = Path.Combine(parent, "r217-part32-premerge-parent-swap");
+        Directory.CreateDirectory(swapped);
+        File.WriteAllText(Path.Combine(swapped, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        string safeParent = Path.Combine(swapped, "part32-parent");
+        string displaced = Path.Combine(swapped, "part32-parent-relocated");
+        Directory.CreateDirectory(safeParent);
+        string a = Path.Combine(swapped, "part32-a.mp4");
+        string b = Path.Combine(safeParent, "part32-b.mp4");
+        File.WriteAllBytes(a, RandomNumberGenerator.GetBytes(196 * 1024));
+        File.Copy(a, b);
+        File.SetCreationTimeUtc(b, File.GetCreationTimeUtc(a));
+        File.SetLastWriteTimeUtc(b, File.GetLastWriteTimeUtc(a));
+        var stale = Scanner.Run(swapped, true, null, CancellationToken.None)
+            .Groups.Single();
+        var bId = NativeFile.GetIdentity(b);
+        Directory.Move(safeParent, displaced);
+        Directory.CreateDirectory(safeParent);
+        File.Copy(Path.Combine(displaced, "part32-b.mp4"), b);
+        File.SetCreationTimeUtc(b,
+            File.GetCreationTimeUtc(Path.Combine(displaced, "part32-b.mp4")));
+        File.SetLastWriteTimeUtc(b,
+            File.GetLastWriteTimeUtc(Path.Combine(displaced, "part32-b.mp4")));
+        string? previousJournal = Journal.TestFolderPath;
+        try
+        {
+            Journal.TestFolderPath = Path.Combine(swapped, "part32-stale-journal");
+            expectThrows(() => CompletedGroupLedger.MergeSynthetic(swapped, stale),
+                "B2 G2-03: same-byte replacement after parent swap cannot authorize durable merge");
+            check(!Directory.Exists(Safety.StorePath(swapped)) &&
+                !NativeFile.GetIdentity(b).SameFile(bId) &&
+                NativeFile.GetIdentity(Path.Combine(displaced, "part32-b.mp4")).SameFile(bId) &&
+                Hash(b) == stale.Hash &&
+                Hash(Path.Combine(displaced, "part32-b.mp4")) == stale.Hash,
+                "B2 G2-03: changed parent preserves external copy and original ID without creating store");
+        }
+        finally { Journal.TestFolderPath = previousJournal; }
+    }
+
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)
     {
@@ -179,6 +297,7 @@ internal static class R217PathSwapRaceTests
         var results = new List<object>();
         try
         {
+            VerifyPinnedParentAgainstExternalMove(parent, check, expectThrows);
             foreach (var scenario in new[]
             {
                 (Name: "backup-move", Checkpoint: "backup-renamed",

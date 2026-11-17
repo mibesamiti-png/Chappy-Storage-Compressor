@@ -553,6 +553,121 @@ static class Program
                 Check(ReplacementReadiness.InspectCandidatePair(
                         source, preview.PreviewPath!).Verified,
                     "G4-03: 外部ハンドル解放後の再検証は同じ元ID/SHAのみ合格");
+                // Copy-only preparation: no real original is moved/replaced.
+                // All sources/previews here were created inside the disposable
+                // ChappyStorageSmoke_ test root by the existing PNG fixture.
+                string g4Stage = Path.Combine(root, "g4-generated-stage");
+                string g4SameBackup = Path.Combine(root, "g4-generated-same-backup");
+                Directory.CreateDirectory(g4Stage);
+                Directory.CreateDirectory(g4SameBackup);
+                ExpectThrows(() => ReplacementReadiness.PrepareVerifiedCopies(
+                        source, preview.PreviewPath!, g4Stage, g4SameBackup,
+                        hash, fidelity.CandidateSha256),
+                    "G4-03: 原本と同じNTFSボリュームへの独立バックアップを拒否");
+                Check(!Directory.EnumerateFileSystemEntries(g4Stage).Any() &&
+                    !Directory.EnumerateFileSystemEntries(g4SameBackup).Any(),
+                    "G4-03: 同一ボリューム・容量事前拒否ではstageやbackupを作らない");
+
+                // GitHub-hosted Windows runners normally expose a separate
+                // runner temp / user-profile NTFS volume. Never use a generic
+                // host drive root or personal media; create a UNIQUE test dir
+                // only under CI-owned TEMP or LocalApplicationData.
+                if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true")
+                {
+                    string? independentParent = new[]
+                        {
+                            Environment.GetEnvironmentVariable("RUNNER_TEMP"),
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+                        }
+                        .Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x))
+                        .FirstOrDefault(x =>
+                            !Path.GetPathRoot(Path.GetFullPath(x!))!.Equals(
+                                Path.GetPathRoot(source), StringComparison.OrdinalIgnoreCase) &&
+                            new DriveInfo(Path.GetPathRoot(x!)!).DriveFormat.Equals(
+                                "NTFS", StringComparison.OrdinalIgnoreCase));
+                    Check(independentParent is not null,
+                        "G4-03: CIに独立したNTFS別ボリュームを確認");
+                    if (independentParent is not null)
+                    {
+                        string g4Backup = Path.Combine(independentParent,
+                            "ChappyStorageSmoke_G4Backup_" + Guid.NewGuid().ToString("N"));
+                        Directory.CreateDirectory(g4Backup);
+                        string guard = Path.Combine(g4Backup, ".chappy-g4-generated-only");
+                        File.WriteAllText(guard, "CHAPPY-G4-GENERATED-ONLY\\n");
+                        try
+                        {
+                            var originalSnapshot = Safety.Capture(source);
+                            var prepared = ReplacementReadiness.PrepareVerifiedCopies(
+                                source, preview.PreviewPath!, g4Stage, g4Backup,
+                                hash, fidelity.CandidateSha256);
+                            Check(File.Exists(prepared.StagedPath) &&
+                                File.Exists(prepared.BackupPath) &&
+                                Safety.ByteEqual(source, prepared.BackupPath,
+                                    CancellationToken.None) &&
+                                Safety.ByteEqual(preview.PreviewPath!,
+                                    prepared.StagedPath, CancellationToken.None) &&
+                                NativeFile.GetIdentity(source).VolumeSerial !=
+                                    NativeFile.GetIdentity(prepared.BackupPath).VolumeSerial &&
+                                NativeFile.GetIdentity(source).VolumeSerial ==
+                                    NativeFile.GetIdentity(prepared.StagedPath).VolumeSerial &&
+                                !prepared.ProductionReplacementAuthorized &&
+                                prepared.ActualFreedBytes == 0,
+                                "G4-03: 別NTFSの原本独立バックアップと元NTFS候補stageを全バイト照合");
+                            Check(Safety.SameSnapshot(originalSnapshot) &&
+                                Safety.ComputeSha256(source, CancellationToken.None) == hash &&
+                                Safety.ComputeSha256(preview.PreviewPath!,
+                                    CancellationToken.None) == fidelity.CandidateSha256,
+                                "G4-03: stageと別ボリュームbackup後も元画像のID/権限/全バイト不変");
+                            Check(ReplacementReadiness.InspectCandidatePair(
+                                    source, prepared.StagedPath).Verified,
+                                "G4-03: 生成stageのPNG画素/メタデータ独立復号も合格");
+
+                            // Foreign content must never be deleted or overwritten
+                            // by copy-only preparation. A dirty destination is
+                            // allowed but only NEW GUID file names are allocated.
+                            string foreign = Path.Combine(g4Stage, "unknown-third-party.bin");
+                            File.WriteAllText(foreign, "foreign-preserve");
+                            var another = ReplacementReadiness.PrepareVerifiedCopies(
+                                source, preview.PreviewPath!, g4Stage, g4Backup,
+                                hash, fidelity.CandidateSha256);
+                            Check(File.ReadAllText(foreign) == "foreign-preserve" &&
+                                another.StagedPath != prepared.StagedPath &&
+                                another.BackupPath != prepared.BackupPath &&
+                                File.Exists(prepared.StagedPath) &&
+                                File.Exists(prepared.BackupPath),
+                                "G4-03: 出力先異物を上書き/削除せず新規IDで独立コピー");
+
+                            using (var writer = new FileStream(source, FileMode.Open,
+                                FileAccess.ReadWrite, FileShare.None))
+                                ExpectThrows(() =>
+                                    ReplacementReadiness.PrepareVerifiedCopies(
+                                        source, preview.PreviewPath!, g4Stage, g4Backup,
+                                        hash, fidelity.CandidateSha256),
+                                    "G4-03: 他プロセスの原本排他writer中はバックアップ準備を拒否");
+
+                            string alias = Path.Combine(g4Stage, "g4-source-hardlink-alias.png");
+                            NativeFile.NewHardLink(alias, source);
+                            try
+                            {
+                                ExpectThrows(() =>
+                                    ReplacementReadiness.PrepareVerifiedCopies(
+                                        source, preview.PreviewPath!, g4Stage, g4Backup,
+                                        hash, fidelity.CandidateSha256),
+                                    "G4-05: 元画像が既存ハードリンク共有ならstage準備も拒否");
+                            }
+                            finally { File.Delete(alias); }
+                            Check(Safety.SameSnapshot(originalSnapshot),
+                                "G4-05: ハードリンク試験後は原本ID/所有権/全バイト不変");
+                        }
+                        finally
+                        {
+                            // This test owns the unique isolated dir and guard.
+                            // No production paths, no caller-controlled cleanup.
+                            if (File.ReadAllText(guard) == "CHAPPY-G4-GENERATED-ONLY\\n")
+                                Directory.Delete(g4Backup, recursive: true);
+                        }
+                    }
+                }
             }
             Check(Safety.ComputeSha256(source, CancellationToken.None) == hash,
                 "R1.6: 元ファイルの全バイト維持: " + testCase.Name);

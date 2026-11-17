@@ -260,10 +260,159 @@ public static class ReplacementReadiness
     internal sealed record PreparedCopies(
         string OriginalPath, string CandidatePath, string StagedPath,
         string BackupPath, FileSnapshot OriginalEvidence,
-        string OriginalSha256, string CandidateSha256)
+        string OriginalSha256, string CandidateSha256,
+        string ReceiptPath = "")
     {
         internal bool ProductionReplacementAuthorized => false;
         internal long ActualFreedBytes => 0;
+    }
+
+    // A checkpoint stored next to the INDEPENDENT original copy, not a
+    // separate mutable ledger. It records enough exact source NTFS evidence to
+    // classify interrupted preparations after a process has restarted.
+    // This is NOT an authenticated commit log or authority to mutate media.
+    private const string G4ReceiptName = ".chappy-g4-preparation.json";
+    private const int MaximumG4ReceiptBytes = 128 * 1024;
+
+    private sealed class PreparationReceipt
+    {
+        public int Schema { get; set; } = 1;
+        public FileSnapshot? Original { get; set; }
+        public FileSnapshot? Candidate { get; set; }
+        public FileSnapshot? Stage { get; set; }
+        public FileSnapshot? IndependentBackup { get; set; }
+        public string OriginalSha256 { get; set; } = "";
+        public string CandidateSha256 { get; set; } = "";
+    }
+
+    internal sealed record PreparationInspection(
+        string State, string Explanation, PreparedCopies? Verified)
+    {
+        internal bool ReadyForCutover => false; // Never authorize release Apply.
+        internal bool Complete => State == "PreparedVerified" && Verified is not null;
+    }
+
+    /// <summary>
+    /// Read-only revalidation of the persisted G4 copy-preparation checkpoint.
+    /// Nothing is deleted on a missing/truncated journal, a foreign file,
+    /// a changed ACL/owner/source, a hardlink alias or changed media bytes.
+    /// A valid result is evidence of copies, not authority to replace files.
+    /// </summary>
+    internal static PreparationInspection InspectPreparedCopies(
+        string originalPath, string candidatePath, string stagingDirectory,
+        string independentBackupDirectory, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        string original = Path.GetFullPath(originalPath);
+        string candidate = Path.GetFullPath(candidatePath);
+        try
+        {
+            string stageRoot = Safety.ValidateRoot(stagingDirectory);
+            string backupRoot = Safety.ValidateRoot(independentBackupDirectory);
+            string sourceRoot = Safety.ValidateRoot(Path.GetDirectoryName(original)!);
+            string candidateRoot = Safety.ValidateRoot(Path.GetDirectoryName(candidate)!);
+            if (Inside(original, stageRoot) || Inside(candidate, stageRoot) ||
+                Inside(original, backupRoot) || Inside(candidate, backupRoot) ||
+                Inside(stageRoot, sourceRoot) || Inside(stageRoot, candidateRoot) ||
+                Inside(backupRoot, sourceRoot) || Inside(backupRoot, candidateRoot) ||
+                Inside(stageRoot, backupRoot) || Inside(backupRoot, stageRoot))
+                throw new InvalidDataException("作業領域と画像原本・候補の階層が重複");
+            var stages = Directory.GetFileSystemEntries(stageRoot);
+            var backups = Directory.GetFileSystemEntries(backupRoot);
+            if (stages.Length == 0 && backups.Length == 0)
+                return new("Empty", "作業前の空フォルダ。原本は変更していません", null);
+            string checkpoint = Path.Combine(backupRoot, G4ReceiptName);
+            if (stages.Length != 1 || backups.Length != 2 ||
+                !File.Exists(checkpoint) || Directory.Exists(checkpoint))
+                throw new InvalidDataException("stage/独立backupまたは完了レシートが不足・異物あり");
+            if (!Safety.EligibleAttributes(File.GetAttributes(checkpoint)) ||
+                NativeFile.GetIdentity(checkpoint).LinkCount != 1 ||
+                NativeFile.HasNamedDataStreams(checkpoint))
+                throw new InvalidDataException("レシートの属性/共有リンク/ADSが不正");
+            using var sourceParents = NativeFile.PinnedDirectories.Open(sourceRoot, [original]);
+            using var candidateParents = NativeFile.PinnedDirectories.Open(candidateRoot, [candidate]);
+            using var stageParents = NativeFile.PinnedDirectories.Open(stageRoot, []);
+            using var backupParents = NativeFile.PinnedDirectories.Open(backupRoot, []);
+            using var originalRead = new FileStream(original, FileMode.Open,
+                FileAccess.Read, FileShare.Read);
+            using var candidateRead = new FileStream(candidate, FileMode.Open,
+                FileAccess.Read, FileShare.Read);
+            using var journal = new FileStream(checkpoint, FileMode.Open,
+                FileAccess.Read, FileShare.Read);
+            if (journal.Length is < 128 or > MaximumG4ReceiptBytes)
+                throw new InvalidDataException("準備レシートが空/過大/途中終了");
+            var record = System.Text.Json.JsonSerializer.Deserialize<PreparationReceipt>(journal)
+                ?? throw new InvalidDataException("準備レシートが破損");
+            if (record.Schema != 1 ||
+                record.Original is null || record.Candidate is null ||
+                record.Stage is null || record.IndependentBackup is null ||
+                record.OriginalSha256 is not { Length: 64 } ||
+                !record.OriginalSha256.All(Uri.IsHexDigit) ||
+                record.CandidateSha256 is not { Length: 64 } ||
+                !record.CandidateSha256.All(Uri.IsHexDigit))
+                throw new InvalidDataException("準備レシートの形式/データが不正");
+            static bool Eq(string a, string b) =>
+                a.Equals(b, StringComparison.OrdinalIgnoreCase);
+            if (!Eq(record.Original.Path, original) ||
+                !Eq(record.Candidate.Path, candidate) ||
+                !Eq(record.Stage.Path, stages[0]) ||
+                !backups.Any(x => Eq(x, record.IndependentBackup.Path)) ||
+                !backups.Any(x => Eq(x, checkpoint)) ||
+                !Inside(record.Stage.Path, stageRoot) ||
+                !Inside(record.IndependentBackup.Path, backupRoot) ||
+                !Path.GetFileName(record.Stage.Path).StartsWith(
+                    ".chappy-g4-stage-", StringComparison.OrdinalIgnoreCase) ||
+                !Path.GetFileName(record.IndependentBackup.Path).StartsWith(
+                    ".chappy-g4-backup-", StringComparison.OrdinalIgnoreCase) ||
+                !Path.GetFileName(record.IndependentBackup.Path).EndsWith(
+                    ".bak", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("レシートが別の画像/バックアップパスを指している");
+            var old = record.Original;
+            var c = record.Candidate;
+            var staged = record.Stage;
+            var backup = record.IndependentBackup;
+            if (old.Identity.LinkCount != 1 || c.Identity.LinkCount != 1 ||
+                staged.Identity.LinkCount != 1 || backup.Identity.LinkCount != 1 ||
+                old.Identity.SameFile(c.Identity) ||
+                staged.Identity.SameFile(c.Identity) ||
+                backup.Identity.VolumeSerial == old.Identity.VolumeSerial ||
+                staged.Identity.VolumeSerial != old.Identity.VolumeSerial ||
+                !Safety.SameSnapshot(old) || !Safety.SameSnapshot(c) ||
+                !Safety.SameSnapshot(staged) || !Safety.SameSnapshot(backup) ||
+                !Eq(Safety.ComputeSha256(original, ct), record.OriginalSha256) ||
+                !Eq(Safety.ComputeSha256(candidate, ct), record.CandidateSha256) ||
+                !Eq(Safety.ComputeSha256(staged.Path, ct), record.CandidateSha256) ||
+                !Eq(Safety.ComputeSha256(backup.Path, ct), record.OriginalSha256) ||
+                !Safety.ByteEqual(original, backup.Path, ct) ||
+                !Safety.ByteEqual(candidate, staged.Path, ct))
+                throw new InvalidDataException("再起動後に原本ID/権限/内容または独立stage/backupが変化");
+            var equivalence = InspectCandidatePair(original, staged.Path, ct);
+            if (!equivalence.Verified ||
+                !Eq(equivalence.OriginalSha256, record.OriginalSha256) ||
+                !Eq(equivalence.CandidateSha256, record.CandidateSha256))
+                throw new InvalidDataException("再起動後の画像画素/メタデータ一致を証明できない");
+            sourceParents.AssertUnchanged();
+            candidateParents.AssertUnchanged();
+            stageParents.AssertUnchanged();
+            backupParents.AssertUnchanged();
+            var proof = new PreparedCopies(original, candidate, staged.Path,
+                backup.Path, old, record.OriginalSha256, record.CandidateSha256,
+                checkpoint);
+            return new("PreparedVerified",
+                "独立バックアップ・原本所有者/DACL/NTFS ID・stage画像を再照合。" +
+                "原本切替と自動復元は許可されていません", proof);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            InvalidOperationException or UnauthorizedAccessException or
+            ArgumentException or NotSupportedException or OverflowException or
+            System.Text.Json.JsonException or System.ComponentModel.Win32Exception or
+            System.Runtime.InteropServices.COMException)
+        {
+            return new("ManualReview",
+                "変更しません。孤立・不一致・未証明のバックアップ/stage: " +
+                ex.GetType().Name + " / " + ex.Message, null);
+        }
     }
 
     /// <summary>
@@ -430,8 +579,36 @@ public static class ReplacementReadiness
             !string.Equals(Safety.ComputeSha256(candidate, ct), expectedCandidateSha256,
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("コピー後の原本/候補/backup/stage証拠が不一致");
-        return new PreparedCopies(original, candidate, staged, backedUp,
-            originalSnapshot, expectedSourceSha256, expectedCandidateSha256);
+        // Flush a single final checkpoint adjacent to the independent copy
+        // only AFTER both data copies passed full byte/image verification.
+        // This records original NTFS owner/DACL/creation/modified timestamps,
+        // ID, link count and contents for read-only post-restart classification.
+        // A crash before this receipt leaves orphans requiring manual review.
+        var receipt = new PreparationReceipt
+        {
+            Original = originalSnapshot, Candidate = candidateSnapshot,
+            Stage = stagedSnapshot, IndependentBackup = copy,
+            OriginalSha256 = expectedSourceSha256,
+            CandidateSha256 = expectedCandidateSha256
+        };
+        byte[] recordBytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(receipt);
+        if (recordBytes.Length > MaximumG4ReceiptBytes || recordBytes.Length < 128)
+            throw new InvalidDataException("元ID/権限を保持したレシートが過大/不正");
+        string receiptPath = Path.Combine(backupRoot, G4ReceiptName);
+        using (var recordStream = new FileStream(receiptPath, FileMode.CreateNew,
+            FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.WriteThrough))
+        {
+            recordStream.Write(recordBytes);
+            recordStream.Flush(flushToDisk: true);
+        }
+        var post = InspectPreparedCopies(original, candidate, stageRoot, backupRoot, ct);
+        if (!post.Complete || post.Verified is null ||
+            !post.Verified.OriginalSha256.Equals(expectedSourceSha256,
+                StringComparison.OrdinalIgnoreCase) ||
+            !post.Verified.CandidateSha256.Equals(expectedCandidateSha256,
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("作成済みG4レシートの独立再検証に失敗");
+        return post.Verified;
     }
 
     private static bool Inside(string path, string parent)

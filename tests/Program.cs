@@ -996,6 +996,14 @@ static class Program
                                 }
                                 string interrupted = ReplacementReadiness.InspectGeneratedPngSynthetic(
                                     source, preview.PreviewPath!, testStage, testBackup);
+                                var readOnlyReview = ReplacementReadiness.InspectImageTransaction(image.ReceiptPath);
+                                string expectedReview = checkpoint == "g4-after-backup-restore-record" ?
+                                    "BackupRestorePrepared" : interrupted;
+                                Check(readOnlyReview.State == expectedReview &&
+                                    readOnlyReview.OriginalPath.Equals(source, StringComparison.OrdinalIgnoreCase) &&
+                                    readOnlyReview.BackupPath.Equals(image.BackupPath, StringComparison.OrdinalIgnoreCase) &&
+                                    readOnlyReview.ActualFreedBytes == 0,
+                                    "G4-06: 画像復旧画面の読取経路が停止状態と別NTFSバックアップを確認");
                                 string expectedInterrupted = checkpoint switch {
                                     "g4-after-original-rename" => "OriginalSetAside",
                                     "g4-after-stage-rename" => "CandidateAtOriginal",

@@ -446,13 +446,31 @@ internal static class UiInteractionSmoke
                 throw new InvalidOperationException("Part36 WPF read-only collision grid missing");
             var collisionStatus = recoveryView.FindName("CollisionSummaryText") as TextBlock ??
                 throw new InvalidOperationException("Part36 WPF collision status missing");
-            Require(historyTabs.Items.Count == 3 && historyGrid.IsReadOnly &&
+            Require(historyTabs.Items.Count == 4 && historyGrid.IsReadOnly &&
                     collisionGrid.IsReadOnly &&
                     !recoveryApply.IsEnabled && !mergeButton.IsEnabled,
                 "R2.17 part30: real recovery XAML separates journal actions from immutable evidence history");
             recoveryView.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
             PumpUntil(() => historyStatus.Text.Contains("対象フォルダ履歴",
                 StringComparison.Ordinal), TimeSpan.FromSeconds(25));
+            historyTabs.SelectedIndex = 3;
+            var imageReview = (Button)recoveryView.FindName("ImageReceiptReviewButton");
+            var imageText = (TextBlock)recoveryView.FindName("ImageReceiptReviewText");
+            string badImageReceipt = Path.Combine(Path.GetDirectoryName(originals)!, ".chappy-g4-preparation.json");
+            File.WriteAllText(badImageReceipt, "{");
+            var imagePicker = typeof(RecoveryWindow).GetField("_pickImageReceipt",
+                BindingFlags.Instance | BindingFlags.NonPublic) ??
+                throw new InvalidOperationException("G4 image review picker missing");
+            imagePicker.SetValue(recoveryView, (Func<RecoveryWindow, string?>)(_ => badImageReceipt));
+            imageReview.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            PumpUntil(() => imageReview.IsEnabled &&
+                imageText.Text.Contains("要手動確認", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(15));
+            Require(!recoveryApply.IsEnabled && !undoExecuteButton.IsEnabled &&
+                File.ReadAllText(badImageReceipt) == "{" &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB,
+                "G4-06: RecoveryWindow routes a corrupt image receipt to read-only manual review");
+
             historyTabs.SelectedIndex = 1;
             bool part30WpfHistoryReadOnly = historyGrid.IsReadOnly &&
                 historyGrid.Items.Count == 0 &&

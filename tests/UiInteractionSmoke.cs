@@ -24,8 +24,10 @@ internal static class UiInteractionSmoke
     private const int BytesPerFile = 32 * 1024 * 1024;
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
+        if (args is ["--v1-isolated"])
+            return RunV1Isolated();
         string testRoot = Path.Combine(Path.GetTempPath(),
             "chappy-r217-wpf-routed-click-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(testRoot);
@@ -1655,7 +1657,7 @@ internal static class UiInteractionSmoke
         button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent, button));
 
     private static void AssertJpegPreparationAndReview(MainWindow window, string testRoot,
-        string input, string output)
+        string input, string output, bool isolated = false)
     {
         string sourceVolume = Path.GetPathRoot(input)!;
         string backupParent = new[] { Environment.GetEnvironmentVariable("RUNNER_TEMP"),
@@ -1664,10 +1666,13 @@ internal static class UiInteractionSmoke
                 !string.Equals(Path.GetPathRoot(path), sourceVolume, StringComparison.OrdinalIgnoreCase) &&
                 new DriveInfo(Path.GetPathRoot(path)!).DriveFormat == "NTFS");
         string backup = Directory.CreateDirectory(Path.Combine(backupParent,
-            "ChappyStorageSmoke_G4Wpf_" + Guid.NewGuid().ToString("N"))).FullName;
+            "ChappyStorageSmoke_G4Backup_" + Guid.NewGuid().ToString("N"))).FullName;
         try
         {
-            string stage = Directory.CreateDirectory(Path.Combine(testRoot, "g4-wpf-stage")).FullName;
+            string stage = Directory.CreateDirectory(Path.Combine(testRoot, "g4-cutover-wpf")).FullName;
+            string backupRoot = backup;
+            backup = Directory.CreateDirectory(Path.Combine(backupRoot, "cutover-wpf")).FullName;
+            File.WriteAllText(Path.Combine(backupRoot, ".chappy-g4-generated-only"), "generated WPF CI");
             var report = CombinedCapacityReport.Inspect(input, output);
             var row = ReplacementReadiness.Inspect(report, input, output, backup).Rows
                 .First(row => row.Format == "JPG" && row.SpaceRequirementsMet);
@@ -1732,12 +1737,254 @@ internal static class UiInteractionSmoke
                 Safety.SameSnapshot(before) && OracleHash(source) == hash,
                 "G4-06: real WPF recovery reopens the valid JPEG receipt with the recorded sizes and actions locked: " +
                 reviewText.Text);
+            if (isolated)
+                AssertIsolatedImageActions(recovery, source, stage, backup, before, hash);
             recovery.Close();
         }
         finally
         {
-            Directory.Delete(backup, recursive: true); // Unique generated backup directory only.
+            string ownedBackup = Path.GetFileName(backup) == "cutover-wpf" ?
+                Path.GetDirectoryName(backup)! : backup;
+            Directory.Delete(ownedBackup, recursive: true); // Unique generated backup directory only.
         }
+    }
+
+    private static int RunV1Isolated()
+    {
+        if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true" ||
+            Environment.GetEnvironmentVariable("CHAPPY_V1_VHDX_TEMP") is not { } verifiedTemp ||
+            !Path.TrimEndingDirectorySeparator(Path.GetTempPath()).Equals(
+                Path.TrimEndingDirectorySeparator(verifiedTemp), StringComparison.OrdinalIgnoreCase) ||
+            !new DriveInfo(Path.GetPathRoot(verifiedTemp)!).VolumeLabel.Equals(
+                "ChappyPart29", StringComparison.Ordinal))
+            return 90;
+        string root = Directory.CreateDirectory(Path.Combine(verifiedTemp,
+            "ChappyStorageSmoke_" + Guid.NewGuid().ToString("N"))).FullName;
+        var journal = typeof(Journal).GetProperty("TestFolderPath",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        journal.SetValue(null, Path.Combine(root, "test-journal"));
+        var app = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        try
+        {
+            string input = Directory.CreateDirectory(Path.Combine(root, "g4-jpeg-input")).FullName;
+            string output = Directory.CreateDirectory(Path.Combine(root, "g4-jpeg-output")).FullName;
+            WriteGeneratedJpeg(Path.Combine(input, "g4.jpg"), 1536, 1024, 0);
+            WriteGeneratedUncompressedPng(Path.Combine(input, "g4.png"), 512, 320, 10);
+            // Synthetic 16x16 one-frame MP4 generated from a solid blue frame.
+            byte[] video = Convert.FromBase64String(
+                "AAAAHGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAAAAhmcmVlAAAAHG1kYXQAAAGzABAHAAABthYFGCobYHgFrwAAAwttb292AAAAbG12" +
+                "aGQAAAAAAAAAAAAAAAAAAAPoAAAD6AABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAA" +
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACWnRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAD6AAAAAAAAAAAAAAAAAAA" +
+                "AAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAEAAAABAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAA+gAAAAA" +
+                "AAEAAAAAAdJtZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAAEAAAABAAFXEAAAAAAAtaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAFZp" +
+                "ZGVvSGFuZGxlcgAAAAF9bWluZgAAABR2bWhkAAAAAQAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAB" +
+                "PXN0YmwAAADZc3RzZAAAAAAAAAABAAAAyW1wNHYAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAEAAQAEgAAABIAAAAAAAAAAEKTGF2YyBt" +
+                "cGVnNAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY//8AAABPZXNkcwAAAAADgICAPgABAASAgIAwIBEAAAAAAw1AAAAAoAWAgIAeAAABsAEA" +
+                "AAG1iRMAAAEAAAABIADEjYgADQCEAhRjBoCAgAECAAAAEHBhc3AAAAABAAAAAQAAABRidHJ0AAAAAAADDUAAAACgAAAAGHN0dHMAAAAA" +
+                "AAAAAQAAAAEAAEAAAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAABAAAAAQAAABRzdHN6AAAAAAAAABQAAAABAAAAFHN0Y28AAAAAAAAAAQAA" +
+                "ACwAAAA9dWR0YQAAADVtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAAhpbHN0");
+            string videoA = Path.Combine(input, "a.mp4"), videoB = Path.Combine(input, "b.mp4");
+            File.WriteAllBytes(videoA, video);
+            File.Copy(videoA, videoB);
+            File.SetCreationTimeUtc(videoB, File.GetCreationTimeUtc(videoA));
+            File.SetLastWriteTimeUtc(videoB, File.GetLastWriteTimeUtc(videoA));
+            File.WriteAllText(Path.Combine(input, ".chappy-part23-generated-only"), "Part23 synthetic data only");
+            var originals = Directory.GetFiles(input).Where(Safety.IsMedia)
+                .ToDictionary(path => path, path => (Snapshot: Safety.Capture(path), Hash: OracleHash(path)));
+            var main = new MainWindow();
+            Named<TextBox>(main, "PathBox").Text = input;
+            var status = Named<TextBlock>(main, "ProgressText");
+            var scan = Named<Button>(main, "ScanButton");
+            RoutedClick(scan);
+            PumpUntil(() => scan.IsEnabled && status.Text == "スキャン完了", TimeSpan.FromSeconds(35));
+            var groups = Named<DataGrid>(main, "GroupsGrid");
+            Require(groups.Items.Count == 1, "G5-01: one decodable MP4 duplicate group selected on VHDX");
+            groups.SelectedIndex = 0;
+            typeof(MainWindow).GetField("_allowGeneratedOnlyMergeTest",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(main, true);
+            SetPrivate(main, "_confirmSelectedMergeRisk", new Func<string, bool>(_ => true));
+            SetPrivate(main, "_showDedupePlan", new Action<string>(_ => { }));
+            RoutedClick(Named<Button>(main, "SelectedMergeReviewButton"));
+            PumpUntil(() => status.Text == "生成テスト統合完了・本番統合は無効", TimeSpan.FromSeconds(45));
+            Require(NativeFile.SameFile(videoA, videoB), "G5-01: WPF merge created a real MP4 hard link");
+            var recovery = new RecoveryWindow(input);
+            typeof(RecoveryWindow).GetField("_allowGeneratedOnlyUndoTest",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(recovery, true);
+            typeof(RecoveryWindow).GetField("_confirmGeneratedOnlyUndo",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(recovery, new Func<string, bool>(_ => true));
+            typeof(RecoveryWindow).GetField("_showGeneratedOnlyUndo",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(recovery, new Action<string>(_ => { }));
+            Directory.CreateDirectory(Path.Combine(input, "g3-wpf-undo-evidence"));
+            var undoHistory = (DataGrid)recovery.FindName("HistoryGrid");
+            recovery.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+            PumpUntil(() => undoHistory.Items.OfType<RecoveryEvidenceOverview.Row>()
+                .Any(row => row.State == "VerifiedCompleted"), TimeSpan.FromSeconds(35));
+            ((TabControl)recovery.FindName("RecoveryTabs")).SelectedIndex = 1;
+            undoHistory.SelectedItem = undoHistory.Items.OfType<RecoveryEvidenceOverview.Row>()
+                .Single(row => row.Source == "複数ファイルのグループ履歴" && row.State == "VerifiedCompleted");
+            var undo = (Button)recovery.FindName("UndoExecuteButton");
+            Require(undo.IsEnabled, "G5-01: verified generated MP4 group can Undo through WPF");
+            RoutedClick(undo);
+            var undoSummary = (TextBlock)recovery.FindName("HistorySummaryText");
+            PumpUntil(() => undoSummary.Text.Contains("【生成テストUndo成功】", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(45));
+            Require(!NativeFile.SameFile(videoA, videoB) && OracleHash(videoA) == OracleHash(videoB),
+                "G5-01: WPF Undo restored independent MP4 files");
+            recovery.Close();
+
+            string tool = Environment.GetEnvironmentVariable("CHAPPY_R217_SIMD_JPEGTRAN")!;
+            SetPrivate(main, "_pickCombinedTool", new Func<string?, string?>(_ => tool));
+            SetPrivate(main, "_pickCombinedOutput", new Func<string?, string?>(_ => output));
+            SetPrivate(main, "_confirmCombined", new Func<string, bool>(_ => true));
+            string previewResult = "", previewError = "";
+            SetPrivate(main, "_showCombinedResult", new Action<string>(text => previewResult = text));
+            SetPrivate(main, "_showCombinedFailure", new Action<string>(text => previewError = text));
+            var preview = Named<Button>(main, "UnifiedBatchButton");
+            RoutedClick(preview);
+            PumpUntil(() => preview.IsEnabled && (previewResult.Length > 0 || previewError.Length > 0),
+                TimeSpan.FromSeconds(65));
+            Require(previewError.Length == 0 &&
+                CombinedCapacityReport.Inspect(input, output).CandidateCount == 2,
+                "G5-01: WPF created real PNG and JPEG candidates on the same isolated dataset: " + previewError);
+            AssertJpegPreparationAndReview(main, root, input, output, isolated: true);
+            Require(originals.All(pair =>
+            {
+                var after = Safety.Capture(pair.Key);
+                uint links = pair.Key.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) &&
+                    after.Identity.SameFile(pair.Value.Snapshot.Identity) ? 2u : 1u;
+                return OracleHash(pair.Key) == pair.Value.Hash && after.Identity.LinkCount == links &&
+                    after.CreationUtc == pair.Value.Snapshot.CreationUtc &&
+                    after.ModifiedUtc == pair.Value.Snapshot.ModifiedUtc &&
+                    after.Attributes == pair.Value.Snapshot.Attributes &&
+                    after.SecurityDescriptor.AsSpan().SequenceEqual(pair.Value.Snapshot.SecurityDescriptor);
+            }), "G5-03: all JPEG/PNG/MP4 bytes, permissions, timestamps and independent links preserved");
+            Require(NativeFile.GetIdentity(videoA).SameFile(originals[videoA].Snapshot.Identity) ||
+                NativeFile.GetIdentity(videoB).SameFile(originals[videoB].Snapshot.Identity),
+                "G5-03: the unmodified MP4 representative keeps its original ID");
+            string detached = NativeFile.GetIdentity(videoA).LinkCount == 1 ? videoA : videoB;
+            string representative = detached == videoA ? videoB : videoA;
+            using (var edited = new FileStream(detached, FileMode.Append))
+                edited.WriteByte(0); // One generated alias only; independent-write proof.
+            Require(OracleHash(representative) == originals[representative].Hash &&
+                OracleHash(detached) != originals[detached].Hash, "G5-03: independent edit changes one restored alias");
+            main.Close();
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            return 91;
+        }
+        finally
+        {
+            app.Shutdown();
+            journal.SetValue(null, null);
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void AssertIsolatedImageActions(RecoveryWindow view, string source,
+        string stage, string backup, FileSnapshot before, string hash)
+    {
+        var apply = (Button)view.FindName("GeneratedImageApply");
+        var retire = (Button)view.FindName("GeneratedImageRetire");
+        var restore = (Button)view.FindName("GeneratedImageRestore");
+        var text = (TextBlock)view.FindName("ImageReceiptReviewText");
+        Require(!apply.IsEnabled && !retire.IsEnabled && !restore.IsEnabled,
+            "G4-06: ordinary WPF keeps image actions locked");
+        typeof(RecoveryWindow).GetField("_allowGeneratedImageTest",
+            BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(view, true);
+        typeof(RecoveryWindow).GetField("_confirmGeneratedImage",
+            BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(view, new Func<string, bool>(_ => true));
+        var review = (Button)view.FindName("ImageReceiptReviewButton");
+        RoutedClick(review);
+        PumpUntil(() => apply.IsEnabled, TimeSpan.FromSeconds(30));
+        var drive = new DriveInfo(Path.GetPathRoot(source)!);
+        long prepared = drive.AvailableFreeSpace;
+        string stagedPath = Directory.GetFiles(stage).Single();
+        string id = Path.GetFileNameWithoutExtension(stagedPath)[".chappy-g4-stage-".Length..];
+        string rollback = source + ".chappy-g4-old-" + id + ".rollback";
+        string backupFile = Directory.GetFiles(backup, "*.bak").Single();
+        string candidateHash = OracleHash(stagedPath);
+
+        // An actual ADS mutation is refused after review, with originals preserved.
+        File.WriteAllText(backupFile + ":g4-interference", "generated ADS");
+        RoutedClick(apply);
+        PumpUntil(() => review.IsEnabled && text.Text.Contains("要手動確認", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(30));
+        Require(Safety.SameSnapshot(before) && OracleHash(source) == hash && !File.Exists(rollback),
+            "G5-02: VHDX WPF rejects stale review with a modified independent backup");
+        File.Delete(backupFile + ":g4-interference");
+        RoutedClick(review);
+        PumpUntil(() => apply.IsEnabled, TimeSpan.FromSeconds(30));
+        prepared = drive.AvailableFreeSpace;
+        RoutedClick(apply);
+        PumpUntil(() => retire.IsEnabled, TimeSpan.FromSeconds(30));
+        long applied = drive.AvailableFreeSpace;
+        Require(OracleHash(source) == candidateHash && OracleHash(rollback) == hash &&
+            text.Text.Contains("回復として計上 0 B", StringComparison.Ordinal),
+            "G4-06: VHDX WPF applies candidate while retaining both copies and credits zero");
+
+        RoutedClick(retire);
+        PumpUntil(() => restore.IsEnabled && text.Text.Contains("AppliedWithoutRollback",
+            StringComparison.Ordinal), TimeSpan.FromSeconds(30));
+        long retired = drive.AvailableFreeSpace;
+        Require(!File.Exists(rollback) && OracleHash(backupFile) == hash && retired > applied,
+            "G4-06: verified generated rollback retirement observes actual free-space gain");
+        string fill = Path.Combine(Path.GetDirectoryName(stage)!, "generated-capacity-test.bin");
+        try
+        {
+            using (var stream = new FileStream(fill, FileMode.CreateNew, FileAccess.Write))
+            {
+                var block = new byte[1024 * 1024];
+                while (drive.AvailableFreeSpace > 3L * block.Length)
+                    stream.Write(block);
+                stream.Flush(flushToDisk: true);
+            }
+            RoutedClick(restore);
+            PumpUntil(() => review.IsEnabled && text.Text.Contains("要手動確認", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(30));
+            Require(text.Text.Contains("空き容量が不足", StringComparison.Ordinal) &&
+                OracleHash(source) == candidateHash && OracleHash(backupFile) == hash,
+                "G5-02: real near-full VHDX refuses WPF restore and preserves both files");
+        }
+        finally { File.Delete(fill); }
+
+        string receipt = Path.Combine(backup, ".chappy-g4-preparation.json");
+        var record = JsonDocument.Parse(File.ReadAllText(receipt));
+        using (record)
+        {
+            string candidate = record.RootElement.GetProperty("Candidate").GetProperty("Path").GetString()!;
+            string worker = Path.Combine(AppContext.BaseDirectory, "ChappyStorageCompressor.SmokeTests.dll");
+            var start = new System.Diagnostics.ProcessStartInfo("dotnet") { UseShellExecute = false };
+            foreach (string arg in new[] { worker, "--g4-pinned-restore-child",
+                source, candidate, stage, backup, "g4-after-candidate-quarantine" })
+                start.ArgumentList.Add(arg);
+            using var process = System.Diagnostics.Process.Start(start) ??
+                throw new IOException("G5 isolated restore worker failed to start");
+            if (!process.WaitForExit(60_000))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new TimeoutException("G5 isolated restore worker timed out");
+            }
+            Require(process.ExitCode == 94, "G5-02: real VHDX restore worker stopped after quarantine");
+        }
+        RoutedClick(review);
+        PumpUntil(() => restore.IsEnabled, TimeSpan.FromSeconds(30));
+        RoutedClick(restore);
+        PumpUntil(() => review.IsEnabled && text.Text.Contains("BackupRestored",
+            StringComparison.Ordinal), TimeSpan.FromSeconds(30));
+        long restored = drive.AvailableFreeSpace;
+        Require(OracleHash(source) == hash && OracleHash(backupFile) == hash &&
+            !NativeFile.GetIdentity(source).SameFile(before.Identity) && restored < retired,
+            "G5-03: WPF independent restore consumes actual isolated space and preserves original bytes");
+        File.WriteAllText(Path.Combine("diagnostics", "v1-isolated-wpf.json"), JsonSerializer.Serialize(new
+        {
+            prepared, applied, retired, restored,
+            rollbackRemovalObservedGainBytes = retired - applied,
+            backupRestoreObservedCostBytes = retired - restored,
+            realUserCapacityRecoveredBytes = 0
+        }));
     }
 
     private static void SetPrivate<T>(MainWindow window, string name, T value)

@@ -172,6 +172,30 @@ check('G4-03: abnormal prep and foreign output remain safe; never mutate source 
       'File.Delete(' not in replacement_readiness and
       'File.Move(' not in replacement_readiness)
 
+# G4-03/04: the copy-only preparation checkpoint persists exact original
+# NTFS identity, owner/DACL and timestamps, and can be independently reloaded.
+# Neither its writer nor its reader is allowed to mutate the source image.
+check('G4-03: durable copy-only receipt includes original NTFS ID/owner DACL/times',
+      'private sealed class PreparationReceipt' in replacement_readiness and
+      'public FileSnapshot? Original { get; set; }' in replacement_readiness and
+      'public FileSnapshot? IndependentBackup { get; set; }' in replacement_readiness and
+      'G4ReceiptName = ".chappy-g4-preparation.json"' in replacement_readiness and
+      'System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(receipt)' in replacement_readiness and
+      'new FileStream(receiptPath, FileMode.CreateNew,' in replacement_readiness and
+      'recordStream.Flush(flushToDisk: true);' in replacement_readiness)
+check('G4-03/04: readonly journal replay fails closed for foreign, changed or orphan copies',
+      'internal static PreparationInspection InspectPreparedCopies(' in replacement_readiness and
+      'record.OriginalSha256.All(Uri.IsHexDigit)' in replacement_readiness and
+      'Safety.SameSnapshot(old)' in replacement_readiness and
+      'Safety.SameSnapshot(backup)' in replacement_readiness and
+      'Safety.ByteEqual(original, backup.Path, ct)' in replacement_readiness and
+      'Safety.ByteEqual(candidate, staged.Path, ct)' in replacement_readiness and
+      'var equivalence = InspectCandidatePair(original, staged.Path, ct);' in replacement_readiness and
+      'ReadyForCutover => false;' in replacement_readiness and
+      'G4-03: 別OSプロセスから原本・候補・stage・別volumeバックアップの記録を再読' in test and
+      'G4-03: レシート作成前のプロセス死はバックアップ/stageを保全し停止' in test and
+      'G4-04: 独立バックアップ1B改ざんは日時を復元しても拒否' in test)
+
 # G4-02: official pinned JPEG executable provenance must be enforced by
 # the actual WinExe native execution path (not only by the CI test helper).
 wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')

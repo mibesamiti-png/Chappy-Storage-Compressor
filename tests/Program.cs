@@ -640,6 +640,44 @@ static class Program
                             var prepared = ReplacementReadiness.PrepareVerifiedCopies(
                                 source, preview.PreviewPath!, g4Stage,
                                 independentBackupSlot, hash, fidelity.CandidateSha256);
+                            var reloaded = ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage, independentBackupSlot);
+                            Check(reloaded.Complete && reloaded.Verified is not null &&
+                                reloaded.Verified.ReceiptPath == prepared.ReceiptPath &&
+                                reloaded.Verified.OriginalEvidence.Identity.SameFile(
+                                    originalSnapshot.Identity) &&
+                                reloaded.Verified.OriginalEvidence.SecurityDescriptor
+                                    .SequenceEqual(originalSnapshot.SecurityDescriptor) &&
+                                reloaded.Verified.OriginalEvidence.CreationUtc ==
+                                    originalSnapshot.CreationUtc &&
+                                reloaded.Verified.OriginalEvidence.ModifiedUtc ==
+                                    originalSnapshot.ModifiedUtc &&
+                                !reloaded.ReadyForCutover,
+                                "G4-03: ディスク保存レシートから原本ID/所有者DACL/日時を再構成し検証");
+                            var childStart = new System.Diagnostics.ProcessStartInfo("dotnet")
+                            {
+                                UseShellExecute = false,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true
+                            };
+                            foreach (string argument in new[] {
+                                typeof(Program).Assembly.Location,
+                                "--g4-copy-readonly-replay", source, preview.PreviewPath!,
+                                g4Stage, independentBackupSlot })
+                                childStart.ArgumentList.Add(argument);
+                            using (var child = System.Diagnostics.Process.Start(childStart)
+                                ?? throw new IOException("G4-03 child process failed to start"))
+                            {
+                                if (!child.WaitForExit(120_000))
+                                {
+                                    child.Kill(entireProcessTree: true);
+                                    throw new TimeoutException("G4-03 readonly replay child timed out");
+                                }
+                                string childOutput = child.StandardOutput.ReadToEnd();
+                                Check(child.ExitCode == 0 &&
+                                    childOutput.Contains("PreparedVerified", StringComparison.Ordinal),
+                                    "G4-03: 別OSプロセスから原本・候補・stage・別volumeバックアップの記録を再読");
+                            }
                             Check(File.Exists(prepared.StagedPath) &&
                                 File.Exists(prepared.BackupPath) &&
                                 Safety.ByteEqual(source, prepared.BackupPath,
@@ -677,6 +715,95 @@ static class Program
                                 Safety.ByteEqual(source, prepared.BackupPath,
                                     CancellationToken.None),
                                 "G4-03: 異物/中断候補を上書きせず独立原本バックアップを保持");
+                            var foreignReplay = ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage, independentBackupSlot);
+                            Check(foreignReplay.State == "ManualReview" &&
+                                !foreignReplay.ReadyForCutover,
+                                "G4-03: 再起動後も異物付きstageは自動復元せず手動調査");
+                            File.Delete(foreign); // disposable CI-owned synthetic fixture
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot).Complete,
+                                "G4-03: 異物をテスト内で除去した場合だけコピー完全性を再認証");
+
+                            string stageAlias = Path.Combine(g4Stage, "g4-stage-alias.png");
+                            NativeFile.NewHardLink(stageAlias, prepared.StagedPath);
+                            try
+                            {
+                                Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview",
+                                    "G4-05: stageの外部ハードリンク増加も読取り専用再開で拒否");
+                            }
+                            finally { File.Delete(stageAlias); }
+
+                            DateTime originalModified = originalSnapshot.ModifiedUtc;
+                            try
+                            {
+                                File.SetLastWriteTimeUtc(source, originalModified.AddSeconds(5));
+                                Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview",
+                                    "G4-03: 原本全バイトが同一でも元日時変更で再起動後復旧承認せず");
+                            }
+                            finally { File.SetLastWriteTimeUtc(source, originalModified); }
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot).Complete,
+                                "G4-03: 原本の完全な証拠復旧で再認証");
+
+                            byte[] backupBytes = File.ReadAllBytes(prepared.BackupPath);
+                            DateTime backupModified = File.GetLastWriteTimeUtc(prepared.BackupPath);
+                            try
+                            {
+                                byte[] altered = (byte[])backupBytes.Clone();
+                                altered[0] ^= 1;
+                                File.WriteAllBytes(prepared.BackupPath, altered);
+                                File.SetLastWriteTimeUtc(prepared.BackupPath, backupModified);
+                                Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview",
+                                    "G4-04: 独立バックアップ1B改ざんは日時を復元しても拒否");
+                            }
+                            finally
+                            {
+                                File.WriteAllBytes(prepared.BackupPath, backupBytes);
+                                File.SetLastWriteTimeUtc(prepared.BackupPath, backupModified);
+                            }
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot).Complete,
+                                "G4-04: テスト用バックアップ全バイト復旧後に再認証");
+
+                            // New process observation of a truncated/changed
+                            // receipt must never be treated as verified.
+                            byte[] savedReceipt = File.ReadAllBytes(prepared.ReceiptPath);
+                            try
+                            {
+                                File.WriteAllText(prepared.ReceiptPath, "{not-json");
+                                Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview",
+                                    "G4-03: 永続レシートが破損/中断なら要手動確認");
+                            }
+                            finally { File.WriteAllBytes(prepared.ReceiptPath, savedReceipt); }
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot).Complete &&
+                                Safety.SameSnapshot(originalSnapshot),
+                                "G4-03: 保存済みレシート修復後も原本は一切変更されていない");
+
+                            // Missing final checkpoint with both copy artifacts
+                            // simulates death between flushing copies and
+                            // committing the final preparation receipt.
+                            File.Delete(prepared.ReceiptPath); // test-generated only
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview" &&
+                                File.Exists(prepared.StagedPath) &&
+                                File.Exists(prepared.BackupPath) &&
+                                Safety.SameSnapshot(originalSnapshot),
+                                "G4-03: レシート作成前のプロセス死はバックアップ/stageを保全し停止");
                         }
                         finally
                         {
@@ -1699,6 +1826,24 @@ static class Program
 
     public static int Main(string[] args)
     {
+        // G4-03: a separate OS process must rehydrate the same persistent
+        // independent-copy receipt, without inheriting in-memory snapshots.
+        // CI-only, read-only, and only for the disposable smoke-test root.
+        if (args.Length == 5 && args[0] == "--g4-copy-readonly-replay")
+        {
+            if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
+                return 21;
+            string temp = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(Path.GetTempPath()));
+            string src = Path.GetFullPath(args[1]);
+            if (!src.StartsWith(temp + Path.DirectorySeparatorChar +
+                    "ChappyStorageSmoke_", StringComparison.OrdinalIgnoreCase))
+                return 22;
+            var inspection = ReplacementReadiness.InspectPreparedCopies(
+                args[1], args[2], args[3], args[4]);
+            Console.WriteLine("G4-03 child receipt state: " + inspection.State);
+            return inspection.Complete ? 0 : 23;
+        }
         if (R217PreviewCrashTests.IsCrashChild(args))
             return R217PreviewCrashTests.RunCrashChild(args);
         if (R217JpegCrashTests.IsCrashChild(args))

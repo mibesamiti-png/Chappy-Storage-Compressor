@@ -140,7 +140,10 @@ check('B2 G2-04/05/06: guarded internal batch and capacity checkpoints',
       'VerifyMidTransactionCapacityRefusal(parent, check, expectThrows);' in group_batch_tests and
       'VerifyKilledMultiGroupBatch(parent, check, expectThrows);' in group_batch_tests and
       'self.Kill();' in group_batch_tests and
-      'MergeVerifiedGroups(' not in source)
+      'CompletedGroupLedger.MergeVerifiedGroups(root, groups, token)' in source and
+      'private bool _allowGeneratedOnlyMergeTest;' in source and
+      'CompletedGroupLedger.RequireSynthetic(root)' in source and
+      'string root = RequireSynthetic(input);' in group_ledger)
 check('B2 G2-05/06: real-worker crash boundaries and isolated group failure',
       'FaultInjection.Hit("group-core-verified");' in group_ledger and
       'FaultInjection.Hit("group-completed");' in group_ledger and
@@ -154,7 +157,10 @@ check('B2 G2-05/06: real-worker crash boundaries and isolated group failure',
       'KillWorker(root, "merge-batch:" + checkpoint, signal)' in group_batch_tests and
       'VerifyBatchSourceSwapIsolation(parent, check, expectThrows);' in group_batch_tests and
       'actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length' in group_batch_tests and
-      'MergeVerifiedGroups(' not in source)
+      'CompletedGroupLedger.MergeVerifiedGroups(root, groups, token)' in source and
+      'private bool _allowGeneratedOnlyMergeTest;' in source and
+      'CompletedGroupLedger.RequireSynthetic(root)' in source and
+      'string root = RequireSynthetic(input);' in group_ledger)
 vhdx_probe = (root/'bootstrap/Part29IsolatedVhdxProbe.ps1').read_text(encoding='utf-8')
 workflow = (root/'.github/workflows/build-windows.yml').read_text(encoding='utf-8')
 check('B2 G2-06: real Core per-file-ID allocation and separate VHDX free-space reconciliation',
@@ -170,7 +176,10 @@ check('B2 G2-06: real Core per-file-ID allocation and separate VHDX free-space r
       'realCoreOnMountedJunction = $false' in vhdx_probe and
       '$r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true' in workflow and
       '$r.groupedPartialAllocation.physicalUniqueIdAllocatedDeltaBytes -ne 8388608' in workflow and
-      'MergeVerifiedGroups(' not in source)
+      'CompletedGroupLedger.MergeVerifiedGroups(root, groups, token)' in source and
+      'private bool _allowGeneratedOnlyMergeTest;' in source and
+      'CompletedGroupLedger.RequireSynthetic(root)' in source and
+      'string root = RequireSynthetic(input);' in group_ledger)
 selection_core = (root/'Core/DedupeFirstWorkflowPlan.cs').read_text(encoding='utf-8')
 recovery_view = (root/'Core/RecoveryEvidenceOverview.cs').read_text(encoding='utf-8')
 window_xaml = (root/'MainWindow.xaml').read_text(encoding='utf-8')
@@ -200,7 +209,7 @@ check('B2 G2-07: default WPF selected risk review is read-only; generated fixtur
       'string root = RequireSynthetic(input);' in group_ledger and
       'root = CompletedGroupLedger.RequireSynthetic(root);' in core and
       'b2GeneratedOnlySelectedMergeRoutedTwoConsentAndPersistedCore = ' in ui_test and
-      'b2NonSentinelWpfAndInternalCoreStillLocked = ' in ui_test and
+      'b2NonSentinelWpfAndInternalCoreStillLocked =' in ui_test and
       'b2GeneratedSelectionNoConsentKeepsOriginalNtfsIds = ' in ui_test)
 recovery_window = (root/'RecoveryWindow.xaml.cs').read_text(encoding='utf-8')
 recovery_xaml = (root/'RecoveryWindow.xaml').read_text(encoding='utf-8')

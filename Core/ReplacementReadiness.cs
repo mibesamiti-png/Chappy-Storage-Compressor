@@ -720,9 +720,11 @@ public static class ReplacementReadiness
         string rollback = original + ".chappy-g4-old-" + id + ".rollback";
         string quarantine = original + ".chappy-g4-optimized-" + id + ".quarantine";
         if (!Safety.SameSnapshot(preview) || !Safety.SameSnapshot(backup) ||
-            !Eq(Safety.ComputeSha256(candidate, CancellationToken.None),
+            !Eq(Safety.ComputeSha256(candidate, CancellationToken.None,
+                    allowDeleteSharing: true),
                 record.CandidateSha256) ||
-            !Eq(Safety.ComputeSha256(backup.Path, CancellationToken.None),
+            !Eq(Safety.ComputeSha256(backup.Path, CancellationToken.None,
+                    allowDeleteSharing: true),
                 record.OriginalSha256))
             throw new InvalidDataException("G4 preview or external independent backup changed");
         var stageFiles = Directory.GetFileSystemEntries(stageRoot);
@@ -742,14 +744,18 @@ public static class ReplacementReadiness
             throw new InvalidDataException("G4 transaction path occupied by a directory");
         bool IsOld(string at) =>
             Safety.SameRenamedSnapshot(old, at) &&
-            Eq(Safety.ComputeSha256(at, CancellationToken.None),
+            Eq(Safety.ComputeSha256(at, CancellationToken.None,
+                    allowDeleteSharing: true),
                 record.OriginalSha256) &&
-            Safety.ByteEqual(at, backup.Path, CancellationToken.None);
+            Safety.ByteEqual(at, backup.Path, CancellationToken.None,
+                allowDeleteSharing: true);
         bool IsOptimized(string at) =>
             Safety.SameRenamedSnapshot(staged, at) &&
-            Eq(Safety.ComputeSha256(at, CancellationToken.None),
+            Eq(Safety.ComputeSha256(at, CancellationToken.None,
+                    allowDeleteSharing: true),
                 record.CandidateSha256) &&
-            Safety.ByteEqual(at, candidate, CancellationToken.None);
+            Safety.ByteEqual(at, candidate, CancellationToken.None,
+                allowDeleteSharing: true);
         string phase;
         if (hasOriginal && hasStage && !hasRollback && !hasQuarantine &&
             IsOld(original) && IsOptimized(stage))

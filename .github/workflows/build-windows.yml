@@ -1101,7 +1101,7 @@ jobs:
               $r.journalReserveBytes -ne 2097152 -or
               $r.targetSpaceRefusedBeforeMutation -ne $true -or
               $r.journalSpaceRefusedBeforeMutation -ne $true -or
-              $r.secondPreflightRemovedTemporaryStoreLink -ne $true -or
+              $r.secondPreflightPreventedTemporaryStoreLink -ne $true -or
               $r.lateJournalShortagePreservedCommittedAndRemainingAliases -ne $true -or
               $r.noUnresolvedTransactionJournal -ne $true -or
               $r.observedPartialGroupLogicalSavingBytes -le 0 -or

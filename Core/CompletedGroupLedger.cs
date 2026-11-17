@@ -611,6 +611,47 @@ public static class CompletedGroupLedger
         return id;
     }
 
+
+    // B2 G2-06: one existing durable transaction per group. This is NOT
+    // a cross-group atomic transaction. Every successful group has its own
+    // completed receipt; a failed/cancelled group is not silently skipped,
+    // and no later group is attempted until manual recovery has resolved it.
+    // This remains INTERNAL: public product Merge/Undo stays disabled.
+    internal static IReadOnlyList<string> MergeVerifiedGroups(string input,
+        IEnumerable<DuplicateGroup> groups, CancellationToken ct)
+    {
+        string root = Safety.ValidateRoot(input);
+        var batches = groups.ToList();
+        if (batches.Count == 0)
+            throw new InvalidDataException("No authenticated duplicate groups selected");
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var masters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Reject malformed or overlapping plans BEFORE preparing any group.
+        // Every group will still receive its own strict, fresh NTFS/byte check.
+        foreach (var group in batches)
+        {
+            if (group.Files.Count is < 2 or > 33 ||
+                group.BlockReason(false) is not null ||
+                group.Files.Any(file =>
+                    !paths.Add(Path.GetFullPath(file.Path)) ||
+                    !Safety.ContainedRegularSource(root, file.Path)) ||
+                !masters.Add(Path.Combine(Safety.StorePath(root), group.Hash +
+                    Path.GetExtension(group.Representative.Path).ToLowerInvariant())))
+                throw new InvalidDataException(
+                    "Overlapping, unsafe or malformed group batch rejected before any mutation");
+        }
+        var completed = new List<string>();
+        foreach (var group in batches)
+        {
+            ct.ThrowIfCancellationRequested();
+            Journal.AssertCleanBeforeMerge();
+            // Do not catch/continue after a failed group. Any prepared
+            // receipt and pending journal are essential recovery evidence.
+            completed.Add(MergeVerifiedGroup(root, group, ct));
+        }
+        return completed;
+    }
+
 #if CHAPPY_TESTING
     public static string MergeSynthetic(string input, DuplicateGroup group,
         Action? testOnlyAfterVerifiedCore = null)

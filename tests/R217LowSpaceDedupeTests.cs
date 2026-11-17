@@ -99,7 +99,7 @@ internal static class R217LowSpaceDedupeTests
             check(calls >= 2 && zero == 0 && Independent(late.Group) &&
                   !File.Exists(late.Master) &&
                   Journal.Pending().Count == 0 && Journal.UnresolvedRecordFiles().Count == 0,
-                "R2.17 Part29: second preflight after temporary store link fails without leaving any linked originals");
+                "R2.17 Part29: second preflight now refuses before creating even the temporary master link");
 
             var partial = Fixture(parent, "partial");
             Journal.TestFolderPath = Path.Combine(partial.Root, "isolated-journal");
@@ -107,7 +107,11 @@ internal static class R217LowSpaceDedupeTests
             CapacityGuard.TestOnlyReadAvailable = _ =>
             {
                 calls++;
-                return calls >= 3
+                // New gates are: 1=start, 2=pre-master link,
+                // 3=first alias journal, 4=first backup deletion,
+                // 5=second alias journal. The shortage is deliberately
+                // injected only after the first alias is fully committed.
+                return calls >= 5
                     ? (CapacityGuard.TargetReserve + 4096, CapacityGuard.JournalReserve - 1)
                     : (CapacityGuard.TargetReserve + 4096, CapacityGuard.JournalReserve + 4096);
             };
@@ -117,7 +121,7 @@ internal static class R217LowSpaceDedupeTests
                 partial.Master));
             int independent = partial.Group.Files.Count(x =>
                 NativeFile.GetIdentity(x.Path).LinkCount == 1);
-            check(calls >= 3 && saved == partial.Group.Files[1].Length &&
+            check(calls >= 5 && saved == partial.Group.Files[1].Length &&
                   NativeFile.GetIdentity(partial.Master).LinkCount == 3 &&
                   linked == 2 && independent == 1 &&
                   partial.Group.Files.All(x => Hash(x.Path) == partial.Group.Hash) &&
@@ -147,7 +151,7 @@ internal static class R217LowSpaceDedupeTests
                     journalReserveBytes = CapacityGuard.JournalReserve,
                     targetSpaceRefusedBeforeMutation = true,
                     journalSpaceRefusedBeforeMutation = true,
-                    secondPreflightRemovedTemporaryStoreLink = true,
+                    secondPreflightPreventedTemporaryStoreLink = true,
                     lateJournalShortagePreservedCommittedAndRemainingAliases = true,
                     noUnresolvedTransactionJournal = true,
                     observedPartialGroupLogicalSavingBytes = saved,

@@ -176,6 +176,10 @@ public static class DedupeEngine
                     // scan from needlessly changing the source link count.
                     if (!File.Exists(masterPath))
                     {
+                        // The initial preflight was measured before hashing.
+                        // Recheck both NTFS metadata and journal volume
+                        // immediately BEFORE creating our first new link.
+                        CapacityGuard.AssertCanStart(root);
                         NativeFile.NewHardLink(masterPath, source.Path);
                         masterCreatedByUs = true;
                     }
@@ -252,6 +256,10 @@ public static class DedupeEngine
                         // before the irreversible pinned-ID deletion.
                         sourceParents.AssertUnchanged();
                         storeParents.AssertUnchanged();
+                        // Free space can fall while copying/hashing. Refuse
+                        // destroying the independent backup if either target
+                        // NTFS volume or recovery journal volume became low.
+                        CapacityGuard.AssertCanStart(root);
                         if (preparedGroupId is not null)
                             CompletedGroupLedger.AssertPreparedAlias(
                                 root, preparedGroupId, group, duplicate,

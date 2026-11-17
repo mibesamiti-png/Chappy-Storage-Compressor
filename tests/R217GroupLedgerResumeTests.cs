@@ -1119,6 +1119,155 @@ internal static class R217GroupLedgerResumeTests
         }
     }
 
+    // G3-05: verify the existing real group Undo and the existing
+    // create-only collision transaction can be composed without overwrites.
+    // This is explicitly a POST-UNDO export, not a promise to restore a
+    // foreign replacement into an already occupied original pathname.
+    private static void VerifyRestoredUndoCollisionExport(string parent,
+        Action<bool, string> check, Action<Action, string> expectThrows)
+    {
+        string root = Path.Combine(parent, "g3-post-undo-collision-export");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        string? oldJournal = Journal.TestFolderPath;
+        try
+        {
+            Journal.TestFolderPath = Path.Combine(root, "g3-collision-journal");
+            string first = Path.Combine(root, "Camera", "clip.mp4");
+            Directory.CreateDirectory(Path.GetDirectoryName(first)!);
+            Directory.CreateDirectory(Path.Combine(root, "Trip"));
+            File.WriteAllBytes(first, RandomNumberGenerator.GetBytes(256 * 1024));
+            string[] names =
+            [
+                first,
+                Path.Combine(root, "Camera", "other.mp4"),
+                Path.Combine(root, "Trip", "clip.mp4"),
+                Path.Combine(root, "Trip", "other.mp4")
+            ];
+            foreach (string other in names.Skip(1))
+            {
+                File.Copy(first, other);
+                File.SetCreationTimeUtc(other, File.GetCreationTimeUtc(first));
+                File.SetLastWriteTimeUtc(other, File.GetLastWriteTimeUtc(first));
+            }
+            var scanned = Scanner.Run(root, true, null, CancellationToken.None);
+            check(scanned.Groups.Count == 1 &&
+                scanned.Groups[0].Files.Count == 4,
+                "G3-05: real scanner recognizes generated four-name cross-folder MP4 group");
+            var group = scanned.Groups.Single();
+            var snapshot = names.ToDictionary(x => x, x => (
+                Sha: Hash(x), Identity: NativeFile.GetIdentity(x)),
+                StringComparer.OrdinalIgnoreCase);
+            string id = CompletedGroupLedger.MergeSynthetic(root, group);
+            string output = Path.Combine(root, "g3-undo-export");
+            Directory.CreateDirectory(output);
+            expectThrows(() => CollisionRecoveryLedger.BeginRestoredUndoExportSynthetic(
+                    root, id, output),
+                "G3-05: shared hardlink group cannot be exported as independently restored Undo");
+            check(!Directory.Exists(Path.Combine(output, ".chappy-collision-journal")),
+                "G3-05: premature export refusal does not create any destination journal");
+            string evidence = Path.Combine(root, "g3-undo-evidence");
+            Directory.CreateDirectory(evidence);
+            int n = CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence);
+            check(n == 3 &&
+                CompletedGroupLedger.Inspect(root).VerifiedRestored == 1 &&
+                names.Skip(1).All(x => !NativeFile.SameFile(x, first) &&
+                    NativeFile.GetIdentity(x).LinkCount == 1),
+                "G3-05: same Core first makes all three generated aliases independent with verified restored receipt");
+
+            // Existing output names and all 3 nested collection directories
+            // must be preserved. Their IDs/hashes are captured independently.
+            string existing = Path.Combine(output, "Camera", "other.mp4");
+            Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
+            File.WriteAllText(existing, "FOREIGN USER OUTPUT - NEVER REPLACE");
+            string existing2 = Path.Combine(output, "Trip", "clip.mp4");
+            Directory.CreateDirectory(Path.GetDirectoryName(existing2)!);
+            File.WriteAllText(existing2, "FOREIGN TRIP OUTPUT - NEVER REPLACE");
+            string nested = Path.Combine(output, "同名ファイル",
+                "同名ファイル", "同名ファイル");
+            Directory.CreateDirectory(nested);
+            string oldCollected = Path.Combine(output, "同名ファイル",
+                "old-name.txt");
+            string oldNested = Path.Combine(nested, "old-name.txt");
+            File.WriteAllText(oldCollected, "preexisting root collection");
+            File.WriteAllText(oldNested, "preexisting deep collection");
+            string oldMemo = Path.Combine(output, "同名ファイル一覧.txt");
+            File.WriteAllText(oldMemo, "PREVIOUS USER NOTE");
+            var foreigners = new[] { existing, existing2, oldCollected,
+                oldNested, oldMemo }.ToDictionary(p => p,
+                p => (Sha: Hash(p), Identity: NativeFile.GetIdentity(p)),
+                StringComparer.OrdinalIgnoreCase);
+
+            string exportId = CollisionRecoveryLedger.BeginRestoredUndoExportSynthetic(
+                root, id, output);
+            var state = CollisionRecoveryLedger.InspectSynthetic(root, output, exportId);
+            check(state.CanExplicitlyResume && state.VerifiedFiles == 0 &&
+                !Directory.Exists(Path.Combine(nested, "同名ファイル")),
+                "G3-05: existing ledger plans nested same-name export without creating collected files");
+            bool paused = false;
+            try
+            {
+                CollisionRecoveryLedger.ResumeSynthetic(root, output, exportId,
+                    afterDurablePhase: phase =>
+                    {
+                        if (phase != "item-receipt-1") return;
+                        paused = true;
+                        throw new IOException("G3 generated interruption after first flushed receipt");
+                    });
+            }
+            catch (IOException) when (paused) { }
+            var pending = CollisionRecoveryLedger.InspectSynthetic(root, output,
+                exportId);
+            check(paused && pending.CanExplicitlyResume &&
+                pending.VerifiedFiles == 1 &&
+                foreigners.All(k => Hash(k.Key) == k.Value.Sha &&
+                    NativeFile.GetIdentity(k.Key).SameFile(k.Value.Identity)),
+                "G3-05: post-Undo collision export resume accepts only its durable first receipt, preserves all foreign files");
+            var finish = CollisionRecoveryLedger.ResumeSynthetic(root, output, exportId);
+            var reviewed = CollisionEvidenceReview.Inspect(output);
+            var originals = CompletedGroupLedger.InspectOriginals(root)
+                .Where(x => x.OperationId == id && !x.Representative).ToArray();
+            var fileRows = reviewed.Rows.Where(x => x.Kind == "ファイル" &&
+                !x.NeedsAttention).ToArray();
+            bool correct = finish.State == "VerifiedCompleted" &&
+                finish.VerifiedFiles == 3 && fileRows.Length == 3 &&
+                reviewed.NeedsReview == 0 &&
+                originals.Length == 3 &&
+                originals.All(x => x.State == "VerifiedRestored" &&
+                    snapshot.TryGetValue(x.Path, out var o) &&
+                    Hash(x.Path) == o.Sha &&
+                    NativeFile.GetIdentity(x.Path).LinkCount == 1) &&
+                foreigners.All(k => Hash(k.Key) == k.Value.Sha &&
+                    NativeFile.GetIdentity(k.Key).SameFile(k.Value.Identity)) &&
+                File.ReadAllText(oldMemo) == "PREVIOUS USER NOTE";
+            // Plan uses the input hierarchy and first available suffix.
+            // The third-level nested collision folder stays untouched.
+            foreach (var item in fileRows)
+            {
+                string source = Path.Combine(root, item.OriginalRelativePath);
+                string target = Path.Combine(output, item.DestinationRelativePath);
+                correct &= File.Exists(target) &&
+                    Hash(source) == Hash(target) &&
+                    !NativeFile.SameFile(source, target);
+            }
+            string newMemo = Path.Combine(output, "同名ファイル一覧 (1).txt");
+            byte[] report = File.ReadAllBytes(newMemo);
+            correct &= report.Length >= 3 && report[0] == 0xEF &&
+                report[1] == 0xBB && report[2] == 0xBF &&
+                File.ReadAllText(newMemo).Contains("同名ファイル", StringComparison.Ordinal) &&
+                fileRows.Any(x => x.DestinationRelativePath.Contains(
+                    Path.Combine("同名ファイル", "同名ファイル",
+                        "同名ファイル", "同名ファイル"),
+                    StringComparison.OrdinalIgnoreCase));
+            check(correct,
+                "G3-05: real post-Undo export preserves hierarchy, nested collections, numbered names, root UTF-8 BOM TXT, exact NTFS IDs/sha/receipts and every foreign file");
+            expectThrows(() => CollisionRecoveryLedger.ResumeSynthetic(root, output, exportId),
+                "G3-05: replay of finished post-Undo output cannot overwrite existing exports");
+        }
+        finally { Journal.TestFolderPath = oldJournal; }
+    }
+
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)
     {
@@ -1332,6 +1481,7 @@ internal static class R217GroupLedgerResumeTests
             var allocationMatrix = VerifyKilledMultiGroupBatch(parent, check, expectThrows);
             VerifyBatchSourceSwapIsolation(parent, check, expectThrows);
             VerifyUndoCapacityRefusals(parent, check, expectThrows);
+            VerifyRestoredUndoCollisionExport(parent, check, expectThrows);
             // The helper uses a separately guarded generated journal folder.
             Journal.TestFolderPath = Path.Combine(root, "part27-journal");
 
@@ -1363,6 +1513,8 @@ internal static class R217GroupLedgerResumeTests
                     g3ExplicitStageRecoveryAfterCapacityLossVerified = true,
                     g3CrossLedgerFiveForeignEvidenceFamiliesRefused = true,
                     g3OriginalNtfsIdsPreservedOnForeignEvidence = true,
+                    g3PostUndoExistingCollisionLedgerExportVerified = true,
+                    g3CollisionNestedNumberedUtf8MemoAndRestartVerified = true,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
                     actualCorePartialAllocationMatrix = allocationMatrix,

@@ -1,10 +1,11 @@
 namespace ChappyStorageCompressor.Core;
 
 /// <summary>
-/// R2.2 advisory-only safety gate. This component never creates, renames,
-/// deletes, moves or replaces a file. A PASS is NOT authority to perform a
-/// replacement; content fidelity, atomic rollback, ACL and crash tests remain
-/// separate release blockers.
+/// R2.2/G4 advisory preflight plus G4-03 COPY-ONLY preparation.
+/// Inspection never writes. Explicit internal preparation only creates NEW
+/// files in user-selected independent staging/backup directories; it never
+/// renames, deletes, moves or replaces an original image.
+/// No return value grants source replacement, Undo or physical recovery.
 /// </summary>
 public static class ReplacementReadiness
 {
@@ -249,6 +250,175 @@ public static class ReplacementReadiness
                 row.CandidateBytes, row.EstimatedSavingBytes, eligible, explanation));
         }
         return new(candidates, feasible, projected, inputFree, backupFree, different, rows);
+    }
+
+
+    // G4-03: the preparation phase is intentionally COPY-ONLY: no input
+    // rename, File.Replace, unlink, overwrite, Undo, or recovery authorization.
+    // Incomplete copy artifacts are retained for explicit inspection, never
+    // auto-deleted after an ambiguous exception or process termination.
+    internal sealed record PreparedCopies(
+        string OriginalPath, string CandidatePath, string StagedPath,
+        string BackupPath, FileSnapshot OriginalEvidence,
+        string OriginalSha256, string CandidateSha256)
+    {
+        internal bool ProductionReplacementAuthorized => false;
+        internal long ActualFreedBytes => 0;
+    }
+
+    /// <summary>
+    /// Copy an independently verified image pair to (1) a staging directory on
+    /// the SOURCE NTFS volume and (2) a backup directory on a DIFFERENT local
+    /// NTFS volume. Both destinations must already exist and have no junction
+    /// ancestors. The only writes are to newly named files in these two
+    /// directories; the original image and saved preview are never modified.
+    ///
+    /// NOT a durable transaction or a release Apply path: the existing
+    /// crash-safe journal, exact NTFS metadata restoration and path-ID-bound
+    /// cutover still need to be integrated and tested before any source change.
+    /// </summary>
+    internal static PreparedCopies PrepareVerifiedCopies(
+        string originalPath, string candidatePath,
+        string stagingDirectory, string independentBackupDirectory,
+        string expectedSourceSha256, string expectedCandidateSha256,
+        CancellationToken ct = default)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("NTFS画像ステージはWindows専用");
+        ct.ThrowIfCancellationRequested();
+        if (expectedSourceSha256 is not { Length: 64 } ||
+            !expectedSourceSha256.All(Uri.IsHexDigit) ||
+            expectedCandidateSha256 is not { Length: 64 } ||
+            !expectedCandidateSha256.All(Uri.IsHexDigit))
+            throw new InvalidDataException("生成時の原本・候補SHAが不足または不正");
+        string original = Path.GetFullPath(originalPath);
+        string candidate = Path.GetFullPath(candidatePath);
+        string stageRoot = Safety.ValidateRoot(stagingDirectory);
+        string backupRoot = Safety.ValidateRoot(independentBackupDirectory);
+        string sourceRoot = Safety.ValidateRoot(Path.GetDirectoryName(original)!);
+        string candidateRoot = Safety.ValidateRoot(Path.GetDirectoryName(candidate)!);
+        if (Inside(original, stageRoot) || Inside(candidate, stageRoot) ||
+            Inside(stageRoot, sourceRoot) || Inside(stageRoot, candidateRoot) ||
+            Inside(original, backupRoot) || Inside(candidate, backupRoot) ||
+            Inside(backupRoot, sourceRoot) || Inside(backupRoot, candidateRoot) ||
+            Inside(stageRoot, backupRoot) || Inside(backupRoot, stageRoot))
+            throw new InvalidOperationException(
+                "原本・候補・stage・別ボリュームbackupは重ならない独立フォルダが必要");
+        JpegBatchPreviewEngine.CheckNoReparse(original);
+        JpegBatchPreviewEngine.CheckNoReparse(candidate);
+        var originalDrive = new DriveInfo(Path.GetPathRoot(original)!);
+        var stageDrive = new DriveInfo(Path.GetPathRoot(stageRoot)!);
+        var backupDrive = new DriveInfo(Path.GetPathRoot(backupRoot)!);
+        if (!originalDrive.IsReady || !stageDrive.IsReady || !backupDrive.IsReady ||
+            !originalDrive.Name.Equals(stageDrive.Name, StringComparison.OrdinalIgnoreCase) ||
+            originalDrive.Name.Equals(backupDrive.Name, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "stageは元NTFSボリューム、原本バックアップは別NTFSボリューム必須");
+
+        // Pin the parent and ancestor directory IDs for all four locations.
+        // Failed pinning must STOP before allocating a destination file.
+        using var sourceParents = NativeFile.PinnedDirectories.Open(sourceRoot, [original]);
+        using var candidateParents = NativeFile.PinnedDirectories.Open(candidateRoot, [candidate]);
+        using var stageParents = NativeFile.PinnedDirectories.Open(stageRoot, []);
+        using var backupParents = NativeFile.PinnedDirectories.Open(backupRoot, []);
+        var originalSnapshot = Safety.Capture(original);
+        var candidateSnapshot = Safety.Capture(candidate);
+        if (originalSnapshot.Identity.LinkCount != 1 ||
+            candidateSnapshot.Identity.LinkCount != 1 ||
+            originalSnapshot.Identity.SameFile(candidateSnapshot.Identity))
+            throw new InvalidDataException("外部ハードリンク・元候補IDの共有を拒否");
+        var capacity = EvaluateCapacity(originalSnapshot.Length,
+            candidateSnapshot.Length, stageDrive.AvailableFreeSpace,
+            backupDrive.AvailableFreeSpace, differentVolume: true);
+        if (!capacity.MeetsSpaceRequirements)
+            throw new IOException("stage/独立バックアップの容量不足: " + capacity.Explanation);
+        var fidelity = InspectCandidatePair(original, candidate, ct);
+        if (!fidelity.Verified ||
+            !fidelity.OriginalSha256.Equals(expectedSourceSha256,
+                StringComparison.OrdinalIgnoreCase) ||
+            !fidelity.CandidateSha256.Equals(expectedCandidateSha256,
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("保存台帳と原本・候補の全バイト/画像検証が不一致");
+        // Keep both source names and bytes unavailable to ordinary external
+        // writers/rename for the entire independent-copy preparation.
+        using var sourceLock = new FileStream(original, FileMode.Open,
+            FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+        using var candidateLock = new FileStream(candidate, FileMode.Open,
+            FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+        if (sourceLock.Length != originalSnapshot.Length ||
+            candidateLock.Length != candidateSnapshot.Length ||
+            !Safety.SameSnapshot(originalSnapshot) ||
+            !Safety.SameSnapshot(candidateSnapshot))
+            throw new InvalidDataException("コピー前に原本または候補ID/権限が変化");
+        sourceParents.AssertUnchanged();
+        candidateParents.AssertUnchanged();
+        stageParents.AssertUnchanged();
+        backupParents.AssertUnchanged();
+
+        string id = Guid.NewGuid().ToString("N");
+        string staged = Path.Combine(stageRoot,
+            ".chappy-g4-stage-" + id + Path.GetExtension(candidate));
+        string backedUp = Path.Combine(backupRoot, ".chappy-g4-backup-" + id + ".bak");
+        // These are CreateNew operations only. On a crash both copies remain
+        // as evidence; the future persistent transaction will classify orphans.
+        static void FlushVerifiedCopy(FileStream input, string destination,
+            CancellationToken token)
+        {
+            input.Position = 0;
+            using var output = new FileStream(destination, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None, 256 * 1024,
+                FileOptions.WriteThrough | FileOptions.SequentialScan);
+            byte[] buffer = new byte[256 * 1024];
+            int n;
+            while ((n = input.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                token.ThrowIfCancellationRequested();
+                output.Write(buffer, 0, n);
+            }
+            output.Flush(flushToDisk: true);
+        }
+        FlushVerifiedCopy(sourceLock, backedUp, ct);
+        // Verify the independent copy before even starting to stage candidate.
+        var copy = Safety.Capture(backedUp);
+        if (copy.Length != originalSnapshot.Length || copy.Identity.LinkCount != 1 ||
+            copy.Identity.VolumeSerial == originalSnapshot.Identity.VolumeSerial ||
+            !string.Equals(Safety.ComputeSha256(backedUp, ct), expectedSourceSha256,
+                StringComparison.OrdinalIgnoreCase) ||
+            !Safety.ByteEqual(original, backedUp, ct))
+            throw new InvalidDataException(
+                "別NTFSボリュームの原本バックアップが独立全バイト一致でない");
+        FlushVerifiedCopy(candidateLock, staged, ct);
+        var stagedSnapshot = Safety.Capture(staged);
+        if (stagedSnapshot.Length != candidateSnapshot.Length ||
+            stagedSnapshot.Identity.LinkCount != 1 ||
+            stagedSnapshot.Identity.VolumeSerial != originalSnapshot.Identity.VolumeSerial ||
+            !string.Equals(Safety.ComputeSha256(staged, ct), expectedCandidateSha256,
+                StringComparison.OrdinalIgnoreCase) ||
+            !Safety.ByteEqual(candidate, staged, ct))
+            throw new InvalidDataException("元NTFS stageの独立バイト照合に失敗");
+
+        // The new staging image must still meet the complete PNG/JPEG pixel
+        // and metadata audit. No source rename/write is attempted.
+        var stagedFidelity = InspectCandidatePair(original, staged, ct);
+        sourceParents.AssertUnchanged();
+        candidateParents.AssertUnchanged();
+        stageParents.AssertUnchanged();
+        backupParents.AssertUnchanged();
+        if (!stagedFidelity.Verified ||
+            !stagedFidelity.OriginalSha256.Equals(expectedSourceSha256,
+                StringComparison.OrdinalIgnoreCase) ||
+            !stagedFidelity.CandidateSha256.Equals(expectedCandidateSha256,
+                StringComparison.OrdinalIgnoreCase) ||
+            !Safety.SameSnapshot(originalSnapshot) ||
+            !Safety.SameSnapshot(candidateSnapshot) ||
+            !Safety.SameSnapshot(copy) || !Safety.SameSnapshot(stagedSnapshot) ||
+            !string.Equals(Safety.ComputeSha256(original, ct), expectedSourceSha256,
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Safety.ComputeSha256(candidate, ct), expectedCandidateSha256,
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("コピー後の原本/候補/backup/stage証拠が不一致");
+        return new PreparedCopies(original, candidate, staged, backedUp,
+            originalSnapshot, expectedSourceSha256, expectedCandidateSha256);
     }
 
     private static bool Inside(string path, string parent)

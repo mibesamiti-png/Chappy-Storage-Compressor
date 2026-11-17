@@ -740,6 +740,13 @@ public partial class MainWindow : Window
         AdvancedExpander.IsExpanded = true;
     }
 
+    private void GroupDetailRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: GroupRow row } || _busy) return;
+        GroupsGrid.SelectedItem = row;
+        Details_Click(sender, e);
+    }
+
     private void GroupDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (_busy || e.OriginalSource is not DependencyObject source) return;

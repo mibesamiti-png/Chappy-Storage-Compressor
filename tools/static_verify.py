@@ -155,6 +155,22 @@ check('B2 G2-05/06: real-worker crash boundaries and isolated group failure',
       'VerifyBatchSourceSwapIsolation(parent, check, expectThrows);' in group_batch_tests and
       'actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length' in group_batch_tests and
       'MergeVerifiedGroups(' not in source)
+vhdx_probe = (root/'bootstrap/Part29IsolatedVhdxProbe.ps1').read_text(encoding='utf-8')
+workflow = (root/'.github/workflows/build-windows.yml').read_text(encoding='utf-8')
+check('B2 G2-06: real Core per-file-ID allocation and separate VHDX free-space reconciliation',
+      'GetCompressedFileSizeW' in group_batch_tests and
+      'UniqueAllocated(sourceNames.Concat(masters)' in group_batch_tests and
+      'baselineAllocation.Bytes - allocated.Bytes' in group_batch_tests and
+      'actualCorePartialAllocationMatrix = allocationMatrix' in group_batch_tests and
+      'private static IReadOnlyList<PartialAllocationEvidence> VerifyKilledMultiGroupBatch(' in group_batch_tests and
+      'function UniqueAllocation([string[]]$paths)' in vhdx_probe and
+      'generatedOriginalCount = 7' in vhdx_probe and
+      'physicalUniqueIdAllocatedDeltaBytes = $physicalPartialDelta' in vhdx_probe and
+      'unfinishedGroupPhysicalSavingsNotCreditedToReceipt' in vhdx_probe and
+      'realCoreOnMountedJunction = $false' in vhdx_probe and
+      '$r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true' in workflow and
+      '$r.groupedPartialAllocation.physicalUniqueIdAllocatedDeltaBytes -ne 8388608' in workflow and
+      'MergeVerifiedGroups(' not in source)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

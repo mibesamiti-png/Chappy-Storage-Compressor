@@ -918,6 +918,13 @@ internal static class R217GroupLedgerResumeTests
                     source.Attributes == e.Attributes &&
                     source.Length == e.Length),
                 "B2 G2-02: exact four original NTFS IDs, SHA, timestamps, ACL fingerprints and operation ID survive as read-only group history");
+            var overview = RecoveryEvidenceOverview.Inspect(root);
+            check(overview.Rows.Count(e =>
+                    e.Source == "グループ元ファイルの個別履歴" &&
+                    !e.NeedsAttention && e.State == "VerifiedCompleted") == 4 &&
+                overview.Rows.All(e => e.Source != "グループ元ファイルの個別履歴" ||
+                    e.Explanation.Contains("元NTFS ID=", StringComparison.Ordinal)),
+                "B2 G2-02: cross-ledger view exposes every verified original ID and per-file metadata as read-only WPF evidence");
             string master = Path.Combine(Safety.StorePath(root), groupHash + ".mp4");
             bool merged = completed.VerifiedCompleted == 1 &&
                 completed.Entries.Single().AliasCount == 3 &&
@@ -948,6 +955,9 @@ internal static class R217GroupLedgerResumeTests
                 "R2.17 part27: unrecorded extra NTFS hardlink makes whole group untrusted");
             check(CompletedGroupLedger.InspectOriginals(root).Count == 0,
                 "B2 G2-02: unknown external hardlink hides every formerly verified original from trusted WPF history");
+            check(RecoveryEvidenceOverview.Inspect(root).Rows.All(e =>
+                    e.Source != "グループ元ファイルの個別履歴"),
+                "B2 G2-02: untrusted shared-link history cannot leak unverified source records to UI");
             string evidence = Path.Combine(root, "part27-undo-evidence");
             Directory.CreateDirectory(evidence);
             expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),

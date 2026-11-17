@@ -554,9 +554,16 @@ internal static class R217GroupLedgerResumeTests
     // B2 G2-05/G2-06: reuse the REAL Core + child-process kill for every
     // durable journal/cutover boundary, and both sides of group completion.
     // A separate generated root and journal isolate every crash scenario.
-    private static void VerifyKilledMultiGroupBatch(string parent,
-        Action<bool, string> check, Action<Action, string> expectThrows)
+    private sealed record PartialAllocationEvidence(string Checkpoint,
+        long AllocatedBeforeBytes, long AllocatedAfterBytes,
+        long PhysicalAllocatedDeltaBytes, long VerifiedReceiptLogicalBytes,
+        int UniqueIdsBefore, int UniqueIdsAfter);
+
+    private static IReadOnlyList<PartialAllocationEvidence> VerifyKilledMultiGroupBatch(
+        string parent, Action<bool, string> check,
+        Action<Action, string> expectThrows)
     {
+        var evidence = new List<PartialAllocationEvidence>();
         foreach (string checkpoint in BatchCrashCheckpoints)
         {
             string root = Path.Combine(parent, "r217-b2-kill-" + checkpoint);
@@ -651,6 +658,10 @@ internal static class R217GroupLedgerResumeTests
                         measuredFreed + ", verified-receipts-only=" +
                         firstGroup.Files[1].Length +
                         (completedSecond ? second.Savings : 0));
+                evidence.Add(new PartialAllocationEvidence(checkpoint,
+                    baselineAllocation.Bytes, allocated.Bytes, measuredFreed,
+                    firstGroup.Savings + (completedSecond ? second.Savings : 0),
+                    baselineAllocation.UniqueIds, allocated.UniqueIds));
                 bool firstCommitted = File.Exists(firstMaster) &&
                     NativeFile.GetIdentity(firstMaster).LinkCount == 3 &&
                     firstGroup.Files.All(file =>
@@ -785,6 +796,7 @@ internal static class R217GroupLedgerResumeTests
             }
             finally { Journal.TestFolderPath = previousJournal; }
         }
+        return evidence;
     }
 
     // An ordinary, deterministic group-2 source swap must stop a batch too:
@@ -971,7 +983,7 @@ internal static class R217GroupLedgerResumeTests
             VerifyPreparedGroupPromotion(parent, check, expectThrows);
             VerifySuccessiveGroupTransactions(parent, check, expectThrows);
             VerifyMidTransactionCapacityRefusal(parent, check, expectThrows);
-            VerifyKilledMultiGroupBatch(parent, check, expectThrows);
+            var allocationMatrix = VerifyKilledMultiGroupBatch(parent, check, expectThrows);
             VerifyBatchSourceSwapIsolation(parent, check, expectThrows);
             // The helper uses a separately guarded generated journal folder.
             Journal.TestFolderPath = Path.Combine(root, "part27-journal");
@@ -993,6 +1005,7 @@ internal static class R217GroupLedgerResumeTests
                     completedHistoryRestored = restored.VerifiedRestored == 1,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
+                    actualCorePartialAllocationMatrix = allocationMatrix,
                     actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill = true,
                     partialFailedGroupAllocationNeverCountedAsVerifiedReceipt = true,
                     repeatedCrashInspectionAndGroupIsolationTested = true,

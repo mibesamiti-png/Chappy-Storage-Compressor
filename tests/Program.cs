@@ -606,6 +606,25 @@ static class Program
                 x.PreviewSha256 == Safety.ComputeSha256(
                     x.PreviewPath, CancellationToken.None)),
             "G4-03: PNG候補と当時の原本SHAを独立ジャーナルから再読し全バイト照合");
+        string generatedProgress = Path.Combine(previews, ".chappy-png-batch-r16.progress.jsonl");
+        byte[] progressOriginal = File.ReadAllBytes(generatedProgress);
+        try
+        {
+            string oldStyle = System.Text.Encoding.UTF8.GetString(progressOriginal);
+            string withoutSourceProof = System.Text.RegularExpressions.Regex.Replace(
+                oldStyle, "\\"SourceSha256\\":\\"[0-9A-F]{64}\\"",
+                "\\"SourceSha256\\":null");
+            Check(oldStyle != withoutSourceProof,
+                "G4-03: 正規PNG候補履歴には生成当時の原本SHA証拠がある");
+            File.WriteAllText(generatedProgress, withoutSourceProof,
+                new System.Text.UTF8Encoding(false));
+            var oldAudit = PngBatchJournalTools.ReadAudit(input, previews);
+            Check(!oldAudit.Rows.Any(x => x.State == "CandidatePresent") &&
+                oldAudit.Rows.Count(x => x.State == "NeedsReview") >= 2 &&
+                oldAudit.EstimatedSavingBytes == 0,
+                "G4-03: 過去の原本SHA無しの候補台帳は不合格・手動確認のみ");
+        }
+        finally { File.WriteAllBytes(generatedProgress, progressOriginal); }
         byte[] originalA = File.ReadAllBytes(a);
         DateTime beforeA = File.GetLastWriteTimeUtc(a);
         try

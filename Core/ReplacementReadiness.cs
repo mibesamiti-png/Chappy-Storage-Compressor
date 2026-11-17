@@ -377,6 +377,10 @@ public static class ReplacementReadiness
                 staged.Identity.SameFile(c.Identity) ||
                 backup.Identity.VolumeSerial == old.Identity.VolumeSerial ||
                 staged.Identity.VolumeSerial != old.Identity.VolumeSerial ||
+                staged.CreationUtc != old.CreationUtc ||
+                staged.ModifiedUtc != old.ModifiedUtc ||
+                staged.Attributes != old.Attributes ||
+                !NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor) ||
                 !Safety.SameSnapshot(old) || !Safety.SameSnapshot(c) ||
                 !Safety.SameSnapshot(staged) || !Safety.SameSnapshot(backup) ||
                 !Eq(Safety.ComputeSha256(original, ct), record.OriginalSha256) ||
@@ -541,6 +545,13 @@ public static class ReplacementReadiness
             output.Flush(flushToDisk: true);
         }
         FlushVerifiedCopy(sourceLock, backedUp, ct);
+        // Different NTFS volumes can have DIFFERENT inheritable ACLs. Do
+        // not force source DACL onto the independent backup filesystem: doing
+        // so could change backup access protections or leave the wrong
+        // inherited rights. Record its actual ID/DACL/metadata, plus the
+        // ORIGINAL owner/group/DACL/timestamps in the durable receipt. The
+        // copy is byte-identical, and replay checks both separate snapshots.
+        // Only the same-volume cutover stage must match original metadata.
         // Verify the independent copy before even starting to stage candidate.
         var copy = Safety.Capture(backedUp);
         if (copy.Length != originalSnapshot.Length || copy.Identity.LinkCount != 1 ||
@@ -551,6 +562,10 @@ public static class ReplacementReadiness
             throw new InvalidDataException(
                 "別NTFSボリュームの原本バックアップが独立全バイト一致でない");
         FlushVerifiedCopy(candidateLock, staged, ct);
+        // File.Replace may inherit or merge security from the destination.
+        // Never enter cutover with an image stage whose owner, DACL, attributes
+        // or creation/modified times differ from those of the original.
+        ApplyOriginalMetadataToNewCopy(original, staged, originalSnapshot);
         var stagedSnapshot = Safety.Capture(staged);
         if (stagedSnapshot.Length != candidateSnapshot.Length ||
             stagedSnapshot.Identity.LinkCount != 1 ||
@@ -610,6 +625,34 @@ public static class ReplacementReadiness
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("作成済みG4レシートの独立再検証に失敗");
         return post.Verified;
+    }
+
+    /// <summary>
+    /// G4-03 metadata preservation on a NEW, independent file only.
+    /// Owner/group are not changed: if they differ, the native method refuses
+    /// that unsupported case. This cannot modify the original media path.
+    /// </summary>
+    private static void ApplyOriginalMetadataToNewCopy(
+        string original, string target, FileSnapshot source)
+    {
+        var before = Safety.Capture(target);
+        if (before.Identity.LinkCount != 1 ||
+            before.Identity.SameFile(source.Identity))
+            throw new InvalidDataException("New independent stage must have its own NTFS ID");
+        NativeFile.CopyOwnerGroupDaclToNewFile(original, target, before.Identity);
+        File.SetCreationTimeUtc(target, source.CreationUtc);
+        File.SetLastWriteTimeUtc(target, source.ModifiedUtc);
+        File.SetAttributes(target, source.Attributes);
+        var copied = Safety.Capture(target);
+        if (!copied.Identity.SameFile(before.Identity) ||
+            copied.Identity.LinkCount != 1 ||
+            copied.CreationUtc != source.CreationUtc ||
+            copied.ModifiedUtc != source.ModifiedUtc ||
+            copied.Attributes != source.Attributes ||
+            !NativeFile.SameOwnerGroupDacl(copied.SecurityDescriptor, source.SecurityDescriptor) ||
+            !Safety.SameSnapshot(source))
+            throw new InvalidDataException(
+                "Could not reproduce source NTFS owner/group/DACL/timestamps on independent image");
     }
 
     private static bool Inside(string path, string parent)

@@ -696,6 +696,40 @@ static class Program
                                 Safety.ComputeSha256(preview.PreviewPath!,
                                     CancellationToken.None) == fidelity.CandidateSha256,
                                 "G4-03: stageと別ボリュームbackup後も元画像のID/権限/全バイト不変");
+                            var metadataStage = Safety.Capture(prepared.StagedPath);
+                            var metadataBackup = Safety.Capture(prepared.BackupPath);
+                            static bool SameMetadata(FileSnapshot old, FileSnapshot fresh) =>
+                                old.CreationUtc == fresh.CreationUtc &&
+                                old.ModifiedUtc == fresh.ModifiedUtc &&
+                                old.Attributes == fresh.Attributes &&
+                                NativeFile.SameOwnerGroupDacl(
+                                    old.SecurityDescriptor, fresh.SecurityDescriptor);
+                            Check(SameMetadata(originalSnapshot, metadataStage) &&
+                                !originalSnapshot.Identity.SameFile(metadataStage.Identity) &&
+                                !originalSnapshot.Identity.SameFile(metadataBackup.Identity) &&
+                                metadataBackup.Identity.VolumeSerial !=
+                                    originalSnapshot.Identity.VolumeSerial &&
+                                Safety.SameSnapshot(metadataBackup) &&
+                                reloaded.Verified is not null &&
+                                reloaded.Verified.OriginalEvidence.SecurityDescriptor
+                                    .SequenceEqual(originalSnapshot.SecurityDescriptor),
+                                "G4-03: stageの元owner/group/DACL/日時/属性一致、別volumeバックアップの独立IDと原権限レシート保全");
+                            DateTime savedStageTime = File.GetLastWriteTimeUtc(prepared.StagedPath);
+                            try
+                            {
+                                File.SetLastWriteTimeUtc(prepared.StagedPath,
+                                    savedStageTime.AddSeconds(7));
+                                Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview",
+                                    "G4-03: stageの画素全バイトが正しくても元日時相違を再起動後拒否");
+                            }
+                            finally { File.SetLastWriteTimeUtc(prepared.StagedPath, savedStageTime); }
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot).Complete,
+                                "G4-03: stageの元日時復帰でowner/DACL含む完全な証拠を再認証");
+
                             Check(ReplacementReadiness.InspectCandidatePair(
                                     source, prepared.StagedPath).Verified,
                                 "G4-03: 生成stageのPNG画素/メタデータ独立復号も合格");

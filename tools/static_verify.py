@@ -196,6 +196,30 @@ check('G4-03/04: readonly journal replay fails closed for foreign, changed or or
       'G4-03: レシート作成前のプロセス死はバックアップ/stageを保全し停止' in test and
       'G4-04: 独立バックアップ1B改ざんは日時を復元しても拒否' in test)
 
+# G4-03: a verified stage is not cutover-ready until its NTFS owner,
+# group, DACL, attributes, creation/modified times match the ORIGINAL.
+# Security must be applied via a pinned stage/backup handle, not a mutable
+# pathname; unsupported owner/group changes are rejected without mutation.
+native = (root/'Core/NativeFile.cs').read_text(encoding='utf-8')
+check('G4-03: exact original NTFS metadata is copied to same-volume stage',
+      'internal static void CopyOwnerGroupDaclToNewFile(' in native and
+      'SetSecurityInfo(handle, 1, DaclInfo,' in native and
+      'IdentityFromHandle(handle)' in native and
+      'SameSid(sourceOwner, targetOwner)' in native and
+      'CopyOwnerGroupDaclToNewFile(original, target, before.Identity)' in replacement_readiness and
+      'ApplyOriginalMetadataToNewCopy(original, staged, originalSnapshot);' in replacement_readiness and
+      'not force source DACL onto the independent backup filesystem' in replacement_readiness and
+      'File.SetCreationTimeUtc(target, source.CreationUtc);' in replacement_readiness and
+      'File.SetLastWriteTimeUtc(target, source.ModifiedUtc);' in replacement_readiness and
+      'File.SetAttributes(target, source.Attributes);' in replacement_readiness)
+check('G4-03: stored/reloaded stage and backup refuse changed NTFS metadata',
+      'staged.CreationUtc != old.CreationUtc' in replacement_readiness and
+      '!NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor)' in replacement_readiness and
+      'Safety.SameSnapshot(backup)' in replacement_readiness and
+      'ConvertSecurityDescriptorToStringSecurityDescriptorW(' in native and
+      'G4-03: stageの元owner/group/DACL/日時/属性一致、別volumeバックアップの独立IDと原権限レシート保全' in test and
+      'G4-03: stageの画素全バイトが正しくても元日時相違を再起動後拒否' in test)
+
 # G4-02: official pinned JPEG executable provenance must be enforced by
 # the actual WinExe native execution path (not only by the CI test helper).
 wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')

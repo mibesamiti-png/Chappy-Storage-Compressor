@@ -44,11 +44,7 @@ internal static class UiInteractionSmoke
 
             // Capture a genuine WPF dispatcher synchronization context for
             // Scan_Click's async continuation and Progress<T> handlers.
-            SynchronizationContext.SetSynchronizationContext(
-                new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
-            var app = new App();
-            app.InitializeComponent();
-            application = app;
+            application = CreateSmokeApp();
             window = new MainWindow();
             // x:Name fields are internal in the production app assembly.
             // Resolve real WPF named controls from the loaded XAML namescope.
@@ -1749,6 +1745,15 @@ internal static class UiInteractionSmoke
         }
     }
 
+    private static App CreateSmokeApp()
+    {
+        SynchronizationContext.SetSynchronizationContext(
+            new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
+        var app = new App();
+        app.InitializeComponent();
+        return app;
+    }
+
     private static int RunV1Isolated()
     {
         if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true" ||
@@ -1763,7 +1768,8 @@ internal static class UiInteractionSmoke
         var journal = typeof(Journal).GetProperty("TestFolderPath",
             BindingFlags.Static | BindingFlags.NonPublic)!;
         journal.SetValue(null, Path.Combine(root, "test-journal"));
-        var app = new System.Windows.Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        var app = CreateSmokeApp();
+        app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         try
         {
             string input = Directory.CreateDirectory(Path.Combine(root, "g4-jpeg-input")).FullName;
@@ -1803,10 +1809,15 @@ internal static class UiInteractionSmoke
             typeof(MainWindow).GetField("_allowGeneratedOnlyMergeTest",
                 BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(main, true);
             SetPrivate(main, "_confirmSelectedMergeRisk", new Func<string, bool>(_ => true));
-            SetPrivate(main, "_showDedupePlan", new Action<string>(_ => { }));
-            RoutedClick(Named<Button>(main, "SelectedMergeReviewButton"));
-            PumpUntil(() => status.Text == "生成テスト統合完了・本番統合は無効", TimeSpan.FromSeconds(45));
-            Require(NativeFile.SameFile(videoA, videoB), "G5-01: WPF merge created a real MP4 hard link");
+            string mergeResult = "";
+            SetPrivate(main, "_showDedupePlan", new Action<string>(text => mergeResult = text));
+            var merge = Named<Button>(main, "SelectedMergeReviewButton");
+            Require(merge.IsEnabled, "G5-01: generated MP4 can be selected for actual merge");
+            RoutedClick(merge);
+            PumpUntil(() => mergeResult.Length > 0, TimeSpan.FromSeconds(45));
+            Require(status.Text == "生成テスト統合完了・本番統合は無効" &&
+                NativeFile.SameFile(videoA, videoB),
+                "G5-01: WPF merge created a real MP4 hard link: " + status.Text + " / " + mergeResult);
             var recovery = new RecoveryWindow(input);
             typeof(RecoveryWindow).GetField("_allowGeneratedOnlyUndoTest",
                 BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(recovery, true);
@@ -1908,6 +1919,7 @@ internal static class UiInteractionSmoke
         string candidateHash = OracleHash(stagedPath);
 
         // An actual ADS mutation is refused after review, with originals preserved.
+        var backupBeforeAds = Safety.Capture(backupFile);
         File.WriteAllText(backupFile + ":g4-interference", "generated ADS");
         RoutedClick(apply);
         PumpUntil(() => review.IsEnabled && text.Text.Contains("要手動確認", StringComparison.Ordinal),
@@ -1915,6 +1927,9 @@ internal static class UiInteractionSmoke
         Require(Safety.SameSnapshot(before) && OracleHash(source) == hash && !File.Exists(rollback),
             "G5-02: VHDX WPF rejects stale review with a modified independent backup");
         File.Delete(backupFile + ":g4-interference");
+        File.SetAttributes(backupFile, backupBeforeAds.Attributes);
+        File.SetLastWriteTimeUtc(backupFile, backupBeforeAds.ModifiedUtc);
+        Require(Safety.SameSnapshot(backupBeforeAds), "ADS test reset preserves the original backup evidence");
         RoutedClick(review);
         PumpUntil(() => apply.IsEnabled, TimeSpan.FromSeconds(30));
         prepared = drive.AvailableFreeSpace;

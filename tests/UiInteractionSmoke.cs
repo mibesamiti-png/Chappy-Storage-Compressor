@@ -92,7 +92,7 @@ internal static class UiInteractionSmoke
                 throwOnError: true)!;
             var emptyHistoryWindow = (Window)Activator.CreateInstance(
                 historyWindowType,
-                BindingFlags.Instance | BindingFlags.NonPublic,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
                 binder: null,
                 args: new object[] { testRoot,
                     Array.Empty<DuplicateCleanupHistory.Row>() },

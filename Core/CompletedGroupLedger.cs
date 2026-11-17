@@ -895,7 +895,10 @@ public static class CompletedGroupLedger
         for (int i = p.Detached.Count; i < x.Aliases.Count; i++)
         {
             uint expectedLinks = checked((uint)(2 + x.Aliases.Count - i));
-            IndependentUndoEngine.Restore(root, x.Aliases[i], x.Master, x.Hash,
+            // G3: the generated Undo suite invokes the SAME internal NTFS
+            // cutover compiled in a normal Windows product build. Its root
+            // sentinel and protected public Restore API remain unchanged.
+            IndependentUndoEngine.RestoreCore(root, x.Aliases[i], x.Master, x.Hash,
                 expectedLinks, evidence,
                 // The phase names are never authority by themselves. Reopen
                 // and validate the durable checkpoint AFTER any competing

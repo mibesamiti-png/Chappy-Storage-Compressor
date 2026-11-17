@@ -20,6 +20,9 @@ public static class PngBatchPreviewEngine
         public string RelativePath { get; set; } = "";
         public long SourceBytes { get; set; }
         public long ModifiedUtcTicks { get; set; }
+        // G4: persist the exact source bytes associated with this candidate.
+        // Legacy records without this proof remain inspectable but cannot Apply.
+        public string? SourceSha256 { get; set; }
         public string Status { get; set; } = "Pending";
         public string? PreviewPath { get; set; }
         public long PreviewBytes { get; set; }
@@ -145,7 +148,10 @@ public static class PngBatchPreviewEngine
                 var currentFile = new FileInfo(absolute);
                 currentFile.Refresh();
                 if (!currentFile.Exists || IsReparsePath(absolute) || currentFile.Length != entry.SourceBytes ||
-                    currentFile.LastWriteTimeUtc.Ticks != entry.ModifiedUtcTicks)
+                    currentFile.LastWriteTimeUtc.Ticks != entry.ModifiedUtcTicks ||
+                    entry.SourceSha256 is null ||
+                    !string.Equals(Safety.ComputeSha256(absolute, ct),
+                        entry.SourceSha256, StringComparison.OrdinalIgnoreCase))
                 {
                     // The previously generated preview may still be present,
                     // but it must no longer be counted against the changed source.
@@ -191,11 +197,22 @@ public static class PngBatchPreviewEngine
                 }
                 else
                 {
+                    // Persist SHA of the *original as it existed during* the
+                    // candidate build; never substitute a fresh SHA from a
+                    // later changed file, even if length/time are restored.
+                    FileSnapshot originalSnapshot = Safety.Capture(absolute);
+                    string originalSha = Safety.ComputeSha256(absolute, ct);
                     var optimized = PngLosslessOptimizer.CreatePreview(absolute, previews, ct
 #if CHAPPY_TESTING
                         , testOnlyAfterInflatedWrite
 #endif
                     );
+                    if (!Safety.SameSnapshot(originalSnapshot) ||
+                        !string.Equals(Safety.ComputeSha256(absolute, ct), originalSha,
+                            StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException(
+                            "候補生成中に原本のNTFS ID/データ/権限が変化。適用不可");
+                    entry.SourceSha256 = originalSha;
                     entry.Status = optimized.PreviewPath is not null ? "Completed" :
                         optimized.Explanation.Contains("空き容量が不足", StringComparison.Ordinal) ?
                         "Deferred" : "Skipped";
@@ -312,9 +329,11 @@ public static class PngBatchPreviewEngine
                 throw new InvalidDataException("完了記録の候補情報が不正です。");
             if (e.PreviewPath is not null && !IsWithin(e.PreviewPath, previews))
                 throw new InvalidDataException("作業記録の候補ファイルが出力先の外にあります。");
-            if (e.PreviewSha256 is not null &&
-                (e.PreviewSha256.Length != 64 || !e.PreviewSha256.All(Uri.IsHexDigit)))
-                throw new InvalidDataException("作業記録の候補ハッシュが不正です。");
+            if ((e.PreviewSha256 is not null &&
+                    (e.PreviewSha256.Length != 64 || !e.PreviewSha256.All(Uri.IsHexDigit))) ||
+                (e.SourceSha256 is not null &&
+                    (e.SourceSha256.Length != 64 || !e.SourceSha256.All(Uri.IsHexDigit))))
+                throw new InvalidDataException("作業記録の原本・候補ハッシュが不正です。");
         }
     }
 
@@ -356,6 +375,7 @@ public static class PngBatchPreviewEngine
                 original.PreviewPath = parsed.PreviewPath;
                 original.PreviewBytes = parsed.PreviewBytes;
                 original.PreviewSha256 = parsed.PreviewSha256;
+                original.SourceSha256 = parsed.SourceSha256;
                 original.Message = parsed.Message;
             }
         }

@@ -593,6 +593,62 @@ static class Program
             Safety.ComputeSha256(b, CancellationToken.None) == bh &&
             Safety.ComputeSha256(corrupt, CancellationToken.None) == ch,
             "R1.6: 一括実行後も入力原本は全バイト不変");
+        // G4-03: the preview ledger needs the original SHA recorded DURING
+        // candidate creation; matching the *current* source to itself is not
+        // sufficient evidence when users can restore size and timestamps.
+        var pngProof = PngBatchJournalTools.ReadAudit(input, previews);
+        Check(pngProof.Rows.Count(x => x.State == "CandidatePresent") == 2 &&
+            pngProof.Rows.Where(x => x.State == "CandidatePresent").All(x =>
+                x.SourceSha256 is { Length: 64 } &&
+                x.PreviewSha256 is { Length: 64 } &&
+                x.SourceSha256 == Safety.ComputeSha256(
+                    Path.Combine(input, x.RelativePath), CancellationToken.None) &&
+                x.PreviewSha256 == Safety.ComputeSha256(
+                    x.PreviewPath, CancellationToken.None)),
+            "G4-03: PNG候補と当時の原本SHAを独立ジャーナルから再読し全バイト照合");
+        string generatedProgress = Path.Combine(previews, ".chappy-png-batch-r16.progress.jsonl");
+        byte[] progressOriginal = File.ReadAllBytes(generatedProgress);
+        try
+        {
+            string oldStyle = System.Text.Encoding.UTF8.GetString(progressOriginal);
+            string withoutSourceProof = System.Text.RegularExpressions.Regex.Replace(
+                oldStyle, @"""SourceSha256"":""[0-9A-F]{64}""",
+                @"""SourceSha256"":null");
+            Check(oldStyle != withoutSourceProof,
+                "G4-03: 正規PNG候補履歴には生成当時の原本SHA証拠がある");
+            File.WriteAllText(generatedProgress, withoutSourceProof,
+                new System.Text.UTF8Encoding(false));
+            var oldAudit = PngBatchJournalTools.ReadAudit(input, previews);
+            Check(!oldAudit.Rows.Any(x => x.State == "CandidatePresent") &&
+                oldAudit.Rows.Count(x => x.State == "NeedsReview") >= 2 &&
+                oldAudit.EstimatedSavingBytes == 0,
+                "G4-03: 過去の原本SHA無しの候補台帳は不合格・手動確認のみ");
+        }
+        finally { File.WriteAllBytes(generatedProgress, progressOriginal); }
+        byte[] originalA = File.ReadAllBytes(a);
+        DateTime beforeA = File.GetLastWriteTimeUtc(a);
+        try
+        {
+            byte[] sameLengthChanged = (byte[])originalA.Clone();
+            sameLengthChanged[50] ^= 1;
+            File.WriteAllBytes(a, sameLengthChanged);
+            File.SetLastWriteTimeUtc(a, beforeA);
+            Check(new FileInfo(a).Length == originalA.Length &&
+                File.GetLastWriteTimeUtc(a) == beforeA &&
+                PngBatchJournalTools.ReadAudit(input, previews).Rows.Any(x =>
+                    x.RelativePath == "a.png" && x.State == "NeedsReview" &&
+                    x.EstimatedSavingBytes == 0),
+                "G4-03: PNG原本のサイズ/日時を元に戻してもSHA変化で旧候補を拒否");
+        }
+        finally
+        {
+            File.WriteAllBytes(a, originalA);
+            File.SetLastWriteTimeUtc(a, beforeA);
+        }
+        Check(PngBatchJournalTools.ReadAudit(input, previews).Rows.Any(x =>
+                x.RelativePath == "a.png" && x.State == "CandidatePresent" &&
+                x.SourceSha256 == ah),
+            "G4-03: 元データ完全復帰で生成当時の証拠と一致し、原本未置換");
         int candidateCount = Directory.GetFiles(Path.Combine(previews, "chappy-png-previews"), "*.png").Length;
         var afterRunAgain = PngBatchPreviewEngine.Run(input, previews);
         Check(afterRunAgain.Optimized == 2 &&

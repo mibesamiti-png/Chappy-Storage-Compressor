@@ -155,7 +155,7 @@ public static class CompletedGroupLedger
             lines.Add("※ 確認後に他のアプリが編集・移動した場合は再検査が必要です。");
             lines.Add("※ 容量の観測は予約ではなく、ここから復元操作は実行できません。");
             lines.Add("※ G3/G5の安全受入・明示承認が完了するまで本番Undoは無効です。");
-            return string.Join("\\n", lines);
+            return string.Join("\n", lines);
         }
     }
 

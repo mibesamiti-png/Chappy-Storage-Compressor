@@ -1170,10 +1170,17 @@ internal static class R217GroupLedgerResumeTests
             string evidence = Path.Combine(root, "g3-undo-evidence");
             Directory.CreateDirectory(evidence);
             int n = CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence);
+            // Scanner selects its own representative; source creation
+            // order is NOT an authority for the representative identity.
+            string representative = group.Representative.Path;
+            bool allDetached = group.Files.Where(x =>
+                    !x.Path.Equals(representative,
+                        StringComparison.OrdinalIgnoreCase))
+                .All(x => !NativeFile.SameFile(x.Path, representative) &&
+                    NativeFile.GetIdentity(x.Path).LinkCount == 1);
             check(n == 3 &&
                 CompletedGroupLedger.Inspect(root).VerifiedRestored == 1 &&
-                names.Skip(1).All(x => !NativeFile.SameFile(x, first) &&
-                    NativeFile.GetIdentity(x).LinkCount == 1),
+                allDetached,
                 "G3-05: same Core first makes all three generated aliases independent with verified restored receipt");
 
             // Existing output names and all 3 nested collection directories

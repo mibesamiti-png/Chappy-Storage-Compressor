@@ -62,6 +62,7 @@ internal static class UiInteractionSmoke
             var dedupePlanButton = Named<Button>(window, "DedupePlanButton");
             var selectedMergeReviewButton = Named<Button>(window, "SelectedMergeReviewButton");
             var completedLedgerButton = Named<Button>(window, "CompletedLedgerButton");
+            var cleanupHistoryButton = Named<Button>(window, "CleanupHistoryButton");
             var unifiedBatchButton = Named<Button>(window, "UnifiedBatchButton");
             var pngBatchButton = Named<Button>(window, "PngBatchButton");
             var jpegBatchButton = Named<Button>(window, "JpegBatchButton");
@@ -75,13 +76,30 @@ internal static class UiInteractionSmoke
 
             Require(!mergeButton.IsEnabled && !dedupePlanButton.IsEnabled &&
                     !selectedMergeReviewButton.IsEnabled &&
-                    completedLedgerButton.IsEnabled &&
+                    completedLedgerButton.IsEnabled && cleanupHistoryButton.IsEnabled &&
+                    cleanupHistoryButton.ToolTip?.ToString()?.Contains("読み取り専用",
+                        StringComparison.Ordinal) == true &&
+                    !DuplicateCleanupHistory.CanModifyUserFiles &&
                     !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
             Require(window.Title.Contains("Chappy Storage Compressor", StringComparison.Ordinal) &&
                     unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
                     jpegBatchButton.IsEnabled,
                 "Actual WPF UI shows R2.17 and preview-only batch actions enabled while idle");
+
+            var historyWindowType = typeof(MainWindow).Assembly.GetType(
+                "ChappyStorageCompressor.DuplicateCleanupHistoryWindow",
+                throwOnError: true)!;
+            var emptyHistoryWindow = (Window)Activator.CreateInstance(
+                historyWindowType,
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                binder: null,
+                args: new object[] { testRoot,
+                    Array.Empty<DuplicateCleanupHistory.Row>() },
+                culture: null)!;
+            Require(emptyHistoryWindow.Title.Contains("読み取り専用", StringComparison.Ordinal),
+                "UI: history viewer contains no mutating operations");
+            emptyHistoryWindow.Close();
 
             // UI acceptance: scanning all extensions is real behavior, not only a checkbox.
             // The new detail window must accept non-image duplicates, list all

@@ -380,11 +380,11 @@ public static class ReplacementReadiness
                 staged.CreationUtc != old.CreationUtc ||
                 staged.ModifiedUtc != old.ModifiedUtc ||
                 staged.Attributes != old.Attributes ||
-                !staged.SecurityDescriptor.AsSpan().SequenceEqual(old.SecurityDescriptor) ||
+                !NativeFile.SameOwnerGroupDacl(staged.SecurityDescriptor, old.SecurityDescriptor) ||
                 backup.CreationUtc != old.CreationUtc ||
                 backup.ModifiedUtc != old.ModifiedUtc ||
                 backup.Attributes != old.Attributes ||
-                !backup.SecurityDescriptor.AsSpan().SequenceEqual(old.SecurityDescriptor) ||
+                !NativeFile.SameOwnerGroupDacl(backup.SecurityDescriptor, old.SecurityDescriptor) ||
                 !Safety.SameSnapshot(old) || !Safety.SameSnapshot(c) ||
                 !Safety.SameSnapshot(staged) || !Safety.SameSnapshot(backup) ||
                 !Eq(Safety.ComputeSha256(original, ct), record.OriginalSha256) ||
@@ -650,7 +650,7 @@ public static class ReplacementReadiness
             copied.CreationUtc != source.CreationUtc ||
             copied.ModifiedUtc != source.ModifiedUtc ||
             copied.Attributes != source.Attributes ||
-            !copied.SecurityDescriptor.AsSpan().SequenceEqual(source.SecurityDescriptor) ||
+            !NativeFile.SameOwnerGroupDacl(copied.SecurityDescriptor, source.SecurityDescriptor) ||
             !Safety.SameSnapshot(source))
             throw new InvalidDataException(
                 "Could not reproduce source NTFS owner/group/DACL/timestamps on independent image");

@@ -77,7 +77,12 @@ internal static class R217GroupLedgerResumeTests
         if (crashPoint is not null &&
             !BatchCrashCheckpoints.Contains(crashPoint, StringComparer.Ordinal))
             throw new InvalidOperationException("Unknown generated Core crash checkpoint");
-        if (crashPoint is null && !Guid.TryParseExact(args[2], "N", out _))
+        bool inspectUndo = args[2].StartsWith("review-undo:", StringComparison.Ordinal);
+        string reviewId = inspectUndo ? args[2]["review-undo:".Length..] : "";
+        if (inspectUndo && !Guid.TryParseExact(reviewId, "N", out _))
+            throw new InvalidOperationException("Invalid generated restart review receipt");
+        if (!inspectUndo && crashPoint is null &&
+            !Guid.TryParseExact(args[2], "N", out _))
             throw new InvalidOperationException("Unknown generated Undo receipt");
         string root = Path.GetFullPath(args[1]);
         GuardRoot(root);
@@ -86,6 +91,40 @@ internal static class R217GroupLedgerResumeTests
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Part27 checkpoint outside generated root");
         Journal.TestFolderPath = Path.Combine(root, "part27-journal");
+        if (inspectUndo)
+        {
+            // A NEW process, with no scanner/manifest objects passed through
+            // memory, must reidentify all original metadata using on-disk
+            // durable receipts. Its only write is the generated test signal.
+            var candidate = CompletedGroupLedger.InspectUndoCandidates(root)
+                .Single(x => x.OperationId == reviewId);
+            if (!candidate.ReviewReady || candidate.OriginalFiles.Count < 2)
+                throw new InvalidDataException("Restarted Undo review failed to certify group");
+            string json = JsonSerializer.Serialize(new
+            {
+                candidate.OperationId,
+                candidate.State,
+                candidate.AlreadyIndependentAliases,
+                candidate.RemainingAliases,
+                candidate.RequiredAdditionalBytes,
+                candidate.ProductionUndoAuthorized,
+                originalSources = candidate.OriginalFiles.Select(x => new
+                {
+                    x.Path, x.OriginalVolumeSerial, x.OriginalFileIndex,
+                    x.OriginalLinks, x.CreationUtc, x.ModifiedUtc, x.Attributes,
+                    x.Sha256, x.OwnerDaclFingerprint
+                })
+            });
+            using (var stream = new FileStream(signal, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(json);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            return 0;
+        }
         if (crashPoint is not null)
         {
             // Genuine OS process termination, never an exception unwinding
@@ -164,6 +203,59 @@ internal static class R217GroupLedgerResumeTests
             }
         }
         return child.ExitCode;
+    }
+
+    private static void VerifyRestartUndoReview(string root, string id,
+        IReadOnlyDictionary<string, FileSnapshot> before,
+        int expectedDetached, Action<bool, string> check)
+    {
+        string reportPath = Path.Combine(root,
+            "part27-undo-review-" + expectedDetached + ".json");
+        int exitCode = KillWorker(root, "review-undo:" + id, reportPath);
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(reportPath));
+        JsonElement data = document.RootElement;
+        bool state = exitCode == 0 &&
+            data.GetProperty("OperationId").GetString() == id &&
+            data.GetProperty("State").GetString() ==
+                (expectedDetached == 0 ? "VerifiedCompleted" :
+                    "ExplicitResumeRequired") &&
+            data.GetProperty("AlreadyIndependentAliases").GetInt32() == expectedDetached &&
+            data.GetProperty("RemainingAliases").GetInt32() == 3 - expectedDetached &&
+            data.GetProperty("ProductionUndoAuthorized").GetBoolean() == false &&
+            data.GetProperty("RequiredAdditionalBytes").GetInt64() ==
+                (3 - expectedDetached) * before.Values.First().Length +
+                CapacityGuard.TargetReserve;
+        var sourceRows = data.GetProperty("originalSources").EnumerateArray().ToArray();
+        bool exact = state && sourceRows.Length == 4 &&
+            sourceRows.All(row =>
+            {
+                string path = row.GetProperty("Path").GetString() ?? "";
+                if (!before.TryGetValue(path, out FileSnapshot? original))
+                    return false;
+                return row.GetProperty("OriginalVolumeSerial").GetUInt32() ==
+                        original.Identity.VolumeSerial &&
+                    row.GetProperty("OriginalFileIndex").GetUInt64() ==
+                        original.Identity.FileIndex &&
+                    row.GetProperty("OriginalLinks").GetUInt32() ==
+                        original.Identity.LinkCount &&
+                    row.GetProperty("CreationUtc").GetDateTime() ==
+                        original.CreationUtc &&
+                    row.GetProperty("ModifiedUtc").GetDateTime() ==
+                        original.ModifiedUtc &&
+                    row.GetProperty("Attributes").GetInt32() ==
+                        (int)original.Attributes &&
+                    row.GetProperty("Sha256").GetString() ==
+                        Safety.ComputeSha256(path, CancellationToken.None) &&
+                    row.GetProperty("OwnerDaclFingerprint").GetString() ==
+                        Convert.ToHexString(SHA256.HashData(original.SecurityDescriptor));
+            });
+        check(exact &&
+            CompletedGroupLedger.InspectUndoCandidates(root).Single(x =>
+                x.OperationId == id).RemainingAliases == 3 - expectedDetached,
+            "G3-01: independent restarted child reidentifies all 4 ORIGINAL IDs, SHA, metadata and exact remaining Undo aliases without changing originals, detached=" +
+                expectedDetached);
+        if (!exact)
+            throw new InvalidDataException("G3-01 genuine child restart receipt invalid");
     }
 
     // B2: crash *after* the real Core has consolidated all names but *before*

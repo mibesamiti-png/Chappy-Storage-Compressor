@@ -282,6 +282,8 @@ internal static class UiInteractionSmoke
                 throw new InvalidOperationException("Part30 WPF HistoryGrid missing");
             var recoveryApply = recoveryView.FindName("ApplyButton") as Button ??
                 throw new InvalidOperationException("Part30 WPF ApplyButton missing");
+            var undoReviewButton = recoveryView.FindName("UndoReviewButton") as Button ??
+                throw new InvalidOperationException("G3 WPF UndoReviewButton missing");
             var historyStatus = recoveryView.FindName("HistorySummaryText") as TextBlock ??
                 throw new InvalidOperationException("Part30 WPF history summary missing");
             var collisionGrid = recoveryView.FindName("CollisionGrid") as DataGrid ??
@@ -308,6 +310,38 @@ internal static class UiInteractionSmoke
                 NativeFile.GetIdentity(right).SameFile(beforeRightId);
             Require(part30WpfHistoryReadOnly,
                 "R2.17 part30: recovery history tab routed Loaded refresh never enables Apply or mutates originals/store");
+            Require(!undoReviewButton.IsEnabled,
+                "G3-01: absent authenticated completed history cannot enable Undo identification");
+            // Simulate a stale UI row, NOT a fabricated disk receipt.
+            // The actual routed click MUST reopen the persisted folder and
+            // refuse the row; no previous scan object may authorize Undo.
+            var historyRows = historyGrid.ItemsSource as
+                System.Collections.ObjectModel.ObservableCollection<RecoveryEvidenceOverview.Row>
+                ?? throw new InvalidOperationException("G3 read-only history source missing");
+            var staleUndoRow = new RecoveryEvidenceOverview.Row(
+                "複数ファイルのグループ履歴", Guid.NewGuid().ToString("N"),
+                "VerifiedCompleted", "STA test-only stale row (no disk manifest)", false);
+            historyRows.Add(staleUndoRow);
+            historyGrid.SelectedItem = staleUndoRow;
+            Require(undoReviewButton.IsEnabled && !recoveryApply.IsEnabled,
+                "G3-01: history group selection enables only read-only reconstruction, never Apply");
+            RoutedClick(undoReviewButton);
+            var undoDetail = recoveryView.FindName("DetailText") as TextBlock ??
+                throw new InvalidOperationException("G3 WPF history detail missing");
+            PumpUntil(() => undoReviewButton.IsEnabled &&
+                undoDetail.Text.Contains("元ファイルを安全なUndo候補として再特定できません",
+                    StringComparison.Ordinal),
+                TimeSpan.FromSeconds(25));
+            bool g3NoStaleUndoAuthorization =
+                !recoveryApply.IsEnabled && !mergeButton.IsEnabled &&
+                !Directory.Exists(Safety.StorePath(originals)) &&
+                OracleHash(left) == beforeA && OracleHash(right) == beforeB &&
+                NativeFile.GetIdentity(left).SameFile(beforeLeftId) &&
+                NativeFile.GetIdentity(right).SameFile(beforeRightId);
+            Require(g3NoStaleUndoAuthorization,
+                "G3-01: real WPF Undo preview rejects a forged in-memory history row with no durable manifest and never changes originals");
+            historyGrid.SelectedItem = null;
+            historyRows.Remove(staleUndoRow);
             PumpUntil(() => collisionStatus.Text.Contains("同名ファイル調査",
                 StringComparison.Ordinal), TimeSpan.FromSeconds(25));
             historyTabs.SelectedIndex = 2;
@@ -960,6 +994,8 @@ internal static class UiInteractionSmoke
                         !IndependentUndoEngine.ProductionEnabled &&
                         !IndependentUndoCrashJournal.ProductionMutationEnabled,
                     part30RecoveryHistoryTabRoutedLoadedVerified = part30WpfHistoryReadOnly,
+                    g3ReadOnlyUndoPreviewForgedHistoryRowRefused = g3NoStaleUndoAuthorization,
+                    g3UndoReviewButtonCannotEnableLegacyApply = !recoveryApply.IsEnabled,
                     part30HistoryTabRemainsReadOnly = historyGrid.IsReadOnly,
                     part30NeverEnabledApplyForHistory = !recoveryApply.IsEnabled,
                     part30ReadOnlyInspectionNeverCreatedStore =

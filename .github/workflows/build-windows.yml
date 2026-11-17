@@ -1038,6 +1038,9 @@ jobs:
               $r.explicitResumeFinalDetachedAliases -ne 3 -or
               $r.allBytesTimesOwnerDaclAndNtfsIdsVerified -ne $true -or
               $r.completedHistoryRestored -ne $true -or
+              $r.actualCoreKillCheckpointCount -ne 7 -or
+              $r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true -or
+              $r.partialFailedGroupAllocationNeverCountedAsVerifiedReceipt -ne $true -or
               $r.productionMergeEnabled -ne $false -or
               $r.productionUndoEnabled -ne $false -or
               $r.actualUserFilesTouched -ne $false -or
@@ -1646,6 +1649,22 @@ jobs:
               $r.isolatedFreeSpaceGainVerified -ne $true -or
               $r.independentUndoReallocatedSpaceVerified -ne $true -or
               $r.lowSpaceReachedBelowFourMiB -ne $true -or
+              $r.groupedPartialAllocation.groups -ne '2/3/2' -or
+              $r.groupedPartialAllocation.generatedOriginalCount -ne 7 -or
+              $r.groupedPartialAllocation.sourceUniqueIdsBefore -ne 7 -or
+              $r.groupedPartialAllocation.sourceAllocatedBeforeBytes -ne 29360128 -or
+              $r.groupedPartialAllocation.completedGroup0UniqueIds -ne 6 -or
+              $r.groupedPartialAllocation.pendingBackupKeptUniqueIds -ne 6 -or
+              $r.groupedPartialAllocation.incompleteGroup1AfterBackupDeleteUniqueIds -ne 5 -or
+              $r.groupedPartialAllocation.physicalUniqueIdAllocatedDeltaBytes -ne 8388608 -or
+              $r.groupedPartialAllocation.verifiedCompletedGroupLogicalBytes -ne 4194304 -or
+              $r.groupedPartialAllocation.confirmedGroup0FreeSpaceGain -ne $true -or
+              $r.groupedPartialAllocation.observedPartialFreeSpaceGain -ne $true -or
+              $r.groupedPartialAllocation.pendingBackupConsumesStorage -ne $true -or
+              $r.groupedPartialAllocation.unfinishedGroupPhysicalSavingsNotCreditedToReceipt -ne $true -or
+              $r.groupedPartialAllocation.untouchedThirdGroupIndependentIdsAndSha -ne $true -or
+              $r.groupedPartialAllocation.realCoreOnMountedJunction -ne $false -or
+              $r.groupedPartialAllocation.physicalPowerCutProven -ne $false -or
               $r.allSourceHashesAndIndependentIdsPreserved -ne $true -or
               $r.productionDedupeEnabled -ne $false -or
               $r.productionUndoEnabled -ne $false -or

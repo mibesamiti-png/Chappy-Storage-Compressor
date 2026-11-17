@@ -52,6 +52,90 @@ public static class ReplacementReadiness
         return new(sourceEnough, backupEnough, differentVolume, true, reason);
     }
 
+    // G4-01/02/03/05: common *read-only* fresh-image preflight. Nothing
+    // here authorizes a File.Replace; the future transaction must repeat
+    // these checks under pinned source/destination identities at cutover.
+    public sealed record FidelityDecision(string Format, bool Verified,
+        long OriginalBytes, long CandidateBytes, string OriginalSha256,
+        string CandidateSha256, string Reason)
+    {
+        public bool ProductionReplacementAuthorized => false;
+    }
+
+    public static FidelityDecision InspectCandidatePair(string originalPath,
+        string candidatePath, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        string original = Path.GetFullPath(originalPath);
+        string candidate = Path.GetFullPath(candidatePath);
+        string format = Path.GetExtension(original).ToLowerInvariant();
+        if (format is ".jpeg") format = ".jpg";
+        if (format is not (".png" or ".jpg"))
+            return new(format, false, 0, 0, "", "", "PNG/JPG以外は未対応");
+        try
+        {
+            if (original.Equals(candidate, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("原本と候補が同じパスです");
+            JpegBatchPreviewEngine.CheckNoReparse(original);
+            JpegBatchPreviewEngine.CheckNoReparse(candidate);
+            var source = Safety.Capture(original);
+            var optimized = Safety.Capture(candidate);
+            if (source.Identity.LinkCount != 1 ||
+                optimized.Identity.LinkCount != 1 ||
+                source.Identity.SameFile(optimized.Identity) ||
+                optimized.Length >= source.Length ||
+                (format == ".png" &&
+                 !Path.GetExtension(candidate).Equals(".png",
+                     StringComparison.OrdinalIgnoreCase)) ||
+                (format == ".jpg" &&
+                 !new[] { ".jpg", ".jpeg" }.Contains(
+                     Path.GetExtension(candidate), StringComparer.OrdinalIgnoreCase)))
+                throw new InvalidDataException(
+                    "原本/候補のID・ハードリンク・形式・削減量が不正");
+            // Refuse ordinary concurrent writers and pathname deletion while
+            // checking the same two files. This is NOT a mutation lock.
+            using var sourceLock = new FileStream(original, FileMode.Open,
+                FileAccess.Read, FileShare.Read);
+            using var candidateLock = new FileStream(candidate, FileMode.Open,
+                FileAccess.Read, FileShare.Read);
+            if (sourceLock.Length != source.Length ||
+                candidateLock.Length != optimized.Length)
+                throw new InvalidDataException("検証中にファイル長が変わりました");
+            string originalHash = Safety.ComputeSha256(original, ct);
+            string candidateHash = Safety.ComputeSha256(candidate, ct);
+            if (originalHash == candidateHash)
+                throw new InvalidDataException("候補と原本の内容が同一です");
+            bool equivalent = format == ".png"
+                ? PngLosslessOptimizer.EquivalentForReplacement(original, candidate, ct)
+                : JpegMarkerAudit.Inspect(original, ct) ==
+                    JpegMarkerAudit.Inspect(candidate, ct) &&
+                    JpegLosslessPreviewEngine.EquivalentDecodedPixels(
+                        original, candidate, ct);
+            if (!equivalent ||
+                !Safety.SameSnapshot(source) ||
+                !Safety.SameSnapshot(optimized) ||
+                NativeFile.GetIdentity(original).LinkCount != 1 ||
+                NativeFile.GetIdentity(candidate).LinkCount != 1 ||
+                Safety.ComputeSha256(original, ct) != originalHash ||
+                Safety.ComputeSha256(candidate, ct) != candidateHash)
+                throw new InvalidDataException(
+                    "原本・候補の画素/透明度/付加情報または元NTFS証拠が不一致");
+            return new(format, true, source.Length, optimized.Length,
+                originalHash, candidateHash,
+                "元ID/サイズ/権限/全バイト・画像画素・必須メタデータ再確認済み。" +
+                " 本番置換・永続バックアップは未実装のため適用不可");
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or
+            UnauthorizedAccessException or ArgumentException or NotSupportedException or
+            OverflowException or System.ComponentModel.Win32Exception or
+            System.Runtime.InteropServices.COMException)
+        {
+            return new(format, false, 0, 0, "", "",
+                "候補を採用できません: " + ex.GetType().Name + " / " + ex.Message);
+        }
+    }
+
     public static Summary Inspect(CombinedCapacityReport.Summary verifiedPreviewReport,
         string inputRoot, string outputRoot, string backupRoot,
         CancellationToken ct = default)
@@ -71,6 +155,28 @@ public static class ReplacementReadiness
             StringComparison.OrdinalIgnoreCase);
         long inputFree = inputDrive.AvailableFreeSpace;
         long backupFree = backupDrive.AvailableFreeSpace;
+        // Recover the candidate paths from the EXISTING verified PNG/JPG
+        // journals; caller-supplied capacity rows are not trusted as file
+        // authority. Full fidelity is checked again at this WPF preflight.
+        var candidatesByKey = new Dictionary<string, (string Path, long SourceBytes,
+            long CandidateBytes)>(StringComparer.OrdinalIgnoreCase);
+        if (File.Exists(Path.Combine(output, ".chappy-png-batch-r16.json")))
+        {
+            foreach (var candidate in PngBatchJournalTools.ReadAudit(input, output, ct).Rows)
+                if (candidate.State == "CandidatePresent")
+                    candidatesByKey.Add("PNG|" + candidate.RelativePath,
+                        (candidate.PreviewPath, candidate.SourceBytes, candidate.PreviewBytes));
+        }
+        string jpegPlan = Path.Combine(output, JpegBatchPreviewEngine.PlanName);
+        if (File.Exists(jpegPlan))
+        {
+            var plan = JpegBatchPreviewEngine.LoadPlan(jpegPlan);
+            foreach (var candidate in JpegBatchPreviewEngine.Inspect(
+                         input, output, plan.ToolPath, ct).Rows)
+                if (candidate.Status == "Completed" && candidate.VerifiedSavingBytes > 0)
+                    candidatesByKey.Add("JPG|" + candidate.RelativePath,
+                        (candidate.CandidatePath, candidate.SourceBytes, candidate.CandidateBytes));
+        }
         var rows = new List<Row>();
         int feasible = 0, candidates = 0;
         long projected = 0;
@@ -98,11 +204,26 @@ public static class ReplacementReadiness
                 var decision = EvaluateCapacity(row.SourceBytes, row.CandidateBytes,
                     inputFree, backupFree, different);
                 explanation = decision.Explanation;
-                eligible = decision.MeetsSpaceRequirements;
+                if (decision.MeetsSpaceRequirements)
+                {
+                    if (!candidatesByKey.TryGetValue(row.Format + "|" + row.RelativePath,
+                            out var saved) ||
+                        saved.SourceBytes != row.SourceBytes ||
+                        saved.CandidateBytes != row.CandidateBytes ||
+                        !Inside(saved.Path, output))
+                        throw new InvalidDataException("候補台帳の保存先・サイズが一致しません");
+                    var fidelity = InspectCandidatePair(path, saved.Path, ct);
+                    eligible = fidelity.Verified;
+                    explanation = eligible ?
+                        "容量/独立バックアップ条件・元NTFS ID・画素/メタデータ再検査合格。" +
+                        " 原本置換はまだ無効" :
+                        fidelity.Reason;
+                }
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
-                ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+                ArgumentException or InvalidOperationException or
+                System.ComponentModel.Win32Exception or NotSupportedException)
             {
                 explanation = "安全判定不可: " + ex.Message;
             }

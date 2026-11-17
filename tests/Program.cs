@@ -869,15 +869,34 @@ static class Program
                                 using (var writer = new FileStream(source,
                                     FileMode.Open, FileAccess.ReadWrite, FileShare.None))
                                     ExpectThrows(() =>
-                                        ReplacementReadiness.CutoverGeneratedPngSynthetic(
+                                        ReplacementReadiness.ApplyPreparedImage(
                                             source, preview.PreviewPath!, testStage,
                                             testBackup),
                                         "G4-03: 原本writer競合中はID固定切替を拒否: " + checkpoint);
                                 Check(Safety.SameSnapshot(startSnapshot) &&
                                     File.Exists(image.StagedPath),
                                     "G4-03: 直前競合があっても原本/候補を保存: " + checkpoint);
+                                if (checkpoint == "g4-after-original-rename")
+                                {
+                                    using (var backupWriter = new FileStream(image.BackupPath,
+                                        FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+                                        ExpectThrows(() => ReplacementReadiness.ApplyPreparedImage(
+                                            source, preview.PreviewPath!, testStage, testBackup),
+                                            "G4-03: 外部バックアップwriterが開いている間は切替を拒否");
+                                    CapacityGuard.TestOnlyReadAvailable = _ => (0, long.MaxValue);
+                                    try
+                                    {
+                                        ExpectThrows(() => ReplacementReadiness.ApplyPreparedImage(
+                                            source, preview.PreviewPath!, testStage, testBackup),
+                                            "G4-03: stage準備後の元NTFS容量不足は切替を拒否");
+                                    }
+                                    finally { CapacityGuard.TestOnlyReadAvailable = null; }
+                                    Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                        source, preview.PreviewPath!, testStage, testBackup) == "Prepared",
+                                        "G4-03: 拒否後も元ID・stage・独立バックアップは一致");
+                                }
                                 if (killDuringRecovery)
-                                    ReplacementReadiness.CutoverGeneratedPngSynthetic(
+                                    ReplacementReadiness.ApplyPreparedImage(
                                         source, preview.PreviewPath!, testStage, testBackup);
 
                                 var childProcess = new System.Diagnostics.ProcessStartInfo("dotnet")
@@ -917,7 +936,7 @@ static class Program
                                 Check(interrupted == expectedInterrupted,
                                     "G4-04: 実プロセス死の原本ID・候補ID状態を判定: " +
                                     checkpoint + " -> " + interrupted);
-                                string restored = ReplacementReadiness.RestoreGeneratedPngSynthetic(
+                                string restored = ReplacementReadiness.RestorePreparedImage(
                                     source, preview.PreviewPath!, testStage, testBackup);
                                 Check(restored is "Prepared" or "OriginalRestored" &&
                                     Safety.SameSnapshot(startSnapshot) &&
@@ -929,7 +948,7 @@ static class Program
                                     new FileInfo(source).Length == startSnapshot.Length,
                                     "G4-04: 本物のプロセス死→原本ID/ACL/時刻/全バイト復元: " +
                                     checkpoint);
-                                Check(ReplacementReadiness.RestoreGeneratedPngSynthetic(
+                                Check(ReplacementReadiness.RestorePreparedImage(
                                         source, preview.PreviewPath!, testStage,
                                         testBackup) is "OriginalUnchanged" or "OriginalRestored",
                                     "G4-04: 二重リカバリーは冪等かつ元画像未変更: " + checkpoint);
@@ -2076,16 +2095,32 @@ static class Program
             string stopAt = args[5];
             FaultInjection.OnCheckpoint = name =>
             {
-                if (name == stopAt)
-                    Environment.Exit(94); // real OS process death, no finally/rollback
+                if (name != stopAt) return;
+                if (name == "g4-after-original-rename")
+                {
+                    foreach (string evidence in Directory.EnumerateFiles(args[4]).Append(args[2]))
+                    {
+                        try
+                        {
+                            using var writer = new FileStream(evidence, FileMode.Open,
+                                FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+                        }
+                        catch (IOException ex) when ((ex.HResult & 0xffff) == 32)
+                        {
+                            continue; // ERROR_SHARING_VIOLATION: the transaction holds this evidence.
+                        }
+                        throw new InvalidOperationException("G4 evidence could be opened for writing");
+                    }
+                }
+                Environment.Exit(94); // real OS process death, no finally/rollback
             };
             try
             {
                 if (args[0] == "--g4-pinned-cutover-child")
-                    ReplacementReadiness.CutoverGeneratedPngSynthetic(
+                    ReplacementReadiness.ApplyPreparedImage(
                         args[1], args[2], args[3], args[4]);
                 else
-                    ReplacementReadiness.RestoreGeneratedPngSynthetic(
+                    ReplacementReadiness.RestorePreparedImage(
                         args[1], args[2], args[3], args[4]);
                 return 0;
             }

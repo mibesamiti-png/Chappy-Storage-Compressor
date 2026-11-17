@@ -221,19 +221,19 @@ check('G4-03: stored/reloaded stage and backup refuse changed NTFS metadata',
       'G4-03: stageの画素全バイトが正しくても元日時相違を再起動後拒否' in test)
 
 # G4-03/04: production cutover must stay impossible until verified
-# release transaction. The CI synthetic-only implementation MUST use the
+# release transaction. The shared implementation MUST use the
 # existing NTFS pinned-ID no-replace primitive and a durable preparation
 # receipt, with real process-death recovery and byte-exact original-ID proof.
 check('G4-04: generated PNG cutover/restore use pinned IDs, not File.Replace',
       '#if CHAPPY_TESTING' in replacement_readiness and
-      'internal static void CutoverGeneratedPngSynthetic(' in replacement_readiness and
-      'internal static string RestoreGeneratedPngSynthetic(' in replacement_readiness and
-      'NativeFile.PinnedFile.Open(p.Original,' in replacement_readiness and
-      'NativeFile.PinnedFile.Open(p.Stage,' in replacement_readiness and
-      'sourcePinned.RenameNoReplace(p.Rollback);' in replacement_readiness and
-      'stagePinned.RenameNoReplace(p.Original);' in replacement_readiness and
-      'candidatePinned.RenameNoReplace(p.Quarantine);' in replacement_readiness and
-      'oldPinned.RenameNoReplace(p.Original);' in replacement_readiness and
+      'internal static void ApplyPreparedImage(' in replacement_readiness and
+      'internal static string RestorePreparedImage(' in replacement_readiness and
+      'NativeFile.PinnedFile.Open(phase.Original,' in replacement_readiness and
+      'NativeFile.PinnedFile.Open(phase.Stage,' in replacement_readiness and
+      'sourcePinned.RenameNoReplace(phase.Rollback);' in replacement_readiness and
+      'stagePinned.RenameNoReplace(phase.Original);' in replacement_readiness and
+      'candidatePinned.RenameNoReplace(phase.Quarantine);' in replacement_readiness and
+      'oldPinned.RenameNoReplace(phase.Original);' in replacement_readiness and
       'File.Replace(' not in replacement_readiness and
       'File.Move(' not in replacement_readiness)
 check('G4-04: synthetic cutover can only touch generated exact PNG smoke files',
@@ -245,10 +245,13 @@ check('G4-04: synthetic cutover can only touch generated exact PNG smoke files',
       'G4-04: 実プロセス死の原本ID・候補ID状態を判定:' in test and
       'G4-04: 本物のプロセス死→原本ID/ACL/時刻/全バイト復元:' in test and
       'G4-04: 二重リカバリーは冪等かつ元画像未変更:' in test)
-check('G4-04: all image source mutation remains absent from release build',
+check('G4-04: release build refuses both image mutation entry points',
       'internal bool ProductionReplacementAuthorized => false;' in replacement_readiness and
       'internal bool ReadyForCutover => false;' in replacement_readiness and
-      '#if CHAPPY_TESTING' in replacement_readiness and
+      replacement_readiness.count(
+          'RequireImageMutationScope(original, candidate, stageRoot, backupRoot);\n'
+          '        using var lease = MutationLease.Acquire();') == 2 and
+      '#else\n        throw new NotSupportedException("画像原本の置換・復元は' in replacement_readiness and
       'public const bool ProductionMutationEnabled = false;' in
         (root/'Core/CompletedGroupLedger.cs').read_text(encoding='utf-8'))
 

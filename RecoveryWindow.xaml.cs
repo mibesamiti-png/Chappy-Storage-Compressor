@@ -14,6 +14,43 @@ public partial class RecoveryWindow : Window
     private readonly string? _selectedRoot;
     private CollisionEvidenceReview.Summary? _lastCollisionEvidence;
     private bool _busy;
+    // Deliberately FALSE in every installed product. The routed WPF CI
+    // explicitly opts in for generated TEMP+sentinel fixtures by reflection.
+    // This does NOT authorize actual personal media. Core independently
+    // rejects roots outside its generated-only test boundary.
+    private bool _allowGeneratedOnlyUndoTest;
+    private Func<string, bool> _confirmGeneratedOnlyUndo = message =>
+        MessageBox.Show(message, "生成データのみ・独立Undoの最終確認",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning,
+            MessageBoxResult.No) == MessageBoxResult.Yes;
+    private Action<string> _showGeneratedOnlyUndo = message =>
+        MessageBox.Show(message, "生成データの独立Undo結果",
+            MessageBoxButton.OK, MessageBoxImage.Information);
+    private bool SyntheticUndoSelectionAllowed()
+    {
+        if (!_allowGeneratedOnlyUndoTest || _busy ||
+            RecoveryTabs?.SelectedIndex != 1 ||
+            HistoryGrid?.SelectedItem is not RecoveryEvidenceOverview.Row row ||
+            row.Source != "複数ファイルのグループ履歴" ||
+            row.NeedsAttention || row.State is not
+                ("VerifiedCompleted" or "ExplicitResumeRequired") ||
+            string.IsNullOrWhiteSpace(_selectedRoot))
+            return false;
+        try
+        {
+            string root = Safety.ValidateRoot(_selectedRoot);
+            string temp = Path.TrimEndingDirectorySeparator(
+                Path.GetFullPath(Path.GetTempPath()));
+            return root.StartsWith(temp + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase) &&
+                root.Contains("ChappyStorageSmoke_",
+                    StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(Path.Combine(root, ".chappy-part23-generated-only")) &&
+                File.ReadAllText(Path.Combine(root,
+                    ".chappy-part23-generated-only")) == "Part23 synthetic data only";
+        }
+        catch { return false; }
+    }
 
     public RecoveryWindow(string? selectedRoot = null)
     {
@@ -41,6 +78,7 @@ public partial class RecoveryWindow : Window
             RecoveryTabs.SelectedIndex == 1 &&
             HistoryGrid.SelectedItem is RecoveryEvidenceOverview.Row h &&
             h.Source == "複数ファイルのグループ履歴";
+        UndoExecuteButton.IsEnabled = !busy && SyntheticUndoSelectionAllowed();
     }
 
     private async Task RefreshAsync()
@@ -187,6 +225,8 @@ public partial class RecoveryWindow : Window
             UndoReviewButton.IsEnabled = !_busy && RecoveryTabs.SelectedIndex == 1 &&
                 HistoryGrid.SelectedItem is RecoveryEvidenceOverview.Row h &&
                 h.Source == "複数ファイルのグループ履歴";
+        if (UndoExecuteButton != null)
+            UndoExecuteButton.IsEnabled = SyntheticUndoSelectionAllowed();
     }
 
     private void HistorySelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -195,6 +235,8 @@ public partial class RecoveryWindow : Window
             UndoReviewButton.IsEnabled = !_busy && RecoveryTabs.SelectedIndex == 1 &&
                 HistoryGrid.SelectedItem is RecoveryEvidenceOverview.Row selected &&
                 selected.Source == "複数ファイルのグループ履歴";
+        if (UndoExecuteButton != null)
+            UndoExecuteButton.IsEnabled = SyntheticUndoSelectionAllowed();
         if (HistoryGrid?.SelectedItem is RecoveryEvidenceOverview.Row h && DetailText != null)
             DetailText.Text = $"証拠の種類：{h.Source}\n\n判定：{h.AttentionText} / {h.State}\n\n" +
                 $"対象：{h.Target}\n\n{h.Explanation}\n\n" +
@@ -256,6 +298,78 @@ public partial class RecoveryWindow : Window
                 "\n" + ex.Message;
         }
         finally { Busy(false); }
+    }
+
+    // G3-07: actual routed WPF click reaches the very same normal-compiled
+    // internal Core transaction, but ONLY from a CI opt-in + generated
+    // disposable TEMP/sentinel root. Ordinary product files always keep the
+    // button disabled. Both root and full ledger are revalidated in Core.
+    private async void UndoExecute_Click(object sender, RoutedEventArgs e)
+    {
+        if (!SyntheticUndoSelectionAllowed() ||
+            HistoryGrid.SelectedItem is not RecoveryEvidenceOverview.Row selected ||
+            _selectedRoot is null)
+            return;
+        string operationId = selected.Target;
+        string root = _selectedRoot;
+        try
+        {
+            var first = await Task.Run(() =>
+                CompletedGroupLedger.InspectUndoCandidates(root)
+                    .SingleOrDefault(x => x.OperationId == operationId));
+            if (first is null || !first.ReviewReady)
+            {
+                DetailText.Text = "元ファイルまたは完了履歴が未検証。手動調査が必要です（未実行）。";
+                return;
+            }
+            if (!_confirmGeneratedOnlyUndo(
+                    first.Describe() + "\n\n生成した使い捨てNTFSテストデータだけの独立Undoを実行しますか？"))
+            {
+                DetailText.Text = "最終確認を辞退。独立Undoは未実行。";
+                return;
+            }
+            // Consent does not authorize stale previews, old IDs or old capacity.
+            var again = await Task.Run(() =>
+                CompletedGroupLedger.InspectUndoCandidates(root)
+                    .SingleOrDefault(x => x.OperationId == operationId));
+            if (!SyntheticUndoSelectionAllowed() || again is null ||
+                !again.ReviewReady ||
+                first.RemainingAliases != again.RemainingAliases ||
+                first.OriginalFiles.Count != again.OriginalFiles.Count)
+                throw new InvalidDataException(
+                    "同意後にUndo対象・安全条件が変わりました。元データを変更せず中止");
+            // The generated fixture prepares this existing directory ahead
+            // of time. No folder is created just by pressing the UI button.
+            string evidence = Path.Combine(root, "g3-wpf-undo-evidence");
+            if (!Directory.Exists(evidence))
+                throw new InvalidDataException("検証用Undo証拠フォルダがありません");
+            Busy(true);
+            DetailText.Text = "生成データの独立Undoを検証・処理中。中断した場合は証拠を保全します…";
+            int restored = await Task.Run(() =>
+                CompletedGroupLedger.ResumeUndoCore(root, operationId,
+                    evidence, CancellationToken.None,
+                    afterDurableAlias: count =>
+                        Dispatcher.InvokeAsync(() =>
+                            DetailText.Text = "元ファイルを独立化・検証済み: " +
+                                count + "件。中断時の再開情報は永続保存済み")));
+            _showGeneratedOnlyUndo(
+                "生成データだけの独立Undoが完了：独立化した別名 " +
+                restored + "件。\n通常ユーザーのデータ変更機能は引き続き無効。");
+            await RefreshAsync();
+            HistorySummaryText.Text += "\n【生成テストUndo成功】独立化 " +
+                restored + "件。元ファイルのID・SHA/権限を再照合済み。";
+        }
+        catch (Exception ex)
+        {
+            DetailText.Text = "【Undo停止：手動調査が必要】" + operationId +
+                "\n" + ex.Message +
+                "\n未確認のstage・ファイル・復旧証拠は移動・削除しないでください。" +
+                "\n同名ファイル調査タブのP0/P1と統合・Undo履歴も確認してください。";
+        }
+        finally
+        {
+            if (_busy) Busy(false);
+        }
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)

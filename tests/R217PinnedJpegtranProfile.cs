@@ -297,6 +297,12 @@ internal static class R217PinnedJpegtranProfile
             var resumed = JpegBatchPreviewEngine.Run(input, output, tool);
             resumeWatch.Stop();
             var audit = JpegBatchPreviewEngine.Inspect(input, output, tool);
+            check(audit.Rows.Where(x => x.Status == "Completed").All(x =>
+                      x.SourceSha256 is { Length: 64 } &&
+                      x.CandidateSha256 is { Length: 64 } &&
+                      x.SourceSha256 == IndependentSha(Path.Combine(input, x.RelativePath)) &&
+                      x.CandidateSha256 == IndependentSha(x.CandidatePath)),
+                "G4-03: JPEG既存台帳の生成時原本SHAと候補SHAを再読して検証");
             check(resumed.Total == Count && resumed.Done == Count &&
                   resumed.Completed == summary.Completed &&
                   resumed.EstimatedSavingBytes == summary.EstimatedSavingBytes &&

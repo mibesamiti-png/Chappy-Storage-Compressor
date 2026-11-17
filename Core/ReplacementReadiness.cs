@@ -406,7 +406,8 @@ public static class ReplacementReadiness
         catch (Exception ex) when (ex is IOException or InvalidDataException or
             InvalidOperationException or UnauthorizedAccessException or
             ArgumentException or NotSupportedException or OverflowException or
-            System.Text.Json.JsonException or System.ComponentModel.Win32Exception or
+            System.Text.Json.JsonException or NullReferenceException or
+            System.ComponentModel.Win32Exception or
             System.Runtime.InteropServices.COMException)
         {
             return new("ManualReview",

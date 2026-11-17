@@ -195,6 +195,24 @@ check('B2 G2-07: WPF selected risk review stays read-only after Yes and fresh sn
       'ProductionMergeAuthorized => false' in selection_core and
       'b2SelectedRiskReviewRoutedClickVerified = ' in ui_test and
       'MergeVerifiedGroups(' not in source)
+recovery_window = (root/'RecoveryWindow.xaml.cs').read_text(encoding='utf-8')
+recovery_xaml = (root/'RecoveryWindow.xaml').read_text(encoding='utf-8')
+check('G3-01: restart Undo reidentification reads only authenticated persisted group and cannot invoke Restore',
+      'public static IReadOnlyList<UndoCandidate> InspectUndoCandidates(' in group_ledger and
+      'p.ActiveStage is not null || !Verify(x, p)' in group_ledger and
+      'x.Aliases.Skip(p.Detached.Count)' in group_ledger and
+      'CapacityGuard.TargetReserve' in group_ledger and
+      'Journal.UnresolvedRecordFiles().Count == 0' in group_ledger and
+      'IndependentUndoCrashJournal.Inspect(root, ct)' in group_ledger and
+      'ProductionUndoAuthorized => false' in group_ledger and
+      'review-undo:' in group_batch_tests and
+      'VerifyRestartUndoReview(root, id, before, 0, check);' in group_batch_tests and
+      'VerifyRestartUndoReview(root, id, before, 1, check);' in group_batch_tests and
+      'UndoReviewButton' in recovery_xaml and
+      'CompletedGroupLedger.InspectUndoCandidates(_selectedRoot)' in recovery_window and
+      'IndependentUndoEngine.Restore(' not in recovery_window and
+      'g3ReadOnlyUndoPreviewForgedHistoryRowRefused = ' in ui_test and
+      '$r.g3RestartedProcessOriginalGroupFullIdProof -ne $true' in workflow)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

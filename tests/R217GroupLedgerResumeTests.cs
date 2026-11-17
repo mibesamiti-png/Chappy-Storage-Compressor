@@ -77,7 +77,12 @@ internal static class R217GroupLedgerResumeTests
         if (crashPoint is not null &&
             !BatchCrashCheckpoints.Contains(crashPoint, StringComparer.Ordinal))
             throw new InvalidOperationException("Unknown generated Core crash checkpoint");
-        if (crashPoint is null && !Guid.TryParseExact(args[2], "N", out _))
+        bool inspectUndo = args[2].StartsWith("review-undo:", StringComparison.Ordinal);
+        string reviewId = inspectUndo ? args[2]["review-undo:".Length..] : "";
+        if (inspectUndo && !Guid.TryParseExact(reviewId, "N", out _))
+            throw new InvalidOperationException("Invalid generated restart review receipt");
+        if (!inspectUndo && crashPoint is null &&
+            !Guid.TryParseExact(args[2], "N", out _))
             throw new InvalidOperationException("Unknown generated Undo receipt");
         string root = Path.GetFullPath(args[1]);
         GuardRoot(root);
@@ -86,6 +91,40 @@ internal static class R217GroupLedgerResumeTests
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Part27 checkpoint outside generated root");
         Journal.TestFolderPath = Path.Combine(root, "part27-journal");
+        if (inspectUndo)
+        {
+            // A NEW process, with no scanner/manifest objects passed through
+            // memory, must reidentify all original metadata using on-disk
+            // durable receipts. Its only write is the generated test signal.
+            var candidate = CompletedGroupLedger.InspectUndoCandidates(root)
+                .Single(x => x.OperationId == reviewId);
+            if (!candidate.ReviewReady || candidate.OriginalFiles.Count < 2)
+                throw new InvalidDataException("Restarted Undo review failed to certify group");
+            string json = JsonSerializer.Serialize(new
+            {
+                candidate.OperationId,
+                candidate.State,
+                candidate.AlreadyIndependentAliases,
+                candidate.RemainingAliases,
+                candidate.RequiredAdditionalBytes,
+                candidate.ProductionUndoAuthorized,
+                originalSources = candidate.OriginalFiles.Select(x => new
+                {
+                    x.Path, x.OriginalVolumeSerial, x.OriginalFileIndex,
+                    x.OriginalLinks, x.CreationUtc, x.ModifiedUtc, x.Attributes,
+                    x.Sha256, x.OwnerDaclFingerprint
+                })
+            });
+            using (var stream = new FileStream(signal, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None))
+            using (var writer = new StreamWriter(stream))
+            {
+                writer.Write(json);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            return 0;
+        }
         if (crashPoint is not null)
         {
             // Genuine OS process termination, never an exception unwinding
@@ -164,6 +203,59 @@ internal static class R217GroupLedgerResumeTests
             }
         }
         return child.ExitCode;
+    }
+
+    private static void VerifyRestartUndoReview(string root, string id,
+        IReadOnlyDictionary<string, FileSnapshot> before,
+        int expectedDetached, Action<bool, string> check)
+    {
+        string reportPath = Path.Combine(root,
+            "part27-undo-review-" + expectedDetached + ".json");
+        int exitCode = KillWorker(root, "review-undo:" + id, reportPath);
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(reportPath));
+        JsonElement data = document.RootElement;
+        bool state = exitCode == 0 &&
+            data.GetProperty("OperationId").GetString() == id &&
+            data.GetProperty("State").GetString() ==
+                (expectedDetached == 0 ? "VerifiedCompleted" :
+                    "ExplicitResumeRequired") &&
+            data.GetProperty("AlreadyIndependentAliases").GetInt32() == expectedDetached &&
+            data.GetProperty("RemainingAliases").GetInt32() == 3 - expectedDetached &&
+            data.GetProperty("ProductionUndoAuthorized").GetBoolean() == false &&
+            data.GetProperty("RequiredAdditionalBytes").GetInt64() ==
+                (3 - expectedDetached) * before.Values.First().Length +
+                CapacityGuard.TargetReserve;
+        var sourceRows = data.GetProperty("originalSources").EnumerateArray().ToArray();
+        bool exact = state && sourceRows.Length == 4 &&
+            sourceRows.All(row =>
+            {
+                string path = row.GetProperty("Path").GetString() ?? "";
+                if (!before.TryGetValue(path, out FileSnapshot? original))
+                    return false;
+                return row.GetProperty("OriginalVolumeSerial").GetUInt32() ==
+                        original.Identity.VolumeSerial &&
+                    row.GetProperty("OriginalFileIndex").GetUInt64() ==
+                        original.Identity.FileIndex &&
+                    row.GetProperty("OriginalLinks").GetUInt32() ==
+                        original.Identity.LinkCount &&
+                    row.GetProperty("CreationUtc").GetDateTime() ==
+                        original.CreationUtc &&
+                    row.GetProperty("ModifiedUtc").GetDateTime() ==
+                        original.ModifiedUtc &&
+                    row.GetProperty("Attributes").GetInt32() ==
+                        (int)original.Attributes &&
+                    row.GetProperty("Sha256").GetString() ==
+                        Safety.ComputeSha256(path, CancellationToken.None) &&
+                    row.GetProperty("OwnerDaclFingerprint").GetString() ==
+                        Convert.ToHexString(SHA256.HashData(original.SecurityDescriptor));
+            });
+        check(exact &&
+            CompletedGroupLedger.InspectUndoCandidates(root).Single(x =>
+                x.OperationId == id).RemainingAliases == 3 - expectedDetached,
+            "G3-01: independent restarted child reidentifies all 4 ORIGINAL IDs, SHA, metadata and exact remaining Undo aliases without changing originals, detached=" +
+                expectedDetached);
+        if (!exact)
+            throw new InvalidDataException("G3-01 genuine child restart receipt invalid");
     }
 
     // B2: crash *after* the real Core has consolidated all names but *before*
@@ -945,6 +1037,38 @@ internal static class R217GroupLedgerResumeTests
                         NativeFile.SameFile(s.Path, master) && Hash(s.Path) == groupHash));
             check(merged,
                 "R2.17 part27: real Core consolidates four generated files with durable group-wide original metadata");
+            // G3-01: a completely fresh process, NOT the live scanner object,
+            // must read every original ID/metadata from the durable receipt.
+            VerifyRestartUndoReview(root, id, before, 0, check);
+            var goodReview = CompletedGroupLedger.InspectUndoCandidates(root)
+                .Single(x => x.OperationId == id);
+            check(goodReview.ReviewReady && goodReview.OriginalFiles.Count == 4 &&
+                goodReview.RemainingAliases == 3 &&
+                !goodReview.ProductionUndoAuthorized,
+                "G3-01: normal-built read-only Undo review identifies a full completed group without authorizing a write");
+
+            // G3-04 preflight ONLY: refuse to claim the Undo is ready when
+            // the target or the journal volume cannot cover restore bytes.
+            var originalCapacityHook = CapacityGuard.TestOnlyReadAvailable;
+            try
+            {
+                CapacityGuard.TestOnlyReadAvailable = _ =>
+                    (goodReview.RequiredAdditionalBytes - 1,
+                        CapacityGuard.JournalReserve + 64);
+                var lowTarget = CompletedGroupLedger.InspectUndoCandidates(root)
+                    .Single(x => x.OperationId == id);
+                check(!lowTarget.ReviewReady && !lowTarget.CapacityEnough &&
+                    lowTarget.RequiredAdditionalBytes == goodReview.RequiredAdditionalBytes,
+                    "G3-04: preview refuses a one-byte-short NTFS target volume without touching media");
+                CapacityGuard.TestOnlyReadAvailable = _ =>
+                    (goodReview.RequiredAdditionalBytes + 64,
+                        CapacityGuard.JournalReserve - 1);
+                var lowJournal = CompletedGroupLedger.InspectUndoCandidates(root)
+                    .Single(x => x.OperationId == id);
+                check(!lowJournal.ReviewReady && !lowJournal.CapacityEnough,
+                    "G3-04: preview refuses insufficient journal drive even with target capacity available");
+            }
+            finally { CapacityGuard.TestOnlyReadAvailable = originalCapacityHook; }
 
             string foreign = Path.Combine(root, "part27-known-extra-hardlink.tmp");
             NativeFile.NewHardLink(foreign, master);
@@ -955,6 +1079,8 @@ internal static class R217GroupLedgerResumeTests
                 "R2.17 part27: unrecorded extra NTFS hardlink makes whole group untrusted");
             check(CompletedGroupLedger.InspectOriginals(root).Count == 0,
                 "B2 G2-02: unknown external hardlink hides every formerly verified original from trusted WPF history");
+            check(CompletedGroupLedger.InspectUndoCandidates(root).Count == 0,
+                "G3-01/04: unknown external hardlink never yields a trusted Undo candidate");
             check(RecoveryEvidenceOverview.Inspect(root).Rows.All(e =>
                     e.Source != "グループ元ファイルの個別履歴"),
                 "B2 G2-02: untrusted shared-link history cannot leak unverified source records to UI");
@@ -983,6 +1109,7 @@ internal static class R217GroupLedgerResumeTests
                 Journal.UnresolvedRecordFiles().Count == 0;
             check(realKill,
                 "R2.17 part27: actual child kill after durable first Undo checkpoint leaves recoverable partial group");
+            VerifyRestartUndoReview(root, id, before, 1, check);
             int recovered = CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence);
             var restored = CompletedGroupLedger.Inspect(root);
             var persistedAfterUndo = CompletedGroupLedger.InspectOriginals(root);
@@ -1013,6 +1140,8 @@ internal static class R217GroupLedgerResumeTests
             }
             check(recovered == 3 && originals,
                 "R2.17 part27: explicit restart completes remaining two Undo aliases; all original bytes/metadata and separate NTFS identities verified");
+            check(CompletedGroupLedger.InspectUndoCandidates(root).Count == 0,
+                "G3-01: fully restored group does not offer an already-complete Undo again");
             expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),
                 "R2.17 part27: final restored group cannot be replayed as another Undo");
 
@@ -1043,6 +1172,10 @@ internal static class R217GroupLedgerResumeTests
                         persistedAfterUndo.Count == 4,
                     untrustedGroupOriginalRecordsDenied = true,
                     completedHistoryRestored = restored.VerifiedRestored == 1,
+                    g3RestartedProcessOriginalGroupFullIdProof = true,
+                    g3RestartedProcessPartialUndoRemainingAliasProof = true,
+                    g3LowTargetAndJournalSpaceReadOnlyRefusal = true,
+                    g3UnknownLinkAndRestoredGroupNoUndoCandidate = true,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
                     actualCorePartialAllocationMatrix = allocationMatrix,

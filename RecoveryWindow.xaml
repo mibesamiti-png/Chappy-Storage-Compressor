@@ -106,6 +106,8 @@
     </Border>
     <WrapPanel Grid.Row="4" HorizontalAlignment="Right">
       <Button x:Name="RefreshButton" Content="状態を再検査" Click="Refresh_Click" Margin="4" MinWidth="125"/>
+      <Button x:Name="UndoReviewButton" Content="履歴から独立Undo対象を再特定（未実行）"
+              Click="UndoReview_Click" Margin="4" MinWidth="280" IsEnabled="False"/>
       <Button x:Name="ApplyButton" Content="選択した1件を安全に復旧" Click="Apply_Click"
               Margin="4" MinWidth="200" IsEnabled="False" Background="#2B7B70" BorderBrush="#3E9E8F"/>
       <Button Content="閉じる" Click="Close_Click" Margin="4" MinWidth="90"/>

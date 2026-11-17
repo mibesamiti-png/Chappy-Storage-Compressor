@@ -1040,6 +1040,10 @@ jobs:
               $r.completedHistoryRestored -ne $true -or
               $r.groupOriginalRecordsReadOnlyVerified -ne $true -or
               $r.untrustedGroupOriginalRecordsDenied -ne $true -or
+              $r.g3RestartedProcessOriginalGroupFullIdProof -ne $true -or
+              $r.g3RestartedProcessPartialUndoRemainingAliasProof -ne $true -or
+              $r.g3LowTargetAndJournalSpaceReadOnlyRefusal -ne $true -or
+              $r.g3UnknownLinkAndRestoredGroupNoUndoCandidate -ne $true -or
               $r.actualCoreKillCheckpointCount -ne 7 -or
               $r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true -or
               $r.partialFailedGroupAllocationNeverCountedAsVerifiedReceipt -ne $true -or
@@ -1588,6 +1592,8 @@ jobs:
               $r.part25WpfInterruptedUndoReadOnlyStatusVerified -ne $true -or
               $r.part25ProductionUndoMutationStillDisabled -ne $true -or
               $r.part30RecoveryHistoryTabRoutedLoadedVerified -ne $true -or
+              $r.g3ReadOnlyUndoPreviewForgedHistoryRowRefused -ne $true -or
+              $r.g3UndoReviewButtonCannotEnableLegacyApply -ne $true -or
               $r.part30HistoryTabRemainsReadOnly -ne $true -or
               $r.part30NeverEnabledApplyForHistory -ne $true -or
               $r.part30ReadOnlyInspectionNeverCreatedStore -ne $true -or

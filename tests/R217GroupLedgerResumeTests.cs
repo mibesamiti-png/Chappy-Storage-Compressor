@@ -989,6 +989,54 @@ internal static class R217GroupLedgerResumeTests
             Directory.CreateDirectory(evidence);
             string checkpoint = Path.Combine(Safety.StorePath(root),
                 ".chappy-group-completed", id + ".checkpoint.json");
+            // G3-06: every existing evidence family must be reconciled
+            // BEFORE the first durable Undo intent or File.Replace. These
+            // deliberate corruptions are created ONLY in generated fixtures.
+            string store = Safety.StorePath(root);
+            string pairFolder = Path.Combine(store, ".chappy-completed-merge");
+            string oldUndoFolder = Path.Combine(store,
+                ".chappy-independent-undo-recovery");
+            string collisionFolder = Path.Combine(root,
+                ".chappy-collision-journal");
+            foreach (string directory in new[] {
+                pairFolder, oldUndoFolder, collisionFolder })
+                Directory.CreateDirectory(directory);
+            var foreign = new[] {
+                (File: Path.Combine(pairFolder, "foreign.tmp"),
+                    Text: "unknown completed pair", Family: "legacy completed merge"),
+                (File: Path.Combine(oldUndoFolder, "foreign.tmp"),
+                    Text: "unknown independent Undo crash receipt", Family: "legacy Undo journal"),
+                (File: Path.Combine(collisionFolder, "foreign.tmp"),
+                    Text: "orphan collision evidence", Family: "collision destination"),
+                (File: Path.Combine(evidence,
+                    Guid.NewGuid().ToString("N") + ".part23-undo.json"),
+                    Text: "{}", Family: "forged Undo sidecar"),
+                (File: Path.Combine(root, ".chappy-part23-undo-" +
+                    Guid.NewGuid().ToString("N") + ".stage"),
+                    Text: "orphan stage", Family: "unregistered stage")
+            };
+            var masterBeforeForeign = NativeFile.GetIdentity(master);
+            foreach (var item in foreign)
+            {
+                File.WriteAllText(item.File, item.Text);
+                expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(
+                    root, id, evidence),
+                    "G3-06: cross-ledger Undo replay refuses " +
+                    item.Family + " without rewriting any original");
+                check(!File.Exists(checkpoint) &&
+                    NativeFile.GetIdentity(master).SameFile(masterBeforeForeign) &&
+                    CompletedGroupLedger.Inspect(root).VerifiedCompleted == 1 &&
+                    group.Files.All(x => NativeFile.SameFile(x.Path, master) &&
+                        Hash(x.Path) == group.Hash),
+                    "G3-06: " + item.Family +
+                    " remains unmodified and all original NTFS aliases survive rejection");
+                check(File.ReadAllText(item.File) == item.Text,
+                    "G3-06: unrecognized " + item.Family +
+                    " preserved for manual investigation");
+                // Delete ONLY this fixture-owned, explicitly-known injection.
+                File.Delete(item.File);
+            }
+
             long bytes = checked(group.Representative.Length *
                 (group.Files.Count - 1));
             long required = checked(bytes + CapacityGuard.TargetReserve);
@@ -1313,6 +1361,8 @@ internal static class R217GroupLedgerResumeTests
                     g3IndependentWriteAfterUndoOtherOriginalsPreserved = unaffected,
                     g3PrecopyAndFinalCutoverTargetJournalCapacityRefused = true,
                     g3ExplicitStageRecoveryAfterCapacityLossVerified = true,
+                    g3CrossLedgerFiveForeignEvidenceFamiliesRefused = true,
+                    g3OriginalNtfsIdsPreservedOnForeignEvidence = true,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
                     actualCorePartialAllocationMatrix = allocationMatrix,

@@ -480,6 +480,68 @@ public static class CompletedGroupLedger
         catch { return "ManualReview"; }
     }
 
+    // G3-03/06: a single group checkpoint remains the authoritative replay
+    // state. Before recovery or cutover, reconcile it with every existing
+    // independently persisted evidence family. Malformed/unknown evidence
+    // blocks mutation and is NEVER silently cleaned up.
+    private static void AssertUndoCrossEvidence(string root, Manifest x,
+        Checkpoint p, string evidence, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var group = Inspect(root).Entries;
+        if (group.Count(e => e.OperationId.Equals(x.Id,
+                StringComparison.OrdinalIgnoreCase) &&
+            e.State is "VerifiedCompleted" or "ExplicitResumeRequired" or
+                "InterruptedSharedNeedsRetry" or "InterruptedCutoverNeedsRepair") != 1 ||
+            group.Any(e => e.OperationId != x.Id &&
+                e.State is not ("VerifiedCompleted" or "VerifiedRestored" or
+                    "ExplicitResumeRequired")))
+            throw new InvalidDataException(
+                "Group Undo evidence has unknown or conflicting checkpoints");
+        var pairs = CompletedMergeLedger.Inspect(root, ct);
+        if (pairs.Entries.Any(e => e.State is not
+                ("VerifiedCompleted" or "VerifiedRestored")))
+            throw new InvalidDataException(
+                "Unresolved legacy completed-merge receipt blocks group Undo");
+        var independent = IndependentUndoCrashJournal.Inspect(root, ct);
+        if (independent.Entries.Any(e => e.State is not
+                ("VerifiedFinished" or "VerifiedAborted")))
+            throw new InvalidDataException(
+                "Legacy independent Undo crash evidence requires manual review");
+        var collision = CollisionEvidenceReview.Inspect(root, ct);
+        if (collision.Rows.Any(e => e.NeedsAttention))
+            throw new InvalidDataException(
+                "Orphan destination, unknown .tmp or incomplete collision receipt blocks Undo");
+        // A second .stage sibling must not be guessed to be ours merely
+        // because it looks like a generated stage filename.
+        foreach (string folder in x.Aliases.Select(a =>
+                     Path.GetDirectoryName(Path.GetFullPath(a.Path))!)
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (string stage in Directory.EnumerateFileSystemEntries(folder,
+                         ".chappy-part23-undo-*.stage"))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (p.ActiveStage is null ||
+                    !Path.GetFullPath(stage).Equals(
+                        Path.GetFullPath(p.ActiveStage),
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !File.Exists(stage) ||
+                    (File.GetAttributes(stage) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException(
+                        "Unregistered Undo stage: retain for explicit manual review");
+            }
+        }
+        // The sidecar is checked for integrity but is not a second replay
+        // authority. The committed group manifest + checkpoint remain final.
+        IndependentUndoEngine.AssertUndoReceiptDirectory(root, evidence, ct);
+        if (p.ActiveStage is null ? !Verify(x, p) :
+            ActiveState(x, p) is not
+                ("InterruptedSharedNeedsRetry" or "InterruptedCutoverNeedsRepair"))
+            throw new InvalidDataException(
+                "Live source/master IDs, attributes or bytes conflict with Undo receipt");
+    }
+
     public static Summary Inspect(string inputRoot)
     {
         string root = Safety.ValidateRoot(inputRoot), folder = Folder(root);
@@ -545,7 +607,9 @@ public static class CompletedGroupLedger
         return new Summary(entries);
     }
 
-#if CHAPPY_TESTING
+    // The same strict generated-only guard protects the INTERNAL replay
+    // engine in normal Windows builds. Neither a WPF row nor a manifest can
+    // bypass this root/sentinel check to mutate ordinary user files.
     private static string RequireSynthetic(string input)
     {
         string root = Safety.ValidateRoot(input);
@@ -558,7 +622,6 @@ public static class CompletedGroupLedger
             throw new InvalidOperationException("Group merge/Undo is generated NTFS testing only");
         return root;
     }
-#endif
 
     // The exact same durable manifest authorization is compiled in both
     // normal and synthetic builds. It is read-only: it authorizes the
@@ -843,8 +906,25 @@ public static class CompletedGroupLedger
         Action<int>? afterDurableAlias = null,
         Action<string>? afterDurablePhase = null,
         Action<string, string>? testOnlyBeforeFinalUndoValidation = null,
+        Action<string, string>? testOnlyAfterFinalUndoValidation = null) =>
+        ResumeUndoCore(input, id, evidence, CancellationToken.None,
+            afterDurableAlias, afterDurablePhase, testOnlyBeforeFinalUndoValidation,
+            testOnlyAfterFinalUndoValidation);
+#endif
+
+    // G3-03: one authoritative group checkpoint and one resume algorithm.
+    // The previously test-only body is now in normal-build INTERNAL Core,
+    // but ordinary files are rejected by RequireSynthetic before any writes.
+    // Public product Undo, user confirmation, WPF Apply and image replacement
+    // remain disabled until G3/G5 acceptance and explicit user approval.
+    internal static int ResumeUndoCore(string input, string id, string evidence,
+        CancellationToken ct = default,
+        Action<int>? afterDurableAlias = null,
+        Action<string>? afterDurablePhase = null,
+        Action<string, string>? testOnlyBeforeFinalUndoValidation = null,
         Action<string, string>? testOnlyAfterFinalUndoValidation = null)
     {
+        ct.ThrowIfCancellationRequested();
         string root = RequireSynthetic(input);
         if (!Safe(root, evidence) || !Directory.Exists(evidence) ||
             Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any())
@@ -857,6 +937,7 @@ public static class CompletedGroupLedger
             throw new InvalidDataException("Group Undo cannot proceed from unverified history");
         Manifest x = Read(root, id, "completed");
         Checkpoint p = ReadCheckpoint(root, x);
+        AssertUndoCrossEvidence(root, x, p, evidence, ct);
         // BEFORE writing the first Undo checkpoint or touching any stage,
         // conservatively require enough room for ALL remaining aliases.
         // Reobserve each individual stage and just before its File.Replace
@@ -886,7 +967,7 @@ public static class CompletedGroupLedger
             {
                 int index = p.Detached.Count;
                 uint linksBefore = checked((uint)(2 + x.Aliases.Count - index));
-                IndependentUndoEngine.RestoreMetadataAfterCrashSynthetic(
+                IndependentUndoEngine.RestoreMetadataAfterCrashCore(
                     root, x.Aliases[index], x.Master, x.Hash, linksBefore);
                 p.Detached.Add(NativeFile.GetIdentity(x.Aliases[index].Path));
                 p.ActiveStage = null;
@@ -901,19 +982,23 @@ public static class CompletedGroupLedger
             AtomicWrite(PathFor(root, id, "checkpoint"), p);
         for (int i = p.Detached.Count; i < x.Aliases.Count; i++)
         {
+            ct.ThrowIfCancellationRequested();
+            AssertUndoCrossEvidence(root, x, p, evidence, ct);
             uint expectedLinks = checked((uint)(2 + x.Aliases.Count - i));
             // G3: the generated Undo suite invokes the SAME internal NTFS
             // cutover compiled in a normal Windows product build. Its root
             // sentinel and protected public Restore API remain unchanged.
             IndependentUndoEngine.RestoreCore(root, x.Aliases[i], x.Master, x.Hash,
-                expectedLinks, evidence,
+                expectedLinks, evidence, ct,
                 // The phase names are never authority by themselves. Reopen
                 // and validate the durable checkpoint AFTER any competing
                 // test editor and BEFORE the actual source/ACL recheck/cutover.
                 testOnlyBeforeFinalValidation: stage =>
                 {
                     testOnlyBeforeFinalUndoValidation?.Invoke(stage, x.Aliases[i].Path);
+                    ct.ThrowIfCancellationRequested();
                     Checkpoint latest = ReadCheckpoint(root, x);
+                    AssertUndoCrossEvidence(root, x, latest, evidence, ct);
                     if (latest.ActivePhase != "stage-validated" ||
                         !string.Equals(latest.ActiveStage, stage,
                             StringComparison.OrdinalIgnoreCase) ||
@@ -929,7 +1014,9 @@ public static class CompletedGroupLedger
                     // an adversary moves the alias *after* Core's final
                     // byte/ACL validation and before actual File.Replace.
                     testOnlyAfterFinalUndoValidation?.Invoke(stage, x.Aliases[i].Path);
+                    ct.ThrowIfCancellationRequested();
                     Checkpoint latest = ReadCheckpoint(root, x);
+                    AssertUndoCrossEvidence(root, x, latest, evidence, ct);
                     if (latest.ActivePhase != "stage-validated" ||
                         !string.Equals(latest.ActiveStage, stage,
                             StringComparison.OrdinalIgnoreCase) ||
@@ -973,5 +1060,4 @@ public static class CompletedGroupLedger
         File.Move(PathFor(root, id, "completed"), PathFor(root, id, "restored"));
         return p.Detached.Count;
     }
-#endif
 }

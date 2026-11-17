@@ -235,6 +235,25 @@ check('G3: full-group and per-file preflight plus pre-cutover capacity are check
       'VerifyUndoCapacityRefusals(parent, check, expectThrows);' in group_batch_tests and
       'g3IndependentWriteAfterUndoOtherOriginalsPreserved = unaffected' in group_batch_tests and
       '$r.g3ExplicitStageRecoveryAfterCapacityLossVerified -ne $true' in workflow)
+crash_undo_tests = (root/'tests/R217GroupIntraAliasCrashTests.cs').read_text(encoding='utf-8')
+check('G3-03/06: one production-compiled but synthetic-guarded group Undo replay and cross-ledger authorization',
+      'internal static int ResumeUndoCore(' in group_ledger and
+      'ResumeUndoCore(input, id, evidence, CancellationToken.None,' in group_ledger and
+      'string root = RequireSynthetic(input);' in group_ledger and
+      'IndependentUndoEngine.RestoreMetadataAfterCrashCore(' in group_ledger and
+      'internal static void RestoreMetadataAfterCrashCore(' in undo_engine and
+      'internal static void AssertUndoReceiptDirectory(' in undo_engine and
+      'private static void AssertUndoCrossEvidence(' in group_ledger and
+      'CompletedMergeLedger.Inspect(root, ct)' in group_ledger and
+      'IndependentUndoCrashJournal.Inspect(root, ct)' in group_ledger and
+      'CollisionEvidenceReview.Inspect(root, ct)' in group_ledger and
+      'AssertUndoCrossEvidence(root, x, latest, evidence, ct);' in group_ledger and
+      'g3CrossLedgerFiveForeignEvidenceFamiliesRefused = true' in group_batch_tests and
+      'modifiedSavedUndoSidecarRefused = true' in crash_undo_tests and
+      '$r.modifiedSavedUndoSidecarRefused -ne $true' in workflow and
+      'ResumeUndoCore(' not in source and
+      'RestoreMetadataAfterCrashCore(' not in source and
+      'UndoReviewButton' in recovery_xaml)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

@@ -171,6 +171,30 @@ check('B2 G2-06: real Core per-file-ID allocation and separate VHDX free-space r
       '$r.actualCoreDistinctNtfsIdAllocationMeasuredAtEveryKill -ne $true' in workflow and
       '$r.groupedPartialAllocation.physicalUniqueIdAllocatedDeltaBytes -ne 8388608' in workflow and
       'MergeVerifiedGroups(' not in source)
+selection_core = (root/'Core/DedupeFirstWorkflowPlan.cs').read_text(encoding='utf-8')
+recovery_view = (root/'Core/RecoveryEvidenceOverview.cs').read_text(encoding='utf-8')
+window_xaml = (root/'MainWindow.xaml').read_text(encoding='utf-8')
+ui_test = (root/'tests/UiInteractionSmoke.cs').read_text(encoding='utf-8')
+check('B2 G2-02: original per-file IDs are exposed only via verified durable group manifest',
+      'public static IReadOnlyList<OriginalEvidence> InspectOriginals(' in group_ledger and
+      'if (!Verify(manifest, p) ||' in group_ledger and
+      'OriginalFileIndex' in group_ledger and
+      'OwnerDaclFingerprint' in group_ledger and
+      'CompletedGroupLedger.InspectOriginals(root, ct)' in recovery_view and
+      'グループ元ファイルの個別履歴' in recovery_view and
+      'CompletedGroupLedger.InspectOriginals(root, token)' in source and
+      'groupOriginalRecordsReadOnlyVerified = ' in group_batch_tests)
+check('B2 G2-07: WPF selected risk review stays read-only after Yes and fresh snapshot check',
+      'SelectedMergeReviewButton' in window_xaml and
+      'private async void SelectedMergeReview_Click(' in source and
+      'DedupeFirstWorkflowPlan.InspectSelected(root, groups, token)' in source and
+      'private Func<string, bool> _confirmSelectedMergeRisk;' in source and
+      'public static SelectedReview InspectSelected(' in selection_core and
+      'Safety.SameSnapshot(file)' in selection_core and
+      'Safety.ByteEqual(full, group.Representative.Path, ct)' in selection_core and
+      'ProductionMergeAuthorized => false' in selection_core and
+      'b2SelectedRiskReviewRoutedClickVerified = ' in ui_test and
+      'MergeVerifiedGroups(' not in source)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

@@ -109,6 +109,19 @@ public static class RecoveryEvidenceOverview
                 rows.Add(new Row("複数ファイルのグループ履歴",
                     e.OperationId, e.State, explanation, !verified));
             }
+            // Use the EXISTING verified manifest: each original name and
+            // pre-merge NTFS ID is individually visible in the WPF history
+            // grid. Unknown/prepared evidence never grants an original row.
+            // A post-inspection race becomes an explicit ManualReview row.
+            foreach (var original in CompletedGroupLedger.InspectOriginals(root, ct))
+            {
+                rows.Add(new Row("グループ元ファイルの個別履歴",
+                    original.Path, original.State,
+                    "操作ID " + original.OperationId + " / " +
+                    original.Describe() +
+                    "。これは元の記録の照合であり、復元や容量回復の許可ではありません。",
+                    false));
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)

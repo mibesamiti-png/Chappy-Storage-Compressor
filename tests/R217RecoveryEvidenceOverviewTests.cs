@@ -62,7 +62,12 @@ internal static class R217RecoveryEvidenceOverviewTests
             string master = Path.Combine(store, scan.Groups.Single().Hash + ".mp4");
             var merged = RecoveryEvidenceOverview.Inspect(root);
             check(merged.GroupHistory == 1 && merged.RequiresAttention == 0 &&
-                merged.Rows.Single().State == "VerifiedCompleted" &&
+                merged.Rows.Single(x =>
+                    x.Source == "複数ファイルのグループ履歴").State == "VerifiedCompleted" &&
+                merged.Rows.Count(x =>
+                    x.Source == "グループ元ファイルの個別履歴" &&
+                    x.State == "VerifiedCompleted" && !x.NeedsAttention &&
+                    x.Explanation.Contains("元NTFS ID=", StringComparison.Ordinal)) == 3 &&
                 !merged.ProductionMergeOrUndoAllowed &&
                 NativeFile.GetIdentity(master).LinkCount == 4 &&
                 scan.Groups.Single().Files.All(x => NativeFile.SameFile(x.Path, master)),
@@ -74,6 +79,8 @@ internal static class R217RecoveryEvidenceOverviewTests
             check(tampered.GroupHistory == 1 &&
                 tampered.RequiresAttention == 1 &&
                 tampered.Rows.Single().State == "ManualReview" &&
+                tampered.Rows.All(x =>
+                    x.Source != "グループ元ファイルの個別履歴") &&
                 NativeFile.GetIdentity(master).LinkCount == 5 &&
                 scan.Groups.Single().Files.All(x => NativeFile.SameFile(x.Path, master)),
                 "R2.17 Part30: unexpected shared external alias is visible and cannot be mistaken for safe recovery");
@@ -143,7 +150,12 @@ internal static class R217RecoveryEvidenceOverviewTests
             int restored = CompletedGroupLedger.ResumeUndoSynthetic(root, op, evidence);
             var done = RecoveryEvidenceOverview.Inspect(root);
             check(restored == 2 && done.AllEvidenceVerified &&
-                done.GroupHistory == 1 && done.Rows.Single().State == "VerifiedRestored" &&
+                done.GroupHistory == 1 &&
+                done.Rows.Single(x =>
+                    x.Source == "複数ファイルのグループ履歴").State == "VerifiedRestored" &&
+                done.Rows.Count(x =>
+                    x.Source == "グループ元ファイルの個別履歴" &&
+                    x.State == "VerifiedRestored" && !x.NeedsAttention) == 3 &&
                 NativeFile.GetIdentity(master).LinkCount == 2 &&
                 scan.Groups.Single().Files.All(x =>
                     Safety.ComputeSha256(x.Path, CancellationToken.None) ==

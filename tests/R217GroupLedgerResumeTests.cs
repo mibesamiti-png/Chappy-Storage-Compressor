@@ -901,6 +901,30 @@ internal static class R217GroupLedgerResumeTests
 
             string id = CompletedGroupLedger.MergeSynthetic(root, scan.Groups.Single());
             var completed = CompletedGroupLedger.Inspect(root);
+            var originalRecords = CompletedGroupLedger.InspectOriginals(root);
+            check(originalRecords.Count == 4 &&
+                originalRecords.Count(e => e.Representative) == 1 &&
+                originalRecords.Select(e => e.OperationId).Distinct().Single() == id &&
+                originalRecords.Select(e => (e.OriginalVolumeSerial,
+                    e.OriginalFileIndex)).Distinct().Count() == 4 &&
+                originalRecords.All(e => e.State == "VerifiedCompleted" &&
+                    e.OriginalLinks == 1 && e.Sha256 == groupHash &&
+                    e.OwnerDaclFingerprint.Length == 64 &&
+                    before.TryGetValue(e.Path, out var source) &&
+                    source.Identity.FileIndex == e.OriginalFileIndex &&
+                    source.Identity.VolumeSerial == e.OriginalVolumeSerial &&
+                    source.CreationUtc == e.CreationUtc &&
+                    source.ModifiedUtc == e.ModifiedUtc &&
+                    source.Attributes == e.Attributes &&
+                    source.Length == e.Length),
+                "B2 G2-02: exact four original NTFS IDs, SHA, timestamps, ACL fingerprints and operation ID survive as read-only group history");
+            var overview = RecoveryEvidenceOverview.Inspect(root);
+            check(overview.Rows.Count(e =>
+                    e.Source == "グループ元ファイルの個別履歴" &&
+                    !e.NeedsAttention && e.State == "VerifiedCompleted") == 4 &&
+                overview.Rows.All(e => e.Source != "グループ元ファイルの個別履歴" ||
+                    e.Explanation.Contains("元NTFS ID=", StringComparison.Ordinal)),
+                "B2 G2-02: cross-ledger view exposes every verified original ID and per-file metadata as read-only WPF evidence");
             string master = Path.Combine(Safety.StorePath(root), groupHash + ".mp4");
             bool merged = completed.VerifiedCompleted == 1 &&
                 completed.Entries.Single().AliasCount == 3 &&
@@ -929,6 +953,11 @@ internal static class R217GroupLedgerResumeTests
                   suspicious.VerifiedCompleted == 0 &&
                   NativeFile.GetIdentity(master).LinkCount == 6,
                 "R2.17 part27: unrecorded extra NTFS hardlink makes whole group untrusted");
+            check(CompletedGroupLedger.InspectOriginals(root).Count == 0,
+                "B2 G2-02: unknown external hardlink hides every formerly verified original from trusted WPF history");
+            check(RecoveryEvidenceOverview.Inspect(root).Rows.All(e =>
+                    e.Source != "グループ元ファイルの個別履歴"),
+                "B2 G2-02: untrusted shared-link history cannot leak unverified source records to UI");
             string evidence = Path.Combine(root, "part27-undo-evidence");
             Directory.CreateDirectory(evidence);
             expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),
@@ -956,6 +985,14 @@ internal static class R217GroupLedgerResumeTests
                 "R2.17 part27: actual child kill after durable first Undo checkpoint leaves recoverable partial group");
             int recovered = CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence);
             var restored = CompletedGroupLedger.Inspect(root);
+            var persistedAfterUndo = CompletedGroupLedger.InspectOriginals(root);
+            check(persistedAfterUndo.Count == 4 &&
+                persistedAfterUndo.All(e => e.State == "VerifiedRestored" &&
+                    before.TryGetValue(e.Path, out var source) &&
+                    source.Identity.SameFile(new FileIdentity(
+                        e.OriginalVolumeSerial, e.OriginalFileIndex,
+                        e.OriginalLinks))),
+                "B2 G2-02: read-only original identity records survive complete independent Undo");
             bool originals = restored.VerifiedRestored == 1 &&
                 restored.VerifiedCompleted == 0 && restored.NeedsReview == 0 &&
                 restored.Entries.Single().DetachedCount == 3 &&
@@ -1002,6 +1039,9 @@ internal static class R217GroupLedgerResumeTests
                     durableDetachedAliasesAtInterruption = paused.Entries.Single().DetachedCount,
                     explicitResumeFinalDetachedAliases = recovered,
                     allBytesTimesOwnerDaclAndNtfsIdsVerified = originals,
+                    groupOriginalRecordsReadOnlyVerified = originalRecords.Count == 4 &&
+                        persistedAfterUndo.Count == 4,
+                    untrustedGroupOriginalRecordsDenied = true,
                     completedHistoryRestored = restored.VerifiedRestored == 1,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,

@@ -68,6 +68,7 @@
         <Button x:Name="MediaReportButton" Content="JPG / PNG / MP4別の重複容量レポート・CSV" Click="MediaReport_Click" IsEnabled="False"/>
         <Button x:Name="DetailsButton" Content="選択グループの全パス" Click="Details_Click" IsEnabled="False"/>
         <Button x:Name="DedupePlanButton" Content="② 重複優先・独立Undo事前計画（読み取り専用）" Click="DedupePlan_Click" IsEnabled="False"/>
+        <Button x:Name="SelectedMergeReviewButton" Content="選択したグループの最終安全確認（未実行）" Click="SelectedMergeReview_Click" IsEnabled="False"/>
         <Button x:Name="CompletedLedgerButton" Content="保存済み統合履歴を確認（読み取り専用）" Click="CompletedLedger_Click"/>
         <Button x:Name="MergeButton" Content="③ 実際の統合（安全ゲートまで停止）" Click="Merge_Click" IsEnabled="False"/>
         <Button x:Name="StopButton" Content="中断要求" Click="Stop_Click" IsEnabled="False"/>

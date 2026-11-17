@@ -46,6 +46,70 @@ public static class CompletedGroupLedger
         public bool CanMutateUserFiles => false;
     }
 
+    // B2 G2-02: read-only projection of the EXISTING durable group manifest.
+    // This exposes the original identity/metadata for each alias after a
+    // fresh, full-group revalidation. It never creates a ledger or authorizes
+    // Merge/Undo, even when all recorded IDs and bytes match.
+    public sealed record OriginalEvidence(string OperationId, string State,
+        bool Representative, string Path, string Sha256, long Length,
+        uint OriginalVolumeSerial, ulong OriginalFileIndex, uint OriginalLinks,
+        DateTime CreationUtc, DateTime ModifiedUtc, FileAttributes Attributes,
+        string OwnerDaclFingerprint)
+    {
+        public string Describe() =>
+            (Representative ? "代表" : "別名") + " / " + Path +
+            " / 元NTFS ID=" + OriginalVolumeSerial.ToString("X8") + ":" +
+                OriginalFileIndex.ToString("X16") +
+            " / 元リンク=" + OriginalLinks +
+            " / SHA-256=" + Sha256 +
+            " / 元サイズ=" + GroupRow.HumanSize(Length) +
+            " / 作成=" + CreationUtc.ToString("O") +
+            " / 更新=" + ModifiedUtc.ToString("O") +
+            " / 属性=" + Attributes +
+            " / Owner/DACL SHA-256=" + OwnerDaclFingerprint;
+    }
+
+    public static IReadOnlyList<OriginalEvidence> InspectOriginals(
+        string inputRoot, CancellationToken ct = default)
+    {
+        string root = Safety.ValidateRoot(inputRoot);
+        // Classification is always derived from the current on-disk ledger.
+        // Never accept a caller-supplied "completed" state or stale UI row.
+        var summary = Inspect(root);
+        var originals = new List<OriginalEvidence>();
+        foreach (Entry entry in summary.Entries)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (entry.State is not ("VerifiedCompleted" or "VerifiedRestored"))
+                continue; // malformed/prepared history never supplies trusted IDs
+            string phase = entry.State == "VerifiedRestored" ? "restored" : "completed";
+            Manifest manifest = Read(root, entry.OperationId, phase);
+            Checkpoint p = ReadCheckpoint(root, manifest);
+            if (!Verify(manifest, p) ||
+                (entry.State == "VerifiedCompleted" && p.Detached.Count != 0) ||
+                (entry.State == "VerifiedRestored" &&
+                    p.Detached.Count != manifest.Aliases.Count) ||
+                entry.AliasCount != manifest.Aliases.Count ||
+                entry.DetachedCount != p.Detached.Count)
+                throw new InvalidDataException(
+                    "Group original evidence changed during read-only inspection");
+            var all = new[] { manifest.Representative }.Concat(manifest.Aliases);
+            foreach (FileSnapshot source in all)
+            {
+                ct.ThrowIfCancellationRequested();
+                originals.Add(new OriginalEvidence(manifest.Id, entry.State,
+                    ReferenceEquals(source, manifest.Representative), source.Path,
+                    manifest.Hash, source.Length, source.Identity.VolumeSerial,
+                    source.Identity.FileIndex, source.Identity.LinkCount,
+                    source.CreationUtc, source.ModifiedUtc, source.Attributes,
+                    Convert.ToHexString(
+                        System.Security.Cryptography.SHA256.HashData(
+                            source.SecurityDescriptor))));
+            }
+        }
+        return originals;
+    }
+
     private static string Folder(string root) => Path.Combine(Safety.StorePath(root), Name);
     private static string PathFor(string root, string id, string phase) =>
         Path.Combine(Folder(root), id + "." + phase + ".json");

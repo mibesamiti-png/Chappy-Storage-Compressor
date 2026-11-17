@@ -33,6 +33,131 @@ public static class DedupeFirstWorkflowPlan
         }
     }
 
+    // B2 G2-07: explicit selected-row review shares the same immutable
+    // FileSnapshot / NTFS ID / full-byte checks as the internal Core, but
+    // has NO mutation entrypoint. A user confirming this text still cannot
+    // call MergeVerifiedGroups; G3/G5 release gates remain authoritative.
+    public sealed record SelectedGroupReview(string Representative,
+        IReadOnlyList<string> Paths, string Reason, long PotentialSavingBytes)
+    {
+        public bool Verified => Reason == "照合一致（未実行）";
+    }
+
+    public sealed record SelectedReview(string Root,
+        IReadOnlyList<SelectedGroupReview> Groups, long LogicalSavingBytes,
+        long UndoAdditionalBytesApprox, long TargetAvailableBytes,
+        long JournalAvailableBytes, bool JournalClean, bool HistoryClean,
+        bool CapacityEnough)
+    {
+        public bool VerifiedForPreview => Groups.Count > 0 &&
+            Groups.All(x => x.Verified) && JournalClean &&
+            HistoryClean && CapacityEnough;
+
+        public bool ProductionMergeAuthorized => false;
+
+        public string Describe()
+        {
+            var lines = new List<string>
+            {
+                "【選択した重複グループの最終確認・読み取り専用】",
+                "対象フォルダ: " + Root,
+                $"明示選択したグループ: {Groups.Count:N0}件 / 検証済み: {Groups.Count(x => x.Verified):N0}件",
+                "推定論理削減量: " + GroupRow.HumanSize(LogicalSavingBytes),
+                "独立Undoに必要な追加容量の概算: " +
+                    GroupRow.HumanSize(UndoAdditionalBytesApprox),
+                "対象ドライブの確認時空き: " +
+                    GroupRow.HumanSize(TargetAvailableBytes),
+                "復旧記録ドライブの確認時空き: " +
+                    GroupRow.HumanSize(JournalAvailableBytes),
+                "未解決Journal: " + (JournalClean ? "なし" : "あり・操作禁止"),
+                "未完了グループ履歴: " + (HistoryClean ? "なし" : "あり・操作禁止"),
+                "容量下限: " + (CapacityEnough ? "確認時は条件一致" : "不足・操作禁止"),
+                ""
+            };
+            foreach (var g in Groups)
+            {
+                lines.Add("代表: " + g.Representative + " / " + g.Reason);
+                foreach (string path in g.Paths)
+                    lines.Add("  ・" + path);
+            }
+            lines.Add("");
+            lines.Add("【重要】共有化後、片方のファイル内容を直接編集すると別名の内容も同時に変わり得ます。");
+            lines.Add("Undoでは再び独立したバイト列が必要となり、削減量と同程度の追加容量が必要です。");
+            lines.Add("保存データは必ず別ドライブ等にバックアップしてください。");
+            lines.Add("同意後も再照合し、記録・パス・元NTFS ID・SHAが変化した場合は拒否します。");
+            lines.Add("※ 表示値は実空き容量の予約でも物理削減実測でもありません。");
+            lines.Add("※ この製品ビルドはG3/G5安全ゲート未完のためMerge/Undoを実行できません。");
+            lines.Add("実際の変更・回復容量: 0 B");
+            return string.Join("\n", lines);
+        }
+    }
+
+    public static SelectedReview InspectSelected(string inputRoot,
+        IReadOnlyList<DuplicateGroup> selected, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(selected);
+        string root = Safety.ValidateRoot(inputRoot);
+        ct.ThrowIfCancellationRequested();
+        bool journalClean = Journal.Pending().Count == 0 &&
+            Journal.UnresolvedRecordFiles().Count == 0;
+        bool historyClean = CompletedGroupLedger.Inspect(root).Entries.All(x =>
+            x.State is "VerifiedCompleted" or "VerifiedRestored");
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var masters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var checkedGroups = new List<SelectedGroupReview>();
+        long savings = 0;
+        foreach (DuplicateGroup group in selected)
+        {
+            ct.ThrowIfCancellationRequested();
+            string reason = group.BlockReason(false) ?? "";
+            var shownPaths = group.Files.Select(f => f.Path).ToArray();
+            if (group.Files.Count is < 2 or > 33)
+                reason = "対象件数が許可範囲外（2〜33件）";
+            if (reason.Length == 0)
+            {
+                try
+                {
+                    string master = Path.Combine(Safety.StorePath(root), group.Hash +
+                        Path.GetExtension(group.Representative.Path).ToLowerInvariant());
+                    if (!masters.Add(master) || File.Exists(master))
+                        reason = "統合先の重複/既存ハードリンク";
+                    foreach (FileSnapshot file in group.Files)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        string full = Path.GetFullPath(file.Path);
+                        if (!paths.Add(full) ||
+                            !Safety.ContainedRegularSource(root, full) ||
+                            !Safety.SameSnapshot(file) ||
+                            !string.Equals(Safety.ComputeSha256(full, ct),
+                                group.Hash, StringComparison.OrdinalIgnoreCase) ||
+                            !Safety.ByteEqual(full, group.Representative.Path, ct))
+                        {
+                            reason = "スキャン後のパス・内容・権限・元NTFS IDが不一致";
+                            break;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception)
+                {
+                    reason = "元ファイルまたは統合先を厳密に検証できません";
+                }
+            }
+            bool verified = reason.Length == 0;
+            if (verified) savings = checked(savings + group.Savings);
+            checkedGroups.Add(new SelectedGroupReview(
+                group.Files.Count == 0 ? "(invalid selection)" :
+                    group.Representative.Path, shownPaths,
+                verified ? "照合一致（未実行）" : reason,
+                verified ? group.Savings : 0));
+        }
+        var (target, journal) = CapacityGuard.ReadAvailable(root);
+        bool enough = CapacityGuard.Enough(target, CapacityGuard.TargetReserve) &&
+            CapacityGuard.Enough(journal, CapacityGuard.JournalReserve);
+        return new SelectedReview(root, checkedGroups, savings, savings,
+            target, journal, journalClean, historyClean, enough);
+    }
+
     public static Summary Inspect(ScanResult scan, bool allowTimestampDifference,
         CancellationToken ct = default)
     {

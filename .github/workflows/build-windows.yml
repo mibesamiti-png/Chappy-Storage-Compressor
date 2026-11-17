@@ -1605,6 +1605,8 @@ jobs:
               $r.g3ReadOnlyUndoPreviewForgedHistoryRowRefused -ne $true -or
               $r.g3UndoReviewButtonCannotEnableLegacyApply -ne $true -or
               $r.g3GeneratedOnlyRoutedWpfUndoConsentDeniedWithoutMutation -ne $true -or
+              $r.g3GeneratedOnlyRoutedWpfUndoCancelCheckpointAndResume -ne $true -or
+              $r.g3GeneratedOnlyRoutedWpfUndoObservedCapacityAndIds -ne $true -or
               $r.g3GeneratedOnlyRoutedWpfCoreUndoSuccess -ne $true -or
               $r.g3NormalCompiledCollisionExportAfterRoutedWpfUndo -ne $true -or
               $r.g3ProductionUndoControlAlwaysDisabledForNormalRoot -ne $true -or

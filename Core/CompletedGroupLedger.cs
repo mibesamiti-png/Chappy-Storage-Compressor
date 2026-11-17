@@ -857,6 +857,13 @@ public static class CompletedGroupLedger
             throw new InvalidDataException("Group Undo cannot proceed from unverified history");
         Manifest x = Read(root, id, "completed");
         Checkpoint p = ReadCheckpoint(root, x);
+        // BEFORE writing the first Undo checkpoint or touching any stage,
+        // conservatively require enough room for ALL remaining aliases.
+        // Reobserve each individual stage and just before its File.Replace
+        // inside the common internal Undo Core as well.
+        long allRemainingBytes = checked(x.Representative.Length *
+            (x.Aliases.Count - p.Detached.Count));
+        CapacityGuard.AssertCanRestore(root, allRemainingBytes);
         if (p.ActiveStage is not null)
         {
             string state = ActiveState(x, p);

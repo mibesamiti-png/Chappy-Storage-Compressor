@@ -310,15 +310,49 @@ internal static class R217CombinedResumePreflightTests
                 "R2.17 part 19: JPEG orphan refusal preserves unknown candidate bytes");
             File.Delete(fakeJpegCandidate);
             Directory.Delete(fakeJpegPreviewDir); // test-owned synthetic directory only.
-            // The direct JPEG queue acquires a lock before its orphan gate.
-            // This disposable direct-run probe introduced a JPEG lock not
-            // present in the earlier manually created plan-only fixture.
-            // Remove ONLY the test-created lock after the queue has returned,
-            // so the later PNG-only missing-plan scenario remains isolated.
+            // G4-02 now rejects the deliberately untrusted fixture EXE
+            // BEFORE writing a lock or a journal. The old assertion that a
+            // lock must have been created is no longer a safe contract.
             string testJpegLock = Path.Combine(output, ".chappy-jpeg-r19.lock");
-            check(File.Exists(testJpegLock),
-                "R2.17 part 19: direct JPEG refusal exited and released disposable lock");
-            File.Delete(testJpegLock);
+            check(!File.Exists(testJpegLock),
+                "G4-02: direct JPEG refusal before authentication creates NO lock");
+
+            // Also prove that orphan refusal is not accidentally bypassed by
+            // the new executable admission gate. On official-source CI,
+            // consent to a fresh empty output, introduce an unjournaled file
+            // AFTER that approval, and invoke the real batch with the genuine
+            // SHA-pinned tool. It must stop without touching the orphan.
+            string? officialTool = Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_JPEGTRAN");
+            if (!string.IsNullOrWhiteSpace(officialTool))
+            {
+                using var trusted = JpegLosslessPreviewEngine.OpenTrustedTool(officialTool);
+                string approvedOutput = Path.Combine(root, "approved-jpeg-orphan-probe");
+                Directory.CreateDirectory(approvedOutput);
+                var approvedInput = PersonalMediaBatchPreflight.Inspect(input, approvedOutput);
+                string proofPreviewDir = Path.Combine(approvedOutput,
+                    JpegBatchPreviewEngine.PreviewName);
+                Directory.CreateDirectory(proofPreviewDir);
+                string proofOrphan = Path.Combine(proofPreviewDir,
+                    "synthetic.chappy-jpeg-preview-" +
+                    Guid.NewGuid().ToString("N") + ".jpg");
+                File.WriteAllBytes(proofOrphan, orphanBytes);
+                bool denied = false;
+                try
+                {
+                    JpegBatchPreviewEngine.Run(input, approvedOutput, officialTool,
+                        approvedInput: approvedInput);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+                {
+                    denied = true;
+                }
+                check(denied &&
+                      File.ReadAllBytes(proofOrphan).SequenceEqual(orphanBytes) &&
+                      Hash(png) == pngHash && Hash(jpg) == jpgHash,
+                    "G4-02: AUTHENTIC official JPEG tool cannot bypass post-consent foreign candidate refusal");
+            }
+            else
+                Console.WriteLine("G4-02 official-only JPEG orphan proof SKIPPED outside source-pinned CI");
 
             string log = Path.Combine(output, ".chappy-jpeg-r19.progress.jsonl");
             File.WriteAllText(log, "{\"RelativePath\":\"synthetic.jpg\"");

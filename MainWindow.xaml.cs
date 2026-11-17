@@ -293,6 +293,29 @@ public partial class MainWindow : Window
     // Production reads completed-ledger files but NEVER repairs, promotes,
     // links, replaces or deletes anything. Even a malformed record is only
     // reported to the user for manual review.
+    private void CleanupHistory_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        string root = PathBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            MessageBox.Show(this, "重複整理の検索フォルダを指定してください。記録の閲覧だけを行います。",
+                "保留記録の閲覧", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        try
+        {
+            var rows = DuplicateCleanupHistory.Inspect(root);
+            new DuplicateCleanupHistoryWindow(root, rows) { Owner = this }.ShowDialog();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+            InvalidOperationException or ArgumentException or NotSupportedException)
+        {
+            MessageBox.Show(this, ex.Message, "保留記録を確認できません",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void CompletedLedger_Click(object sender, RoutedEventArgs e)
     {
         if (_busy) return;

@@ -315,6 +315,99 @@ internal static class DuplicateCleanupBatchTests
             testRoot, normal, secondId, 0),
             "C: fake-recycled original cannot be silently restored by staging API");
 
+
+        // C2: product-readable history is a non-authoritative, bounded view.
+        // It must never promote an unverified position to file-ID proof.
+        check(!DuplicateCleanupHistory.CanModifyUserFiles &&
+              DuplicateCleanupHistory.Inspect(root).Count == 2 &&
+              DuplicateCleanupHistory.Inspect(root).All(x =>
+                  x.State.Contains("ごみ箱", StringComparison.Ordinal) ||
+                  x.State.Contains("保留先", StringComparison.Ordinal) ||
+                  x.State.Contains("要手動確認", StringComparison.Ordinal)),
+            "C: product history reads completed synthetic journals without mutation permission");
+        check(DuplicateCleanupHistory.Inspect(back).Count == 2 &&
+              DuplicateCleanupHistory.Inspect(back).Any(x =>
+                  x.State.Contains("元パス復帰の記録あり", StringComparison.Ordinal)),
+            "C: read-only history recognizes recorded original-path return without claiming ID proof");
+
+        string shellRoot = CreateRoot(testRoot, "shell-recycle-error", 2);
+        var (shellPlan, shellGroup, shellKeeper, shellHash) = Scan(shellRoot);
+        string shellId = DuplicateCleanupWorkflow.BeginSynthetic(
+            testRoot, shellPlan, shellGroup);
+        DuplicateCleanupWorkflow.StageSynthetic(testRoot, shellRoot, shellId, 0);
+        DuplicateCleanupWorkflow.WriteReportSynthetic(testRoot, shellRoot, shellId);
+        string shellStage = Path.Combine(shellRoot,
+            shellPlan.DeleteCandidates[0].ProposedCollectionRelativePath);
+        expectThrows(() => DuplicateCleanupWorkflow.RecycleViaShellSynthetic(
+            testRoot, shellRoot, shellId, 0,
+            testTransport: _ => throw new IOException("fake shell unavailable")),
+            "C: unconfirmed synthetic candidate cannot reach shell transport");
+        check(!File.Exists(Path.Combine(shellRoot, ".chappy-cleanup-evidence",
+                  shellId + ".item-0000.recycle-intent.json")) &&
+              File.Exists(shellStage),
+            "C: unconfirmed shell attempt writes no recycle intent and preserves candidate");
+
+        DuplicateCleanupWorkflow.ConfirmSynthetic(testRoot, shellRoot, shellId, 0, true);
+        int transportCalls = 0;
+        bool failure = false;
+        try
+        {
+            DuplicateCleanupWorkflow.RecycleViaShellSynthetic(testRoot, shellRoot,
+                shellId, 0, testTransport: _ =>
+                {
+                    transportCalls++;
+                    throw new IOException("injected shell recycle failure");
+                });
+        }
+        catch (IOException) { failure = true; }
+        check(failure && transportCalls == 1 &&
+              File.Exists(shellStage) && Hash(shellStage) == shellHash &&
+              Safety.SameSnapshot(shellKeeper) &&
+              DuplicateCleanupWorkflow.InspectSynthetic(testRoot, shellRoot, shellId)[0].State ==
+                  "ShellRecycleOutcomeRequiresManualReview" &&
+              DuplicateCleanupHistory.Inspect(shellRoot).Single().State.Contains(
+                  "ごみ箱処理開始", StringComparison.Ordinal),
+            "C: shell failure persists intent/outcome, never deletes or claims recycle success");
+        expectThrows(() => DuplicateCleanupWorkflow.RecycleViaShellSynthetic(
+            testRoot, shellRoot, shellId, 0, _ => transportCalls++),
+            "C: ambiguous shell attempt can never be replayed automatically");
+        expectThrows(() => DuplicateCleanupWorkflow.RestoreSynthetic(
+            testRoot, shellRoot, shellId, 0),
+            "C: shell-attempted staged data cannot auto-restore without independent review");
+        check(transportCalls == 1 && File.Exists(shellStage),
+            "C: blocked retry cannot invoke shell or alter the staged file");
+
+        string noopRoot = CreateRoot(testRoot, "shell-returns-without-moving", 2);
+        var (noopPlan, noopGroup, noopKeeper, _) = Scan(noopRoot);
+        string noopId = DuplicateCleanupWorkflow.BeginSynthetic(
+            testRoot, noopPlan, noopGroup);
+        DuplicateCleanupWorkflow.StageSynthetic(testRoot, noopRoot, noopId, 0);
+        DuplicateCleanupWorkflow.WriteReportSynthetic(testRoot, noopRoot, noopId);
+        DuplicateCleanupWorkflow.ConfirmSynthetic(testRoot, noopRoot, noopId, 0, true);
+        DuplicateCleanupWorkflow.RecycleViaShellSynthetic(testRoot, noopRoot, noopId, 0,
+            testTransport: _ => { }); // no-op transport, NEVER Windows shell
+        string noopStage = Path.Combine(noopRoot,
+            noopPlan.DeleteCandidates[0].ProposedCollectionRelativePath);
+        check(File.Exists(noopStage) && Safety.SameSnapshot(noopKeeper) &&
+              DuplicateCleanupWorkflow.InspectSynthetic(testRoot, noopRoot, noopId)[0].State ==
+                  "ShellRecycleOutcomeRequiresManualReview" &&
+              !File.Exists(Path.Combine(noopRoot, ".chappy-cleanup-evidence",
+                  noopId + ".item-0000.recycled.json")),
+            "C: shell transport returning is NOT treated as recycle bin proof");
+
+        string malformedRoot = CreateRoot(testRoot, "history-malformed-intent", 2);
+        var (malformedPlan, malformedGroup, malformedKeeper, _) = Scan(malformedRoot);
+        string malformedId = DuplicateCleanupWorkflow.BeginSynthetic(
+            testRoot, malformedPlan, malformedGroup);
+        string malformedIntent = Path.Combine(malformedRoot, ".chappy-cleanup-evidence",
+            malformedId + ".intent.json");
+        File.WriteAllText(malformedIntent, "{}");
+        var malformedRows = DuplicateCleanupHistory.Inspect(malformedRoot);
+        check(malformedRows.Count == 1 && malformedRows[0].State == "要手動確認" &&
+              malformedRows[0].OriginalPath == "" &&
+              Safety.SameSnapshot(malformedKeeper),
+            "C: corrupted journal is shown as an error without trusting its paths");
+
         string denied = CreateRoot(testRoot, "stale-source", 2);
         var (deniedPlan, deniedGroup, deniedKeep, _) = Scan(denied);
         File.AppendAllText(deniedPlan.DeleteCandidates[0].OriginalPath, "changed");

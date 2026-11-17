@@ -122,6 +122,8 @@ public static class DuplicateCleanupWorkflow
         Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".recycle-intent.json");
     private static string TrashReceiptPath(string root, string id, int index) =>
         Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".recycled.json");
+    private static string ShellOutcomePath(string root, string id, int index) =>
+        Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".shell-outcome.json");
     private static string ReportReceiptPath(string root, string id) =>
         Path.Combine(EvidenceDir(root), id + ".report.json");
     private static string RestoreIntentPath(string root, string id, int index) =>
@@ -514,6 +516,96 @@ public static class DuplicateCleanupWorkflow
     }
 
     /// <summary>
+    /// Probe the REAL Windows shell Recycle Bin operation on an explicitly
+    /// generated disposable test file only. Never compiled into the product.
+    ///
+    /// An absent staged path does NOT prove bin admission. This deliberately
+    /// writes no success receipt: every attempt stays "ManualReview" until a
+    /// future shell-bin evidence check can independently prove the outcome.
+    /// Windows may offer permanent removal for unsupported locations: this
+    /// method requests Recycle Bin with user dialogs and NEVER does a fallback.
+    /// </summary>
+    internal static void RecycleViaShellSynthetic(string testRoot, string scanRoot,
+        string id, int index, Action<string>? testTransport = null)
+    {
+        using var lease = MutationLease.Acquire();
+        string root = OwnedRoot(testRoot, scanRoot);
+        var x = Read(testRoot, root, id);
+        if (index < 0 || index >= x.Candidates.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        if (File.Exists(TrashIntentPath(root, id, index)) ||
+            File.Exists(TrashReceiptPath(root, id, index)) ||
+            File.Exists(ShellOutcomePath(root, id, index)) ||
+            File.Exists(RestoreIntentPath(root, id, index)) ||
+            File.Exists(RestoreReceiptPath(root, id, index)))
+            throw new InvalidDataException(
+                "A recycle or restore attempt already exists: refuse replay");
+        RequireKeeper(x);
+        var c = x.Candidates[index];
+        if (!ValidReport(x) ||
+            !ValidStageReceipt(root, id, index, c) ||
+            !Review(x, index).Confirmed ||
+            !StagedAndValid(x, c) ||
+            !Safety.ByteEqual(x.Keeper.Path, c.DestinationPath, CancellationToken.None))
+            throw new InvalidDataException(
+                "Missing independent confirmation or changed duplicate");
+
+        // Limit the real-shell exercise to a tiny generated file and an
+        // explicit opt-in. CI's normal test path only uses an injected
+        // failure transport, so it does not alter the Windows Recycle Bin.
+        if (testTransport is null)
+        {
+            if (!string.Equals(
+                    Environment.GetEnvironmentVariable("CHAPPY_TEST_REAL_RECYCLE_BIN"),
+                    "I_ACCEPT_SYNTHETIC_RECYCLE", StringComparison.Ordinal) ||
+                !Environment.UserInteractive ||
+                Thread.CurrentThread.GetApartmentState() != ApartmentState.STA ||
+                c.Original.Length > 1024 * 1024)
+                throw new InvalidOperationException(
+                    "Real shell recycle requires explicit synthetic-test opt-in on an interactive STA");
+        }
+
+        DurableJson(TrashIntentPath(root, id, index), new
+        {
+            Schema = 1, Id = id, Index = index, Kind = "WindowsShellRecycle",
+            c.SourcePath, c.DestinationPath,
+            Notice = "Attempt only. Outcome is unknown until independently verified."
+        });
+        try
+        {
+            if (testTransport is not null)
+                testTransport(c.DestinationPath);
+            else
+                Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                    c.DestinationPath,
+                    Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,
+                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
+                    Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
+        }
+        catch (Exception ex)
+        {
+            // The shell might have acted before returning an error. Retain
+            // ambiguous intent; do not retry, permanently delete or restore.
+            DurableJson(ShellOutcomePath(root, id, index), new
+            {
+                Schema = 1, Id = id, Index = index, Kind = "ShellErrorNeedsManualReview",
+                ErrorType = ex.GetType().FullName,
+                OriginalStagedPathStillExists = File.Exists(c.DestinationPath)
+            });
+            throw;
+        }
+
+        // This intentionally remains UNKNOWN even when the path is gone.
+        // The shell can be configured with unusual recycle policies; only
+        // an independent bin receipt could promote it to verified success.
+        DurableJson(ShellOutcomePath(root, id, index), new
+        {
+            Schema = 1, Id = id, Index = index, Kind = "ShellOutcomeNeedsManualReview",
+            OriginalStagedPathStillExists = File.Exists(c.DestinationPath)
+        });
+    }
+
+    /// <summary>
     /// Restore only an independently authenticated staged synthetic candidate to
     /// its EXACT original pathname. The current path must be absent; never use
     /// File.Move(overwrite: true), delete a foreign occupant, or auto-create a
@@ -599,6 +691,7 @@ public static class DuplicateCleanupWorkflow
         {
             bool stagedReceipt = ValidStageReceipt(root, id, i, c);
             bool startedRecycle = File.Exists(TrashIntentPath(root, id, i));
+            bool shellOutcome = File.Exists(ShellOutcomePath(root, id, i));
             bool doneRecycle = File.Exists(TrashReceiptPath(root, id, i));
             bool restoreIntent = File.Exists(RestoreIntentPath(root, id, i));
             bool restored = File.Exists(RestoreReceiptPath(root, id, i));
@@ -608,6 +701,8 @@ public static class DuplicateCleanupWorkflow
             string state =
                 (restoreIntent && startedRecycle) || (restored && startedRecycle)
                     ? "ManualReview"
+                    : shellOutcome
+                        ? "ShellRecycleOutcomeRequiresManualReview"
                     : restored
                         ? restoreIntent && originalValid && !File.Exists(c.DestinationPath)
                             ? "RestoredOriginal" : "ManualReview"

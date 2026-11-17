@@ -19,6 +19,12 @@ public partial class RecoveryWindow : Window
     // This does NOT authorize actual personal media. Core independently
     // rejects roots outside its generated-only test boundary.
     private bool _allowGeneratedOnlyUndoTest;
+    // Only the generated-fixture WPF flow owns this token. In normal product
+    // mode UndoExecute stays disabled; cancellation never enables mutations.
+    private CancellationTokenSource? _undoWork;
+    // Private CI observation point after the SAME durable Core checkpoint.
+    // Not an authority for replay, release gating, or user file operations.
+    private Action<int>? _afterGeneratedUndoAliasForTest;
     private Func<string, bool> _confirmGeneratedOnlyUndo = message =>
         MessageBox.Show(message, "生成データのみ・独立Undoの最終確認",
             MessageBoxButton.YesNo, MessageBoxImage.Warning,
@@ -32,7 +38,10 @@ public partial class RecoveryWindow : Window
             RecoveryTabs?.SelectedIndex != 1 ||
             HistoryGrid?.SelectedItem is not RecoveryEvidenceOverview.Row row ||
             row.Source != "複数ファイルのグループ履歴" ||
-            row.NeedsAttention || row.State is not
+            // ExplicitResumeRequired is flagged as needing attention in the
+            // read-only list, but can be explicitly resumed after fresh Core
+            // evidence checks. ManualReview is never selectable here.
+            row.State is not
                 ("VerifiedCompleted" or "ExplicitResumeRequired") ||
             string.IsNullOrWhiteSpace(_selectedRoot))
             return false;
@@ -79,6 +88,8 @@ public partial class RecoveryWindow : Window
             HistoryGrid.SelectedItem is RecoveryEvidenceOverview.Row h &&
             h.Source == "複数ファイルのグループ履歴";
         UndoExecuteButton.IsEnabled = !busy && SyntheticUndoSelectionAllowed();
+        UndoCancelButton.IsEnabled = busy &&
+            _undoWork is { IsCancellationRequested: false };
     }
 
     private async Task RefreshAsync()
@@ -300,10 +311,11 @@ public partial class RecoveryWindow : Window
         finally { Busy(false); }
     }
 
-    // G3-07: actual routed WPF click reaches the very same normal-compiled
-    // internal Core transaction, but ONLY from a CI opt-in + generated
-    // disposable TEMP/sentinel root. Ordinary product files always keep the
-    // button disabled. Both root and full ledger are revalidated in Core.
+    // G3-07: routed WPF click uses the single normal-compiled Core transaction
+    // in a generated TEMP+sentinel fixture only. In normal product builds the
+    // default-off private test opt-in and Core root guard both reject writes.
+    // Cancellation is cooperative: the durable group checkpoint is retained
+    // for explicit reinspection/resume, never auto-deleted or auto-approved.
     private async void UndoExecute_Click(object sender, RoutedEventArgs e)
     {
         if (!SyntheticUndoSelectionAllowed() ||
@@ -312,6 +324,7 @@ public partial class RecoveryWindow : Window
             return;
         string operationId = selected.Target;
         string root = _selectedRoot;
+        Busy(true); // include async preflight/consent; reject double clicks
         try
         {
             var first = await Task.Run(() =>
@@ -328,42 +341,99 @@ public partial class RecoveryWindow : Window
                 DetailText.Text = "最終確認を辞退。独立Undoは未実行。";
                 return;
             }
-            // Consent does not authorize stale previews, old IDs or old capacity.
             var again = await Task.Run(() =>
                 CompletedGroupLedger.InspectUndoCandidates(root)
                     .SingleOrDefault(x => x.OperationId == operationId));
-            if (!SyntheticUndoSelectionAllowed() || again is null ||
-                !again.ReviewReady ||
+            if (!_allowGeneratedOnlyUndoTest ||
+                RecoveryTabs.SelectedIndex != 1 ||
+                !ReferenceEquals(HistoryGrid.SelectedItem, selected) ||
+                again is null || !again.ReviewReady ||
                 first.RemainingAliases != again.RemainingAliases ||
-                first.OriginalFiles.Count != again.OriginalFiles.Count)
+                first.RepresentativePath != again.RepresentativePath ||
+                !first.RemainingSharedPaths.SequenceEqual(
+                    again.RemainingSharedPaths, StringComparer.OrdinalIgnoreCase) ||
+                first.OriginalFiles.Count != again.OriginalFiles.Count ||
+                first.OriginalFiles.Where((file, i) =>
+                    !file.Path.Equals(again.OriginalFiles[i].Path,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    file.OriginalVolumeSerial != again.OriginalFiles[i].OriginalVolumeSerial ||
+                    file.OriginalFileIndex != again.OriginalFiles[i].OriginalFileIndex).Any())
                 throw new InvalidDataException(
-                    "同意後にUndo対象・安全条件が変わりました。元データを変更せず中止");
-            // The generated fixture prepares this existing directory ahead
-            // of time. No folder is created just by pressing the UI button.
+                    "同意後にUndo対象・元ID・安全条件が変わりました。元データを変更せず中止");
             string evidence = Path.Combine(root, "g3-wpf-undo-evidence");
             if (!Directory.Exists(evidence))
                 throw new InvalidDataException("検証用Undo証拠フォルダがありません");
-            Busy(true);
+
+            _undoWork = new CancellationTokenSource();
+            CancellationToken token = _undoWork.Token;
+            long freeBefore = CapacityGuard.ReadAvailable(root).TargetBytes;
+            Busy(true); // only an active generated Core operation can be canceled
             DetailText.Text = "生成データの独立Undoを検証・処理中。中断した場合は証拠を保全します…";
             int restored = await Task.Run(() =>
                 CompletedGroupLedger.ResumeUndoCore(root, operationId,
-                    evidence, CancellationToken.None,
+                    evidence, token,
                     afterDurableAlias: count =>
+                    {
                         Dispatcher.InvokeAsync(() =>
                             DetailText.Text = "元ファイルを独立化・検証済み: " +
-                                count + "件。中断時の再開情報は永続保存済み")));
+                                count + "件。中断時の再開情報は永続保存済み");
+                        _afterGeneratedUndoAliasForTest?.Invoke(count);
+                    }), token);
+
+            // Do not call a successful user-facing result based on the Core
+            // return value alone: reopen the durable group and all original
+            // evidence; measured free space is not a savings guarantee.
+            var state = CompletedGroupLedger.Inspect(root).Entries.Single(x =>
+                x.OperationId == operationId);
+            var originals = CompletedGroupLedger.InspectOriginals(root)
+                .Where(x => x.OperationId == operationId &&
+                    x.State == "VerifiedRestored").ToArray();
+            var currentIds = originals.Select(x =>
+            {
+                var current = NativeFile.GetIdentity(x.Path);
+                return current.VolumeSerial.ToString("X8") + ":" +
+                    current.FileIndex.ToString("X16");
+            }).ToArray();
+            if (state.State != "VerifiedRestored" ||
+                originals.Length != first.OriginalFiles.Count ||
+                currentIds.Distinct(StringComparer.Ordinal).Count() != originals.Length)
+                throw new InvalidDataException(
+                    "Undo後の全元ファイルID・永続証拠を再認証できません。手動調査が必要");
+            long freeAfter = CapacityGuard.ReadAvailable(root).TargetBytes;
+            long delta = freeAfter - freeBefore;
+            string deltaText = delta >= 0 ? "+" + GroupRow.HumanSize(delta) :
+                "-" + GroupRow.HumanSize(-delta);
+            string ids = string.Join("\n", originals.Select((x, i) =>
+                Path.GetFileName(x.Path) + " / 現NTFS ID " + currentIds[i]));
             _showGeneratedOnlyUndo(
                 "生成データだけの独立Undoが完了：独立化した別名 " +
-                restored + "件。\n通常ユーザーのデータ変更機能は引き続き無効。");
-            Busy(false);
+                restored + "件。\n全元ファイルの別NTFS ID・SHA・Owner/DACLを再照合済み。\n" +
+                "対象ドライブ空き容量: " + GroupRow.HumanSize(freeBefore) +
+                " → " + GroupRow.HumanSize(freeAfter) +
+                "（観測差 " + deltaText + "）。\n" +
+                "※ 容量差は周辺I/Oの影響を受けるためUndo専用の割当量ではありません。\n" +
+                ids + "\n通常ユーザーのデータ変更機能は引き続き無効。");
+            EndGeneratedUndoRun();
             await RefreshAsync();
             HistorySummaryText.Text += "\n【生成テストUndo成功】独立化 " +
-                restored + "件。元ファイルのID・SHA/権限を再照合済み。";
+                restored + "件。全元ファイルの独立NTFS ID・SHA/権限を再照合済み。" +
+                " 空き容量の観測差 " + deltaText + "（専用回復量ではない）。";
+        }
+        catch (OperationCanceledException)
+        {
+            EndGeneratedUndoRun();
+            await RefreshAsync();
+            DetailText.Text = "【生成テストUndo中断】操作 " + operationId +
+                "\n処理中のキャンセルを受け付けました。すでに永続化された独立化は巻き戻しません。" +
+                "\n次回は履歴を再検証し、ExplicitResumeRequiredの場合だけ明示的に再開できます。" +
+                "\n復旧記録とstageを勝手に削除・移動しないでください。";
+            HistorySummaryText.Text +=
+                "\n【生成テストUndo中断】確定済みの個別ファイルを保全。手動再検証が必要。";
         }
         catch (Exception ex)
         {
-            if (_busy) Busy(false);
-            await RefreshAsync(); // discard stale selected operation after errors
+            EndGeneratedUndoRun();
+            await RefreshAsync();
             DetailText.Text = "【Undo停止：手動調査が必要】" + operationId +
                 "\n" + ex.Message +
                 "\n未確認のstage・ファイル・復旧証拠は移動・削除しないでください。" +
@@ -371,10 +441,23 @@ public partial class RecoveryWindow : Window
             HistorySummaryText.Text +=
                 "\n【G3検証用Undo停止】復旧記録は保全。手動調査・再照合が必要。";
         }
-        finally
-        {
-            if (_busy) Busy(false);
-        }
+        finally { EndGeneratedUndoRun(); }
+    }
+
+    private void UndoCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_busy || _undoWork is not { IsCancellationRequested: false } work)
+            return;
+        UndoCancelButton.IsEnabled = false;
+        DetailText.Text = "中断要求中…安全なチェックポイントで停止し、履歴を保全します。";
+        work.Cancel();
+    }
+
+    private void EndGeneratedUndoRun()
+    {
+        _undoWork?.Dispose();
+        _undoWork = null;
+        if (_busy) Busy(false);
     }
 
     private async void Apply_Click(object sender, RoutedEventArgs e)

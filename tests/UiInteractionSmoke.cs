@@ -48,6 +48,14 @@ internal static class UiInteractionSmoke
             window = new MainWindow();
             // x:Name fields are internal in the production app assembly.
             // Resolve real WPF named controls from the loaded XAML namescope.
+            var mainTabs = Named<TabControl>(window, "MainTabs");
+            var mediaOnly = Named<CheckBox>(window, "MediaOnlyCheck");
+            Require(mainTabs.Items.Count == 3 && mainTabs.SelectedIndex == 0 &&
+                    mediaOnly.IsChecked == false &&
+                    ((TabItem)mainTabs.Items[0]).Header?.ToString() == "重複整理" &&
+                    ((TabItem)mainTabs.Items[1]).Header?.ToString() == "画像圧縮" &&
+                    ((TabItem)mainTabs.Items[2]).Header?.ToString() == "履歴・復元",
+                "UI: three focused tabs, duplicate-first and all-file scanning by default");
             var scanButton = Named<Button>(window, "ScanButton");
             var stopButton = Named<Button>(window, "StopButton");
             var mergeButton = Named<Button>(window, "MergeButton");
@@ -70,10 +78,46 @@ internal static class UiInteractionSmoke
                     completedLedgerButton.IsEnabled &&
                     !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
-            Require(window.Title.Contains("R2.17", StringComparison.Ordinal) &&
+            Require(window.Title.Contains("Chappy Storage Compressor", StringComparison.Ordinal) &&
                     unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
                     jpegBatchButton.IsEnabled,
                 "Actual WPF UI shows R2.17 and preview-only batch actions enabled while idle");
+
+            // UI acceptance: scanning all extensions is real behavior, not only a checkbox.
+            // The new detail window must accept non-image duplicates, list all
+            // paths and never make a mutating action available.
+            string allFileRoot = Path.Combine(testRoot, "all-file-types");
+            Directory.CreateDirectory(allFileRoot);
+            string textFile = Path.Combine(allFileRoot, "document.txt");
+            string binaryFile = Path.Combine(allFileRoot, "document-copy.bin");
+            File.WriteAllText(textFile, "generated all-extension duplicate fixture");
+            File.Copy(textFile, binaryFile);
+            File.SetCreationTimeUtc(binaryFile, File.GetCreationTimeUtc(textFile));
+            File.SetLastWriteTimeUtc(binaryFile, File.GetLastWriteTimeUtc(textFile));
+            var allFileResult = Scanner.Run(allFileRoot, mediaOnly.IsChecked == true,
+                null, CancellationToken.None);
+            Require(allFileResult.Groups.Count == 1 &&
+                    allFileResult.Groups[0].Files.Count == 2 &&
+                    allFileResult.Groups[0].Files.All(x => x.Identity.LinkCount == 1),
+                "UI: all-extension default finds a byte-exact TXT/BIN pair");
+            var detailsType = typeof(MainWindow).Assembly.GetType(
+                "ChappyStorageCompressor.DuplicateGroupDetailsWindow", throwOnError: true)!;
+            var inspectorWindow = (Window)Activator.CreateInstance(detailsType,
+                BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
+                args: new object[] { allFileResult.Groups[0] }, culture: null)!;
+            var inspectorGrid = (DataGrid)detailsType.GetField("_grid",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(inspectorWindow)!;
+            var inspectorMessage = (TextBlock)detailsType.GetField("_previewMessage",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(inspectorWindow)!;
+            Require(inspectorGrid.Items.Count == 2 &&
+                    inspectorMessage.Text.Contains("画像以外のプレビューは表示しません",
+                        StringComparison.Ordinal) &&
+                    inspectorWindow.Title.Contains("読み取り専用", StringComparison.Ordinal),
+                "UI: full duplicate group details handle non-images read-only");
+            inspectorWindow.Close();
+            Require(File.Exists(textFile) && File.Exists(binaryFile) &&
+                    OracleHash(textFile) == OracleHash(binaryFile),
+                "UI: read-only duplicate inspector preserves both original files");
 
             string originals = Path.Combine(testRoot, "synthetic-originals");
             Directory.CreateDirectory(originals);

@@ -112,6 +112,7 @@ public static class NativeFile
     private const uint OwnerGroupDaclInfo = 0x00000001 | 0x00000002 | 0x00000004;
     private const uint DaclInfo = 0x00000004;
     private const uint WriteDacAccess = 0x00040000;
+    private const uint ReadControlAccess = 0x00020000;
 
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern uint GetNamedSecurityInfoW(string objectName, int objectType,
@@ -163,7 +164,7 @@ public static class NativeFile
             // DELETE and WRITE sharing are DENIED; also verifies that the
             // named stage still refers to the exact newly created NTFS ID.
             using var handle = CreateFilePinned(Extended(independent),
-                WriteDacAccess | ReadAttributes, 0x00000001, IntPtr.Zero,
+                WriteDacAccess | ReadControlAccess | ReadAttributes, 0x00000001, IntPtr.Zero,
                 OpenExisting, OpenReparsePoint, IntPtr.Zero);
             if (handle.IsInvalid)
                 throw new Win32Exception(Marshal.GetLastWin32Error(),

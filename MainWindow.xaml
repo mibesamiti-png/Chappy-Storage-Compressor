@@ -142,6 +142,16 @@
                 <DataGridTextColumn Header="1個のサイズ" Binding="{Binding FileSizeText}" Width="115"/>
                 <DataGridTextColumn Header="削減見込" Binding="{Binding SavingsText}" Width="115"/>
                 <DataGridTextColumn Header="状態（統合基準）" Binding="{Binding Status}" Width="2*"/>
+                <DataGridTemplateColumn Header="" Width="44">
+                  <DataGridTemplateColumn.CellTemplate>
+                    <DataTemplate>
+                      <Button Content="›" Click="GroupDetailRow_Click"
+                              ToolTip="この重複グループの全ファイルと画像プレビューを開きます。"
+                              Background="Transparent" BorderThickness="0"
+                              Foreground="#E6E6E6" Padding="5,1" Margin="0"/>
+                    </DataTemplate>
+                  </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
               </DataGrid.Columns>
             </DataGrid>
           </Border>

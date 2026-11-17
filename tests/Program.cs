@@ -843,17 +843,22 @@ static class Program
                             // rename boundaries, strictly on disposable PNGs.
                             // Each scenario gets fresh independent copies and
                             // a new permanent receipt, never a user-file path.
-                            foreach (string checkpoint in new[] {
-                                "g4-after-original-rename",
-                                "g4-after-stage-rename",
-                                "g4-after-candidate-quarantine",
-                                "g4-after-original-restored"
+                            foreach (var (checkpoint, backupOnly) in new[] {
+                                ("g4-after-original-rename", false),
+                                ("g4-after-stage-rename", false),
+                                ("g4-after-apply-record", false),
+                                ("g4-after-candidate-quarantine", false),
+                                ("g4-after-original-restored", false),
+                                ("g4-after-backup-restore-record", true),
+                                ("g4-after-candidate-quarantine", true),
+                                ("g4-after-original-restored", true)
                             })
                             {
-                                bool killDuringRecovery = checkpoint is
+                                bool killDuringRecovery = backupOnly || checkpoint is
                                     "g4-after-candidate-quarantine" or
                                     "g4-after-original-restored";
-                                string scenario = checkpoint.Replace("g4-after-", "");
+                                string scenario = checkpoint.Replace("g4-after-", "") +
+                                    (backupOnly ? "-backup-only" : "");
                                 string testStage = Path.Combine(root, "g4-cutover-" + scenario);
                                 string testBackup = Path.Combine(g4Backup, "cutover-" + scenario);
                                 Directory.CreateDirectory(testStage);
@@ -883,6 +888,33 @@ static class Program
                                         ExpectThrows(() => ReplacementReadiness.ApplyPreparedImage(
                                             source, preview.PreviewPath!, testStage, testBackup),
                                             "G4-03: 外部バックアップwriterが開いている間は切替を拒否");
+                                    string linkedAlias = Path.Combine(root, "g4-linked-alias.png");
+                                    NativeFile.NewHardLink(linkedAlias, source);
+                                    try
+                                    {
+                                        ExpectThrows(() => ReplacementReadiness.ApplyPreparedImage(
+                                            source, preview.PreviewPath!, testStage, testBackup),
+                                            "G4-05: 準備後に追加された共有リンクを検出して切替を拒否");
+                                        Check(File.Exists(source) && NativeFile.SameFile(source, linkedAlias),
+                                            "G4-05: 元画像と追加されたリンクを保全");
+                                    }
+                                    finally { File.Delete(linkedAlias); }
+                                    string ancestorStore = Safety.StorePath(root);
+                                    string groupFolder = Path.Combine(ancestorStore, ".chappy-group-completed");
+                                    Directory.CreateDirectory(groupFolder);
+                                    string malformedHistory = Path.Combine(groupFolder, "unverified.json");
+                                    File.WriteAllText(malformedHistory, "unexpected");
+                                    try
+                                    {
+                                        ExpectThrows(() => ReplacementReadiness.ApplyPreparedImage(
+                                            source, preview.PreviewPath!, testStage, testBackup),
+                                            "G4-05: 親階層の不明な統合履歴がある場合は切替を拒否");
+                                    }
+                                    finally
+                                    {
+                                        File.Delete(malformedHistory);
+                                        Directory.Delete(groupFolder);
+                                    }
                                     CapacityGuard.TestOnlyReadAvailable = _ => (0, long.MaxValue);
                                     try
                                     {
@@ -898,6 +930,43 @@ static class Program
                                 if (killDuringRecovery)
                                     ReplacementReadiness.ApplyPreparedImage(
                                         source, preview.PreviewPath!, testStage, testBackup);
+
+                                if (backupOnly)
+                                {
+                                    string token = Path.GetFileNameWithoutExtension(image.StagedPath)
+                                        [".chappy-g4-stage-".Length..];
+                                    string rollbackPath = source + ".chappy-g4-old-" + token + ".rollback";
+                                    Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                        source, preview.PreviewPath!, testStage, testBackup) == "Applied",
+                                        "G4-04: 完了レシートは再読込で適用済みを識別");
+                                    File.Delete(rollbackPath); // Disposable fixture only.
+                                    if (checkpoint == "g4-after-backup-restore-record")
+                                    {
+                                        CapacityGuard.TestOnlyReadAvailable =
+                                            _ => (CapacityGuard.TargetReserve, long.MaxValue);
+                                        try
+                                        {
+                                            ExpectThrows(() => ReplacementReadiness.RestorePreparedImage(
+                                                source, preview.PreviewPath!, testStage, testBackup),
+                                                "G4-04: 独立復元ステージの追加容量不足を拒否");
+                                        }
+                                        finally { CapacityGuard.TestOnlyReadAvailable = null; }
+                                        var appliedPath = Path.Combine(testBackup, ".chappy-g4-applied.json");
+                                        string appliedEvidence = File.ReadAllText(appliedPath);
+                                        File.WriteAllText(appliedPath, "{");
+                                        ExpectThrows(() => ReplacementReadiness.RestorePreparedImage(
+                                            source, preview.PreviewPath!, testStage, testBackup),
+                                            "G4-04: 破損した適用記録から独立復元しない");
+                                        File.WriteAllText(appliedPath, appliedEvidence);
+                                        Check(ReplacementReadiness.InspectGeneratedPngSynthetic(
+                                            source, preview.PreviewPath!, testStage, testBackup) ==
+                                            "AppliedWithoutRollback",
+                                            "G4-04: 安全停止後も候補と独立原本バックアップを保全");
+                                    }
+                                    // The final independent restore also loses the preview file.
+                                    if (checkpoint == "g4-after-original-restored")
+                                        File.Delete(preview.PreviewPath!);
+                                }
 
                                 var childProcess = new System.Diagnostics.ProcessStartInfo("dotnet")
                                 {
@@ -930,33 +999,41 @@ static class Program
                                 string expectedInterrupted = checkpoint switch {
                                     "g4-after-original-rename" => "OriginalSetAside",
                                     "g4-after-stage-rename" => "CandidateAtOriginal",
-                                    "g4-after-candidate-quarantine" => "CandidateQuarantined",
-                                    _ => "OriginalRestored"
+                                    "g4-after-apply-record" => "Applied",
+                                    "g4-after-backup-restore-record" => "AppliedWithoutRollback",
+                                    "g4-after-candidate-quarantine" => backupOnly ?
+                                        "BackupCandidateQuarantined" : "CandidateQuarantined",
+                                    _ => backupOnly ? "BackupRestored" : "OriginalRestored"
                                 };
                                 Check(interrupted == expectedInterrupted,
                                     "G4-04: 実プロセス死の原本ID・候補ID状態を判定: " +
                                     checkpoint + " -> " + interrupted);
                                 string restored = ReplacementReadiness.RestorePreparedImage(
                                     source, preview.PreviewPath!, testStage, testBackup);
-                                Check(restored is "Prepared" or "OriginalRestored" &&
-                                    Safety.SameSnapshot(startSnapshot) &&
+                                FileSnapshot after = Safety.Capture(source);
+                                Check((backupOnly ? restored == "BackupRestored" :
+                                        restored is "Prepared" or "OriginalRestored") &&
+                                    after.Identity.LinkCount == 1 &&
+                                    after.Identity.SameFile(startSnapshot.Identity) == !backupOnly &&
+                                    after.Attributes == startSnapshot.Attributes &&
+                                    after.CreationUtc == startSnapshot.CreationUtc &&
+                                    after.ModifiedUtc == startSnapshot.ModifiedUtc &&
+                                    NativeFile.SameOwnerGroupDacl(
+                                        after.SecurityDescriptor, startSnapshot.SecurityDescriptor) &&
                                     Safety.ComputeSha256(source, CancellationToken.None) == hash &&
-                                    Safety.ByteEqual(source, image.BackupPath,
-                                        CancellationToken.None) &&
-                                    NativeFile.GetIdentity(source).SameFile(
-                                        startSnapshot.Identity) &&
-                                    new FileInfo(source).Length == startSnapshot.Length,
+                                    Safety.ByteEqual(source, image.BackupPath, CancellationToken.None) &&
+                                    after.Length == startSnapshot.Length,
                                     "G4-04: 本物のプロセス死→原本ID/ACL/時刻/全バイト復元: " +
-                                    checkpoint);
+                                    scenario);
                                 Check(ReplacementReadiness.RestorePreparedImage(
                                         source, preview.PreviewPath!, testStage,
-                                        testBackup) is "OriginalUnchanged" or "OriginalRestored",
-                                    "G4-04: 二重リカバリーは冪等かつ元画像未変更: " + checkpoint);
+                                        testBackup) is "OriginalUnchanged" or "OriginalRestored" or "BackupRestored" &&
+                                    Safety.SameSnapshot(after),
+                                    "G4-04: 二重リカバリーは冪等かつ元画像未変更: " + scenario);
                                 Check(File.Exists(image.BackupPath) &&
-                                    File.Exists(image.ReceiptPath) &&
-                                    Safety.SameSnapshot(startSnapshot),
+                                    File.Exists(image.ReceiptPath) && Safety.SameSnapshot(after),
                                     "G4-04: 復元後も独立原本backupとレシートは自動削除しない: " +
-                                    checkpoint);
+                                    scenario);
                             }
 
                         }
@@ -2092,6 +2169,8 @@ static class Program
         {
             if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") != "true")
                 return 81;
+            Journal.TestFolderPath = Path.Combine(
+                Path.GetDirectoryName(Path.GetDirectoryName(args[1]))!, "test-journal");
             string stopAt = args[5];
             FaultInjection.OnCheckpoint = name =>
             {

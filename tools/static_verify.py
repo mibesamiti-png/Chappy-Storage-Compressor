@@ -181,8 +181,9 @@ check('G4-03: durable copy-only receipt includes original NTFS ID/owner DACL/tim
       'public FileSnapshot? IndependentBackup { get; set; }' in replacement_readiness and
       'G4ReceiptName = ".chappy-g4-preparation.json"' in replacement_readiness and
       'System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(receipt)' in replacement_readiness and
-      'new FileStream(receiptPath, FileMode.CreateNew,' in replacement_readiness and
-      'recordStream.Flush(flushToDisk: true);' in replacement_readiness)
+      'WriteImageEvidence(receiptPath, recordBytes);' in replacement_readiness and
+      'new FileStream(path, FileMode.CreateNew, FileAccess.Write,' in replacement_readiness and
+      'output.Flush(flushToDisk: true);' in replacement_readiness)
 check('G4-03/04: readonly journal replay fails closed for foreign, changed or orphan copies',
       'internal static PreparationInspection InspectPreparedCopies(' in replacement_readiness and
       'record.OriginalSha256.All(Uri.IsHexDigit)' in replacement_readiness and

@@ -22,7 +22,17 @@ public static class ReplacementReadiness
 
     public sealed record Row(string Format, string RelativePath, long SourceBytes,
         long CandidateBytes, long ProjectedSavingBytes, bool SpaceRequirementsMet,
-        string Explanation);
+        string Explanation)
+    {
+        // These fields are populated ONLY from the already authenticated
+        // PNG/JPEG preview journal and current SHA/decoded-image inspection.
+        // They are not a mutation authority: PrepareOneVerifiedPreview repeats
+        // the entire report and image/NTFS preflight immediately before copy.
+        internal string? VerifiedOriginalPath { get; init; }
+        internal string? VerifiedCandidatePath { get; init; }
+        internal string? SourceSha256 { get; init; }
+        internal string? CandidateSha256 { get; init; }
+    }
 
     public sealed record Summary(int CandidateCount, int SpaceFeasibleCount,
         long SpaceFeasibleLogicalSavingBytes, long InputVolumeFreeBytes,
@@ -192,6 +202,8 @@ public static class ReplacementReadiness
             candidates++;
             string explanation;
             bool eligible = false;
+            string? acceptedPath = null, acceptedCandidate = null;
+            string? acceptedSourceSha = null, acceptedCandidateSha = null;
             string path;
             try
             {
@@ -226,6 +238,13 @@ public static class ReplacementReadiness
                             StringComparison.OrdinalIgnoreCase) &&
                         fidelity.CandidateSha256.Equals(saved.CandidateSha256,
                             StringComparison.OrdinalIgnoreCase);
+                    if (eligible)
+                    {
+                        acceptedPath = path;
+                        acceptedCandidate = saved.Path;
+                        acceptedSourceSha = saved.SourceSha256;
+                        acceptedCandidateSha = saved.CandidateSha256;
+                    }
                     explanation = eligible ?
                         "容量/独立バックアップ条件・候補生成時の原本全バイト・" +
                         "元NTFS ID・画素/メタデータ再検査合格。原本置換はまだ無効" :
@@ -247,11 +266,58 @@ public static class ReplacementReadiness
                 projected = checked(projected + row.EstimatedSavingBytes);
             }
             rows.Add(new(row.Format, row.RelativePath, row.SourceBytes,
-                row.CandidateBytes, row.EstimatedSavingBytes, eligible, explanation));
+                row.CandidateBytes, row.EstimatedSavingBytes, eligible, explanation)
+            {
+                VerifiedOriginalPath = acceptedPath,
+                VerifiedCandidatePath = acceptedCandidate,
+                SourceSha256 = acceptedSourceSha,
+                CandidateSha256 = acceptedCandidateSha
+            });
         }
         return new(candidates, feasible, projected, inputFree, backupFree, different, rows);
     }
 
+
+    /// <summary>
+    /// Production WPF entry point for ONE image COPY-ONLY preparation.
+    /// The selected source must appear in the existing PNG/JPEG batch journal.
+    /// No filename, SHA or candidate path supplied by the UI is trusted.
+    /// Rebuild the actual journal-backed readiness INSIDE this method before
+    /// writing any staged or external backup bytes; no original is changed.
+    /// The two user-selected output directories must already exist and be
+    /// empty (enforced by PrepareVerifiedCopies).
+    /// </summary>
+    internal static PreparedCopies PrepareOneVerifiedPreview(
+        string inputRoot, string outputRoot, string sourcePath,
+        string stagingDirectory, string independentBackupDirectory,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        string root = Safety.ValidateRoot(inputRoot);
+        string output = JpegBatchPreviewEngine.CanonicalFolder(outputRoot);
+        string original = Path.GetFullPath(sourcePath);
+        if (!Inside(original, root) || original.Equals(root,
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("選択された画像は検証対象フォルダの外側です");
+        // Check for a source reparse point before inspecting a journal.
+        JpegBatchPreviewEngine.CheckNoReparse(original);
+        var combined = CombinedCapacityReport.Inspect(root, output, ct);
+        var review = Inspect(combined, root, output, independentBackupDirectory, ct);
+        var matching = review.Rows.Where(x =>
+            x.VerifiedOriginalPath is not null &&
+            x.VerifiedOriginalPath.Equals(original, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (matching.Length != 1 || !matching[0].SpaceRequirementsMet ||
+            matching[0].VerifiedCandidatePath is null ||
+            matching[0].SourceSha256 is not { Length: 64 } ||
+            matching[0].CandidateSha256 is not { Length: 64 })
+            throw new InvalidDataException(
+                "選択された画像の生成時SHA/プレビュー台帳・容量条件が一意に合格していません");
+        var accepted = matching[0];
+        return PrepareVerifiedCopies(original, accepted.VerifiedCandidatePath,
+            stagingDirectory, independentBackupDirectory,
+            accepted.SourceSha256, accepted.CandidateSha256, ct);
+    }
 
     // G4-03: the preparation phase is intentionally COPY-ONLY: no input
     // rename, File.Replace, unlink, overwrite, Undo, or recovery authorization.

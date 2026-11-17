@@ -257,7 +257,7 @@ check('G3-03/06: one production-compiled but synthetic-guarded group Undo replay
 collision_ledger = (root/'Core/CollisionRecoveryLedger.cs').read_text(encoding='utf-8')
 collision_plan = (root/'Core/CollisionCollectionPlan.cs').read_text(encoding='utf-8')
 check('G3-05: independently restored Undo aliases enter preexisting no-overwrite collision receipt flow',
-      'public static string BeginRestoredUndoExportSynthetic(' in collision_ledger and
+      'internal static string BeginRestoredUndoExportSynthetic(' in collision_ledger and
       'CompletedGroupLedger.InspectOriginals(root)' in collision_ledger and
       'x.State == "VerifiedRestored" && !x.Representative' in collision_ledger and
       'CollisionCollectionPlan.Inspect(output,' in collision_ledger and
@@ -268,6 +268,18 @@ check('G3-05: independently restored Undo aliases enter preexisting no-overwrite
       'g3CollisionNestedNumberedUtf8MemoAndRestartVerified = true' in group_batch_tests and
       '$r.g3PostUndoExistingCollisionLedgerExportVerified -ne $true' in workflow and
       'ProductionMutationEnabled = false' in collision_ledger)
+check('G3-05: same collision writer is compiled in normal Windows core but inaccessible to public user files',
+      '#if CHAPPY_TESTING' not in collision_ledger and
+      'internal static string BeginSynthetic(' in collision_ledger and
+      'internal static Status InspectSynthetic(' in collision_ledger and
+      'internal static Status ResumeSynthetic(' in collision_ledger and
+      'internal static string BeginRestoredUndoExportSynthetic(' in collision_ledger and
+      'string root = RequireOwnedRoot(testRoot);' in collision_ledger and
+      'Part35 only accepts generated sentinel NTFS root' in collision_ledger and
+      'FileMode.CreateNew' in collision_ledger and
+      'g3NormalCompiledCollisionExportAfterRoutedWpfUndo =' in ui_test and
+      'ProductionMutationEnabled = false' in collision_ledger and
+      '$r.g3NormalCompiledCollisionExportAfterRoutedWpfUndo -ne $true' in workflow)
 check('G3-07: real routed WPF Undo requires explicit generated-only opt-in and cannot act on user media',
       'UndoExecuteButton' in recovery_xaml and
       'private bool _allowGeneratedOnlyUndoTest;' in recovery_window and

@@ -1606,6 +1606,7 @@ jobs:
               $r.g3UndoReviewButtonCannotEnableLegacyApply -ne $true -or
               $r.g3GeneratedOnlyRoutedWpfUndoConsentDeniedWithoutMutation -ne $true -or
               $r.g3GeneratedOnlyRoutedWpfCoreUndoSuccess -ne $true -or
+              $r.g3NormalCompiledCollisionExportAfterRoutedWpfUndo -ne $true -or
               $r.g3ProductionUndoControlAlwaysDisabledForNormalRoot -ne $true -or
               $r.part30HistoryTabRemainsReadOnly -ne $true -or
               $r.part30NeverEnabledApplyForHistory -ne $true -or

@@ -550,6 +550,93 @@ internal static class UiInteractionSmoke
                 "G3-07: genuine WPF routed Yes executes guarded shared Undo Core, verifies separate NTFS IDs/bytes/ACL, never enables production Apply");
             undoView.Close();
 
+            // G3-05: immediately after the REAL WPF-triggered Core Undo,
+            // use the EXACT normal-compiled internal collision writer.
+            // This proves the shipped binary contains the one existing
+            // create-new/receipt/replay implementation, not a test-only copy.
+            string collisionOutput = Path.Combine(undoRoot, "g3-wpf-export");
+            Directory.CreateDirectory(collisionOutput);
+            string occupiedB = Path.Combine(collisionOutput, "group-b.mp4");
+            string occupiedC = Path.Combine(collisionOutput, "group-c.mp4");
+            File.WriteAllText(occupiedB, "FOREIGN WPF EXISTING B");
+            File.WriteAllText(occupiedC, "FOREIGN WPF EXISTING C");
+            string preExistingMemo = Path.Combine(collisionOutput, "同名ファイル一覧.txt");
+            File.WriteAllText(preExistingMemo, "EXISTING USER TXT - NEVER REPLACE");
+            var foreignBId = NativeFile.GetIdentity(occupiedB);
+            var foreignCId = NativeFile.GetIdentity(occupiedC);
+            var foreignBHash = OracleHash(occupiedB);
+            var foreignCHash = OracleHash(occupiedC);
+            var oldMemoId = NativeFile.GetIdentity(preExistingMemo);
+            var beginExport = typeof(CollisionRecoveryLedger).GetMethod(
+                "BeginRestoredUndoExportSynthetic",
+                BindingFlags.NonPublic | BindingFlags.Static) ??
+                throw new InvalidOperationException(
+                    "G3-05 collision writer not compiled into normal product");
+            var resumeExport = typeof(CollisionRecoveryLedger).GetMethod(
+                "ResumeSynthetic", BindingFlags.NonPublic | BindingFlags.Static) ??
+                throw new InvalidOperationException(
+                    "G3-05 collision replay not compiled into normal product");
+            Require(typeof(CollisionRecoveryLedger).GetMethod(
+                    "BeginRestoredUndoExportSynthetic",
+                    BindingFlags.Public | BindingFlags.Static) is null &&
+                !CollisionRecoveryLedger.ProductionMutationEnabled,
+                "G3-05: normal product has NO public collision-export mutation entrypoint");
+            bool rejectedUserRoot = false;
+            try
+            {
+                beginExport.Invoke(null, [originals, undoOperationId, collisionOutput]);
+            }
+            catch (TargetInvocationException ex) when
+                (ex.InnerException is InvalidOperationException)
+            {
+                rejectedUserRoot = true;
+            }
+            Require(rejectedUserRoot &&
+                !Directory.Exists(Path.Combine(collisionOutput,
+                    ".chappy-collision-journal")),
+                "G3-05: normal-compiled collision writer refuses regular user root before journal or output creation");
+            string collisionId = (string)(beginExport.Invoke(null,
+                [undoRoot, undoOperationId, collisionOutput]) ??
+                throw new InvalidDataException("G3-05 synthetic collision intent not created"));
+            var exportResult = resumeExport.Invoke(null,
+                [undoRoot, collisionOutput, collisionId, null])
+                as CollisionRecoveryLedger.Status ??
+                throw new InvalidDataException("G3-05 normal collision export failed");
+            var exportEvidence = CollisionEvidenceReview.Inspect(collisionOutput);
+            var exportFiles = exportEvidence.Rows.Where(x =>
+                x.Kind == "ファイル" && !x.NeedsAttention).ToArray();
+            var exportedMemo = Path.Combine(collisionOutput,
+                "同名ファイル一覧 (1).txt");
+            byte[] noteBytes = File.ReadAllBytes(exportedMemo);
+            bool normalWpfToCollision = exportResult.State == "VerifiedCompleted" &&
+                exportResult.VerifiedFiles == 2 &&
+                exportEvidence.NeedsReview == 0 &&
+                exportFiles.Length == 2 &&
+                exportFiles.Any(x => x.DestinationRelativePath.StartsWith(
+                    "同名ファイル" + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase)) &&
+                exportFiles.All(x =>
+                {
+                    string src = Path.Combine(undoRoot, x.OriginalRelativePath);
+                    string dst = Path.Combine(collisionOutput, x.DestinationRelativePath);
+                    return File.Exists(src) && File.Exists(dst) &&
+                        OracleHash(src) == OracleHash(dst) &&
+                        !NativeFile.SameFile(src, dst);
+                }) &&
+                OracleHash(occupiedB) == foreignBHash &&
+                OracleHash(occupiedC) == foreignCHash &&
+                NativeFile.GetIdentity(occupiedB).SameFile(foreignBId) &&
+                NativeFile.GetIdentity(occupiedC).SameFile(foreignCId) &&
+                File.ReadAllText(preExistingMemo) ==
+                    "EXISTING USER TXT - NEVER REPLACE" &&
+                NativeFile.GetIdentity(preExistingMemo).SameFile(oldMemoId) &&
+                noteBytes.Length >= 3 &&
+                noteBytes[0] == 0xEF && noteBytes[1] == 0xBB &&
+                noteBytes[2] == 0xBF &&
+                CompletedGroupLedger.Inspect(undoRoot).VerifiedRestored == 1;
+            Require(normalWpfToCollision,
+                "G3-05: real routed WPF Undo -> NORMAL-compiled guarded collision Core preserves existing output IDs and numbered UTF-8 BOM TXT");
+
             // Part 15: use the real UnifiedBatchButton WPF routed Click, with
             // native dialogs replaced by deterministic in-process answers.
             // Hosted Actions has no visible/interactive desktop. We do not
@@ -1127,6 +1214,8 @@ internal static class UiInteractionSmoke
                     g3UndoReviewButtonCannotEnableLegacyApply = !recoveryApply.IsEnabled,
                     g3GeneratedOnlyRoutedWpfUndoConsentDeniedWithoutMutation = undoConsentRejected,
                     g3GeneratedOnlyRoutedWpfCoreUndoSuccess = realWpfUndo,
+                    g3NormalCompiledCollisionExportAfterRoutedWpfUndo =
+                        normalWpfToCollision,
                     g3ProductionUndoControlAlwaysDisabledForNormalRoot =
                         !undoExecuteButton.IsEnabled,
                     part30HistoryTabRemainsReadOnly = historyGrid.IsReadOnly,

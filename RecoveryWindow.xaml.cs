@@ -355,16 +355,21 @@ public partial class RecoveryWindow : Window
             _showGeneratedOnlyUndo(
                 "生成データだけの独立Undoが完了：独立化した別名 " +
                 restored + "件。\n通常ユーザーのデータ変更機能は引き続き無効。");
+            Busy(false);
             await RefreshAsync();
             HistorySummaryText.Text += "\n【生成テストUndo成功】独立化 " +
                 restored + "件。元ファイルのID・SHA/権限を再照合済み。";
         }
         catch (Exception ex)
         {
+            if (_busy) Busy(false);
+            await RefreshAsync(); // discard stale selected operation after errors
             DetailText.Text = "【Undo停止：手動調査が必要】" + operationId +
                 "\n" + ex.Message +
                 "\n未確認のstage・ファイル・復旧証拠は移動・削除しないでください。" +
                 "\n同名ファイル調査タブのP0/P1と統合・Undo履歴も確認してください。";
+            HistorySummaryText.Text +=
+                "\n【G3検証用Undo停止】復旧記録は保全。手動調査・再照合が必要。";
         }
         finally
         {

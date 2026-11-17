@@ -749,13 +749,30 @@ public static class ReplacementReadiness
                 record.OriginalSha256) &&
             Safety.ByteEqual(at, backup.Path, CancellationToken.None,
                 allowDeleteSharing: true);
-        bool IsOptimized(string at) =>
-            Safety.SameRenamedSnapshot(staged, at) &&
-            Eq(Safety.ComputeSha256(at, CancellationToken.None,
-                    allowDeleteSharing: true),
-                record.CandidateSha256) &&
-            Safety.ByteEqual(at, candidate, CancellationToken.None,
-                allowDeleteSharing: true);
+        bool IsOptimized(string at)
+        {
+            var actual = Safety.Capture(at);
+            // NTFS short-name/file-name tunneling: when a staged file is
+            // renamed into the recently vacated original name, NTFS can
+            // inherit the ORIGINAL file's creation timestamp. The real
+            // Windows CI proved that ID, bytes, owner/DACL, attributes and
+            // modified UTC all remain identical; ONLY CreationUtc changes.
+            // Do not drop the creation-time check: accept exactly the staged
+            // timestamp, or (only after a rename) the saved ORIGINAL time.
+            bool allowedCreation = actual.CreationUtc == staged.CreationUtc ||
+                (!Eq(at, stage) && actual.CreationUtc == old.CreationUtc);
+            return actual.Identity.SameFile(staged.Identity) &&
+                actual.Identity.LinkCount == 1 &&
+                actual.Length == staged.Length &&
+                allowedCreation &&
+                actual.ModifiedUtc == staged.ModifiedUtc &&
+                actual.Attributes == staged.Attributes &&
+                actual.SecurityDescriptor.AsSpan().SequenceEqual(staged.SecurityDescriptor) &&
+                Eq(Safety.ComputeSha256(at, CancellationToken.None,
+                    allowDeleteSharing: true), record.CandidateSha256) &&
+                Safety.ByteEqual(at, candidate, CancellationToken.None,
+                    allowDeleteSharing: true);
+        }
         string phase;
         if (hasOriginal && hasStage && !hasRollback && !hasQuarantine &&
             IsOld(original) && IsOptimized(stage))

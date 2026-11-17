@@ -126,9 +126,10 @@ public static class ReplacementReadiness
                 " 本番置換・永続バックアップは未実装のため適用不可");
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or
-            UnauthorizedAccessException or ArgumentException or NotSupportedException or
-            OverflowException or System.ComponentModel.Win32Exception or
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            InvalidOperationException or UnauthorizedAccessException or ArgumentException or
+            NotSupportedException or OverflowException or
+            System.ComponentModel.Win32Exception or
             System.Runtime.InteropServices.COMException)
         {
             return new(format, false, 0, 0, "", "",
@@ -221,9 +222,10 @@ public static class ReplacementReadiness
                 }
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
-                ArgumentException or InvalidOperationException or
-                System.ComponentModel.Win32Exception or NotSupportedException)
+            catch (Exception ex) when (ex is IOException or InvalidDataException or
+                UnauthorizedAccessException or ArgumentException or
+                InvalidOperationException or System.ComponentModel.Win32Exception or
+                NotSupportedException)
             {
                 explanation = "安全判定不可: " + ex.Message;
             }

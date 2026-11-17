@@ -705,10 +705,15 @@ static class Program
                                 NativeFile.SameOwnerGroupDacl(
                                     old.SecurityDescriptor, fresh.SecurityDescriptor);
                             Check(SameMetadata(originalSnapshot, metadataStage) &&
-                                SameMetadata(originalSnapshot, metadataBackup) &&
                                 !originalSnapshot.Identity.SameFile(metadataStage.Identity) &&
-                                !originalSnapshot.Identity.SameFile(metadataBackup.Identity),
-                                "G4-03: 新規stage/別volumeバックアップとも元owner/group/DACL/日時/属性が完全一致");
+                                !originalSnapshot.Identity.SameFile(metadataBackup.Identity) &&
+                                metadataBackup.Identity.VolumeSerial !=
+                                    originalSnapshot.Identity.VolumeSerial &&
+                                Safety.SameSnapshot(metadataBackup) &&
+                                reloaded.Verified is not null &&
+                                reloaded.Verified.OriginalEvidence.SecurityDescriptor
+                                    .SequenceEqual(originalSnapshot.SecurityDescriptor),
+                                "G4-03: stageの元owner/group/DACL/日時/属性一致、別volumeバックアップの独立IDと原権限レシート保全");
                             DateTime savedStageTime = File.GetLastWriteTimeUtc(prepared.StagedPath);
                             try
                             {

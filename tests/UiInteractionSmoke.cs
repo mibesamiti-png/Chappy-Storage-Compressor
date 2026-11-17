@@ -102,22 +102,19 @@ internal static class UiInteractionSmoke
                 "UI: all-extension default finds a byte-exact TXT/BIN pair");
             var detailsType = typeof(MainWindow).Assembly.GetType(
                 "ChappyStorageCompressor.DuplicateGroupDetailsWindow", throwOnError: true)!;
-            using (var _ = new MemoryStream()) // no persistent state or user file writes
-            {
-                var detail = (Window)Activator.CreateInstance(detailsType,
-                    BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
-                    args: new object[] { allFileResult.Groups[0] }, culture: null)!;
-                var detailGrid = (DataGrid)detailsType.GetField("_grid",
-                    BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(detail)!;
-                var message = (TextBlock)detailsType.GetField("_previewMessage",
-                    BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(detail)!;
-                Require(detailGrid.Items.Count == 2 &&
-                        message.Text.Contains("画像以外のプレビューは表示しません",
-                            StringComparison.Ordinal) &&
-                        detail.Title.Contains("読み取り専用", StringComparison.Ordinal),
-                    "UI: full duplicate group details handle non-images read-only");
-                detail.Close();
-            }
+            var inspectorWindow = (Window)Activator.CreateInstance(detailsType,
+                BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
+                args: new object[] { allFileResult.Groups[0] }, culture: null)!;
+            var inspectorGrid = (DataGrid)detailsType.GetField("_grid",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(inspectorWindow)!;
+            var inspectorMessage = (TextBlock)detailsType.GetField("_previewMessage",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(inspectorWindow)!;
+            Require(inspectorGrid.Items.Count == 2 &&
+                    inspectorMessage.Text.Contains("画像以外のプレビューは表示しません",
+                        StringComparison.Ordinal) &&
+                    inspectorWindow.Title.Contains("読み取り専用", StringComparison.Ordinal),
+                "UI: full duplicate group details handle non-images read-only");
+            inspectorWindow.Close();
             Require(File.Exists(textFile) && File.Exists(binaryFile) &&
                     OracleHash(textFile) == OracleHash(binaryFile),
                 "UI: read-only duplicate inspector preserves both original files");

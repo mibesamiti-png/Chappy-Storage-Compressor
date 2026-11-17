@@ -148,6 +148,125 @@ public static class NativeFile
             info.NumberOfLinks);
     }
 
+    // B2 G2-03: keep the selected root, its ancestors and every source
+    // parent directory open WITHOUT FILE_SHARE_DELETE for the whole transaction.
+    // Unlike file-ID pinning alone, this prevents another Windows process from
+    // moving a parent directory and redirecting later pathname-based operations.
+    // A different directory identity, reparse point, or inability to obtain a
+    // non-delete-sharing handle FAILS CLOSED before any source mutation.
+    internal sealed class PinnedDirectories : IDisposable
+    {
+        private const uint ShareReadWrite = 0x00000001 | 0x00000002;
+        private const uint ShareReadWriteDelete = ShareReadWrite | 0x00000004;
+        private const uint BackupSemantics = 0x02000000;
+        private readonly List<(string Path, FileIdentity Identity, SafeFileHandle Handle)>
+            _held = [];
+
+        private static SafeFileHandle OpenDirectory(string path, bool denyDelete)
+        {
+            var handle = CreateFilePinned(Extended(path), ReadAttributes,
+                denyDelete ? ShareReadWrite : ShareReadWriteDelete,
+                IntPtr.Zero, OpenExisting, BackupSemantics | OpenReparsePoint,
+                IntPtr.Zero);
+            if (!handle.IsInvalid) return handle;
+            int error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new Win32Exception(error, "Cannot pin NTFS parent directory: " + path);
+        }
+
+        private static FileIdentity CheckDirectory(string path, SafeFileHandle handle)
+        {
+            if (!GetFileInformationByHandle(handle, out var info) ||
+                (info.Attributes & (uint)FileAttributes.Directory) == 0 ||
+                (info.Attributes & (uint)FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Unsafe NTFS directory handle: " + path);
+            return IdentityFromHandle(handle);
+        }
+
+        internal static PinnedDirectories Open(string selectedRoot,
+            IEnumerable<string> sourcePaths)
+        {
+            string root = Safety.ValidateRoot(selectedRoot);
+            string volume = Path.TrimEndingDirectorySeparator(
+                Path.GetPathRoot(root) ?? throw new InvalidDataException("Missing NTFS volume"));
+            var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            static void Ancestors(string dir, string volumeRoot,
+                HashSet<string> destination)
+            {
+                while (!dir.Equals(volumeRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!destination.Add(dir)) break;
+                    string? next = Path.GetDirectoryName(dir);
+                    if (string.IsNullOrEmpty(next) ||
+                        next.Equals(dir, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("Untrusted NTFS directory hierarchy");
+                    dir = Path.TrimEndingDirectorySeparator(next);
+                }
+            }
+            Ancestors(root, volume, directories);
+            foreach (string source in sourcePaths)
+            {
+                string full = Path.GetFullPath(source);
+                if (!full.StartsWith(root + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Directory guard cannot escape selected root");
+                string parent = Path.GetDirectoryName(full) ??
+                    throw new InvalidDataException("Missing source parent directory");
+                Ancestors(parent, volume, directories);
+            }
+
+            var lease = new PinnedDirectories();
+            try
+            {
+                foreach (string dir in directories.OrderBy(x => x.Length)
+                    .ThenBy(x => x, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!Directory.Exists(dir) ||
+                        (File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0)
+                        throw new InvalidDataException("NTFS parent moved or became a link: " + dir);
+                    SafeFileHandle handle = OpenDirectory(dir, denyDelete: true);
+                    try
+                    {
+                        var id = CheckDirectory(dir, handle);
+                        using var check = OpenDirectory(dir, denyDelete: false);
+                        if (!id.SameFile(CheckDirectory(dir, check)))
+                            throw new InvalidDataException("NTFS parent identity changed while pinning");
+                        lease._held.Add((dir, id, handle));
+                    }
+                    catch
+                    {
+                        handle.Dispose();
+                        throw;
+                    }
+                }
+                lease.AssertUnchanged();
+                return lease;
+            }
+            catch
+            {
+                lease.Dispose();
+                throw;
+            }
+        }
+
+        internal void AssertUnchanged()
+        {
+            foreach (var (path, expected, _) in _held)
+            {
+                using var check = OpenDirectory(path, denyDelete: false);
+                if (!CheckDirectory(path, check).SameFile(expected))
+                    throw new InvalidDataException("Pinned NTFS parent path was replaced: " + path);
+            }
+        }
+
+        public void Dispose()
+        {
+            for (int i = _held.Count - 1; i >= 0; i--)
+                _held[i].Handle.Dispose();
+            _held.Clear();
+        }
+    }
+
     internal sealed class PinnedFile : IDisposable
     {
         private readonly SafeFileHandle _handle;

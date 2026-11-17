@@ -1145,6 +1145,24 @@ internal static class R217GroupLedgerResumeTests
             expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),
                 "R2.17 part27: final restored group cannot be replayed as another Undo");
 
+            // G3-02: a REAL write to one of the *disposable* detached aliases
+            // must not change the representative, master, or any of the other
+            // independent names. Check both bytes and the NTFS file ID.
+            string editedAlias = scan.Groups.Single().Files[1].Path;
+            var othersBeforeEdit = before.Keys.Where(p =>
+                    !p.Equals(editedAlias, StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(p => p, p => (
+                    Sha: Hash(p), Identity: NativeFile.GetIdentity(p)),
+                    StringComparer.OrdinalIgnoreCase);
+            var detachedBeforeEdit = NativeFile.GetIdentity(editedAlias);
+            File.AppendAllText(editedAlias, "G3-SYNTHETIC-INDEPENDENT-WRITE");
+            bool unaffected = NativeFile.GetIdentity(editedAlias).SameFile(detachedBeforeEdit) &&
+                !NativeFile.SameFile(editedAlias, master) &&
+                othersBeforeEdit.All(pair =>
+                    Hash(pair.Key) == pair.Value.Sha &&
+                    NativeFile.GetIdentity(pair.Key).SameFile(pair.Value.Identity));
+            check(unaffected, "G3-02: independently restored test alias accepts new bytes without changing other three names or store master");
+
             VerifyTwoNameUnifiedLedger(parent, check, expectThrows);
             VerifyPreparedGroupPromotion(parent, check, expectThrows);
             VerifySuccessiveGroupTransactions(parent, check, expectThrows);
@@ -1176,6 +1194,8 @@ internal static class R217GroupLedgerResumeTests
                     g3RestartedProcessPartialUndoRemainingAliasProof = true,
                     g3LowTargetAndJournalSpaceReadOnlyRefusal = true,
                     g3UnknownLinkAndRestoredGroupNoUndoCandidate = true,
+                    g3SharedNormalCompiledUndoCoreUsedInSyntheticGroup = true,
+                    g3IndependentWriteAfterUndoOtherOriginalsPreserved = unaffected,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
                     actualCorePartialAllocationMatrix = allocationMatrix,

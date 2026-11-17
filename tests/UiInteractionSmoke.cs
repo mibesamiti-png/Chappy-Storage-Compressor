@@ -48,6 +48,14 @@ internal static class UiInteractionSmoke
             window = new MainWindow();
             // x:Name fields are internal in the production app assembly.
             // Resolve real WPF named controls from the loaded XAML namescope.
+            var mainTabs = Named<TabControl>(window, "MainTabs");
+            var mediaOnly = Named<CheckBox>(window, "MediaOnlyCheck");
+            Require(mainTabs.Items.Count == 3 && mainTabs.SelectedIndex == 0 &&
+                    mediaOnly.IsChecked == false &&
+                    ((TabItem)mainTabs.Items[0]).Header?.ToString() == "重複整理" &&
+                    ((TabItem)mainTabs.Items[1]).Header?.ToString() == "画像圧縮" &&
+                    ((TabItem)mainTabs.Items[2]).Header?.ToString() == "履歴・復元",
+                "UI: three focused tabs, duplicate-first and all-file scanning by default");
             var scanButton = Named<Button>(window, "ScanButton");
             var stopButton = Named<Button>(window, "StopButton");
             var mergeButton = Named<Button>(window, "MergeButton");
@@ -70,7 +78,7 @@ internal static class UiInteractionSmoke
                     completedLedgerButton.IsEnabled &&
                     !stopButton.IsEnabled && scanButton.IsEnabled,
                 "Production merge stays disabled, Scan enabled, Stop initially disabled");
-            Require(window.Title.Contains("R2.17", StringComparison.Ordinal) &&
+            Require(window.Title.Contains("Chappy Storage Compressor", StringComparison.Ordinal) &&
                     unifiedBatchButton.IsEnabled && pngBatchButton.IsEnabled &&
                     jpegBatchButton.IsEnabled,
                 "Actual WPF UI shows R2.17 and preview-only batch actions enabled while idle");

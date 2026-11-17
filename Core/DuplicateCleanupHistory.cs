@@ -168,8 +168,8 @@ public static class DuplicateCleanupHistory
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
-                JsonException or ArgumentException or NullReferenceException or
-                InvalidOperationException or NotSupportedException)
+                InvalidDataException or JsonException or ArgumentException or
+                NullReferenceException or InvalidOperationException or NotSupportedException)
             {
                 results.Add(Warning(id, "記録が不正・破損または読み取れません。手動確認してください。"));
             }

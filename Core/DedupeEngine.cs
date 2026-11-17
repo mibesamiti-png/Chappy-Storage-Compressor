@@ -66,7 +66,16 @@ public static class DedupeEngine
                 !Safety.ContainedRegularSource(root, file.Path))))
             throw new InvalidDataException(
                 "統合元のパスが対象フォルダ外・予約領域・リンク経由、または特殊ファイルです。変更せず停止します。");
+        // Pin root/ancestors and every source parent before creating even the
+        // store directory. Hold these non-delete-sharing handles until Core exits.
+        using var sourceParents = NativeFile.PinnedDirectories.Open(root,
+            items.SelectMany(g => g.Files.Select(file => file.Path)));
         Safety.ValidateStore(root);
+        // Store is now known to exist: also pin the directory receiving all
+        // master links, not just the source parents.
+        using var storeParents = NativeFile.PinnedDirectories.Open(root,
+            items.Select(g => Path.Combine(Safety.StorePath(root),
+                g.Hash + Path.GetExtension(g.Representative.Path).ToLowerInvariant())));
         int total = items.Sum(g => Math.Max(0, g.Files.Count - 1));
         int done = 0;
         long estimatedSaved = 0;
@@ -74,6 +83,8 @@ public static class DedupeEngine
         {
             ct.ThrowIfCancellationRequested();
             Journal.AssertCleanBeforeMerge();
+            sourceParents.AssertUnchanged();
+            storeParents.AssertUnchanged();
             if (group.BlockReason(allowTimestampDifference) is string reason)
             {
                 done += Math.Max(0, group.Files.Count - 1);
@@ -235,6 +246,12 @@ public static class DedupeEngine
                         if (testOnlyRecordCompletedMerges)
                             CompletedMergeLedger.PrepareSynthetic(root, pending, duplicate);
 #endif
+                        // The backup and master IDs alone do not protect
+                        // against a moved ancestor changing where pathnames
+                        // resolve. Revalidate all held directory identities
+                        // before the irreversible pinned-ID deletion.
+                        sourceParents.AssertUnchanged();
+                        storeParents.AssertUnchanged();
                         if (preparedGroupId is not null)
                             CompletedGroupLedger.AssertPreparedAlias(
                                 root, preparedGroupId, group, duplicate,

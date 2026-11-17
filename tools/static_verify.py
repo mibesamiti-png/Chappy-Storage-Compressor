@@ -213,6 +213,28 @@ check('G3-01: restart Undo reidentification reads only authenticated persisted g
       'IndependentUndoEngine.Restore(' not in recovery_window and
       'g3ReadOnlyUndoPreviewForgedHistoryRowRefused = ' in ui_test and
       '$r.g3RestartedProcessOriginalGroupFullIdProof -ne $true' in workflow)
+undo_engine = (root/'Core/IndependentUndoEngine.cs').read_text(encoding='utf-8')
+capacity_guard = (root/'Core/CapacityGuard.cs').read_text(encoding='utf-8')
+check('G3: original independent File.Replace core is shared internally but never public or WPF-enabled',
+      'internal static Result RestoreCore(' in undo_engine and
+      'public static Result Restore(' in undo_engine and
+      '#if !CHAPPY_TESTING\n        throw new NotSupportedException(' in undo_engine and
+      'return RestoreCore(testRoot, originalIndependent' in undo_engine and
+      'IndependentUndoEngine.RestoreCore(root, x.Aliases[i]' in group_ledger and
+      'File.Replace(stage, alias, null);' in undo_engine and
+      'SetFileSecurity(alias, ownerGroupDacl,' in undo_engine and
+      'Group merge/Undo is generated NTFS testing only' in group_ledger and
+      'Group merge/Undo is generated NTFS testing only' in group_ledger and
+      'IndependentUndoEngine.RestoreCore(' not in source and
+      'IndependentUndoEngine.Restore(' not in source)
+check('G3: full-group and per-file preflight plus pre-cutover capacity are checked',
+      'internal static void AssertCanRestore(' in capacity_guard and
+      'CapacityGuard.AssertCanRestore(root, allRemainingBytes);' in group_ledger and
+      'CapacityGuard.AssertCanRestore(root, originalIndependent.Length);' in undo_engine and
+      'CapacityGuard.AssertCanRestore(root, 0, stageAlreadyAllocated: true);' in undo_engine and
+      'VerifyUndoCapacityRefusals(parent, check, expectThrows);' in group_batch_tests and
+      'g3IndependentWriteAfterUndoOtherOriginalsPreserved = unaffected' in group_batch_tests and
+      '$r.g3ExplicitStageRecoveryAfterCapacityLossVerified -ne $true' in workflow)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

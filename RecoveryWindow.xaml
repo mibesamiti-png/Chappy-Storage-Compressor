@@ -97,6 +97,19 @@
         </DataGrid>
         </DockPanel>
       </TabItem>
+      <TabItem x:Name="ImageRecoveryTab" Header="画像の復旧記録">
+        <DockPanel Margin="8">
+          <Button x:Name="ImageReceiptReviewButton" DockPanel.Dock="Top"
+                  Content="画像準備レシートを開く（読み取り専用）"
+                  HorizontalAlignment="Left" Margin="0,0,0,10" Padding="9,5"
+                  Click="ImageReceiptReview_Click"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <TextBlock x:Name="ImageReceiptReviewText"
+                       Text="独立バックアップ先の .chappy-g4-preparation.json を選択してください。"
+                       Foreground="#D8E8F4" TextWrapping="Wrap" FontSize="13"/>
+          </ScrollViewer>
+        </DockPanel>
+      </TabItem>
     </TabControl>
     <Border Grid.Row="3" Background="#172739" CornerRadius="9" Padding="12" Margin="0,0,0,12">
       <ScrollViewer VerticalScrollBarVisibility="Auto">

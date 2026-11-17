@@ -801,6 +801,60 @@ public static class ReplacementReadiness
 
 #endif
 
+    private static PreparationReceipt ReadImagePreparationReceipt(FileStream receiptLock)
+    {
+        if (!Safety.EligibleAttributes(File.GetAttributes(receiptLock.Name)) ||
+            NativeFile.IdentityFromHandle(receiptLock.SafeFileHandle).LinkCount != 1 ||
+            NativeFile.HasNamedDataStreams(receiptLock.Name) ||
+            receiptLock.Length is < 128 or > MaximumG4ReceiptBytes)
+            throw new InvalidDataException("Untrusted G4 preparation receipt");
+        var record = System.Text.Json.JsonSerializer.Deserialize<PreparationReceipt>(receiptLock) ??
+            throw new InvalidDataException("Missing G4 receipt");
+        if (record.Schema != 1 ||
+            record.Original is null || record.Candidate is null ||
+            record.Stage is null || record.IndependentBackup is null ||
+            record.OriginalSha256 is not { Length: 64 } ||
+            record.CandidateSha256 is not { Length: 64 } ||
+            !record.OriginalSha256.All(Uri.IsHexDigit) ||
+            !record.CandidateSha256.All(Uri.IsHexDigit))
+            throw new InvalidDataException("Invalid G4 receipt evidence");
+        return record;
+    }
+
+    internal sealed record ImageTransactionReview(string State, string OriginalPath,
+        string BackupPath, long OriginalBytes, long CandidateBytes)
+    {
+        internal long ActualFreedBytes => 0;
+    }
+
+    internal static ImageTransactionReview InspectImageTransaction(string receiptPath)
+    {
+        string path = Path.GetFullPath(receiptPath);
+        if (!Path.GetFileName(path).Equals(G4ReceiptName, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("画像準備レシート (.chappy-g4-preparation.json) を選択してください");
+        string backupRoot = Safety.ValidateRoot(Path.GetDirectoryName(path)!);
+        using var parent = NativeFile.PinnedDirectories.Open(backupRoot, []);
+        using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var record = ReadImagePreparationReceipt(input);
+        var original = record.Original!;
+        var candidate = record.Candidate!;
+        var stage = record.Stage!;
+        if (!Path.IsPathFullyQualified(original.Path) ||
+            !Path.IsPathFullyQualified(candidate.Path) ||
+            !Path.IsPathFullyQualified(stage.Path))
+            throw new InvalidDataException("画像準備レシートのパスを確認できません");
+        return WithImageEvidence(original.Path, candidate.Path, Path.GetDirectoryName(stage.Path)!,
+            backupRoot, (inspect, _) =>
+            {
+                var phase = inspect();
+                string state = phase.State == "AppliedWithoutRollback" && phase.RestoreIdentity is not null ?
+                    "BackupRestorePrepared" : phase.State;
+                return new ImageTransactionReview(state, phase.Original,
+                    phase.Receipt.IndependentBackup!.Path,
+                    phase.Receipt.Original!.Length, phase.Receipt.Stage!.Length);
+            });
+    }
+
     // Hold the independently verified input and recovery evidence until the
     // operation returns. The same flushed preparation receipt is replayed
     // after a process stop; the on-disk file IDs determine the rename phase.
@@ -826,30 +880,16 @@ public static class ReplacementReadiness
         string receiptPath = Path.Combine(backupRoot, G4ReceiptName);
         using var receiptLock = new FileStream(receiptPath, FileMode.Open,
             FileAccess.Read, FileShare.Read);
-        if (!Safety.EligibleAttributes(File.GetAttributes(receiptPath)) ||
-            NativeFile.GetIdentity(receiptPath).LinkCount != 1 ||
-            NativeFile.HasNamedDataStreams(receiptPath) ||
-            receiptLock.Length is < 128 or > MaximumG4ReceiptBytes)
-            throw new InvalidDataException("Untrusted G4 preparation receipt");
+        var record = ReadImagePreparationReceipt(receiptLock);
+        receiptLock.Position = 0;
         string receiptHash = Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(receiptLock));
-        receiptLock.Position = 0;
-        var record = System.Text.Json.JsonSerializer.Deserialize<PreparationReceipt>(receiptLock) ??
-            throw new InvalidDataException("Missing G4 receipt");
-        if (record.Schema != 1 ||
-            record.Original is null || record.Candidate is null ||
-            record.Stage is null || record.IndependentBackup is null ||
-            record.OriginalSha256 is not { Length: 64 } ||
-            record.CandidateSha256 is not { Length: 64 } ||
-            !record.OriginalSha256.All(Uri.IsHexDigit) ||
-            !record.CandidateSha256.All(Uri.IsHexDigit))
-            throw new InvalidDataException("Invalid G4 receipt evidence");
         static bool Eq(string a, string b) =>
             a.Equals(b, StringComparison.OrdinalIgnoreCase);
-        var old = record.Original;
-        var preview = record.Candidate;
-        var staged = record.Stage;
-        var backup = record.IndependentBackup;
+        var old = record.Original!;
+        var preview = record.Candidate!;
+        var staged = record.Stage!;
+        var backup = record.IndependentBackup!;
         string extension = Path.GetExtension(candidate);
         const string stagePrefix = ".chappy-g4-stage-";
         string stageName = Path.GetFileNameWithoutExtension(staged.Path);

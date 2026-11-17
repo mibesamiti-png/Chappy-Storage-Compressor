@@ -32,6 +32,17 @@ public partial class RecoveryWindow : Window
     private Action<string> _showGeneratedOnlyUndo = message =>
         MessageBox.Show(message, "生成データの独立Undo結果",
             MessageBoxButton.OK, MessageBoxImage.Information);
+    private Func<RecoveryWindow, string?> _pickImageReceipt = static owner =>
+    {
+        var picker = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "独立バックアップ先の画像準備レシートを開く",
+            Filter = "画像準備レシート|.chappy-g4-preparation.json",
+            CheckFileExists = true
+        };
+        return picker.ShowDialog(owner) == true ? picker.FileName : null;
+    };
+
     private bool SyntheticUndoSelectionAllowed()
     {
         if (!_allowGeneratedOnlyUndoTest || _busy ||
@@ -76,6 +87,7 @@ public partial class RecoveryWindow : Window
     {
         _busy = busy;
         RefreshButton.IsEnabled = !busy;
+        ImageReceiptReviewButton.IsEnabled = !busy;
         RecoveryGrid.IsEnabled = !busy;
         HistoryGrid.IsEnabled = !busy;
         CollisionGrid.IsEnabled = !busy;
@@ -90,6 +102,44 @@ public partial class RecoveryWindow : Window
         UndoExecuteButton.IsEnabled = !busy && SyntheticUndoSelectionAllowed();
         UndoCancelButton.IsEnabled = busy &&
             _undoWork is { IsCancellationRequested: false };
+    }
+
+    private async void ImageReceiptReview_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy || !ReferenceEquals(RecoveryTabs.SelectedItem, ImageRecoveryTab))
+            return;
+        string? receipt = _pickImageReceipt(this);
+        if (receipt is null) return;
+
+        Busy(true);
+        ImageReceiptReviewText.Text = "原本名・候補・独立バックアップの証拠を照合中…";
+        try
+        {
+            var review = await Task.Run(() => ReplacementReadiness.InspectImageTransaction(receipt));
+            string state = review.State switch
+            {
+                "Prepared" => "準備済み・元のファイルが原本名にあります",
+                "Applied" => "適用完了の記録と検証済み候補があります",
+                "AppliedWithoutRollback" => "適用記録あり・退避原本なし。独立バックアップを確認しました",
+                "OriginalRestored" or "BackupRestored" => "原本名への復元を確認しました",
+                "BackupRestorePrepared" or "OriginalSetAside" or "CandidateAtOriginal" or
+                    "CandidateQuarantined" or "BackupCandidateQuarantined" =>
+                    "中断を検出しました。記録と残っているファイルを保全してください",
+                _ => "要手動確認"
+            };
+            ImageReceiptReviewText.Text =
+                state + "\n\n原本名: " + review.OriginalPath +
+                "\n独立バックアップ: " + review.BackupPath +
+                $"\n原本 {review.OriginalBytes:N0} B / 圧縮候補 {review.CandidateBytes:N0} B" +
+                $"\nこの確認で回復した容量 {review.ActualFreedBytes:N0} B" +
+                "\n\n圧縮候補は画素を維持します。圧縮後のファイルは元画像と全バイト一致しません。" +
+                "\nこのタブは読み取り専用です。";
+        }
+        catch (Exception ex)
+        {
+            ImageReceiptReviewText.Text = "要手動確認。ファイルや記録を保全してください。\n" + ex.Message;
+        }
+        finally { Busy(false); }
     }
 
     private async Task RefreshAsync()

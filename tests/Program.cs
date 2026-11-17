@@ -737,6 +737,44 @@ static class Program
                             }
                             finally { File.Delete(stageAlias); }
 
+                            DateTime originalModified = originalSnapshot.ModifiedUtc;
+                            try
+                            {
+                                File.SetLastWriteTimeUtc(source, originalModified.AddSeconds(5));
+                                Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview",
+                                    "G4-03: 原本全バイトが同一でも元日時変更で再起動後復旧承認せず");
+                            }
+                            finally { File.SetLastWriteTimeUtc(source, originalModified); }
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot).Complete,
+                                "G4-03: 原本の完全な証拠復旧で再認証");
+
+                            byte[] backupBytes = File.ReadAllBytes(prepared.BackupPath);
+                            DateTime backupModified = File.GetLastWriteTimeUtc(prepared.BackupPath);
+                            try
+                            {
+                                byte[] altered = (byte[])backupBytes.Clone();
+                                altered[0] ^= 1;
+                                File.WriteAllBytes(prepared.BackupPath, altered);
+                                File.SetLastWriteTimeUtc(prepared.BackupPath, backupModified);
+                                Check(ReplacementReadiness.InspectPreparedCopies(
+                                    source, preview.PreviewPath!, g4Stage,
+                                    independentBackupSlot).State == "ManualReview",
+                                    "G4-04: 独立バックアップ1B改ざんは日時を復元しても拒否");
+                            }
+                            finally
+                            {
+                                File.WriteAllBytes(prepared.BackupPath, backupBytes);
+                                File.SetLastWriteTimeUtc(prepared.BackupPath, backupModified);
+                            }
+                            Check(ReplacementReadiness.InspectPreparedCopies(
+                                source, preview.PreviewPath!, g4Stage,
+                                independentBackupSlot).Complete,
+                                "G4-04: テスト用バックアップ全バイト復旧後に再認証");
+
                             // New process observation of a truncated/changed
                             // receipt must never be treated as verified.
                             byte[] savedReceipt = File.ReadAllBytes(prepared.ReceiptPath);

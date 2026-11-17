@@ -104,6 +104,15 @@ check('B2: durable manifest writer is compiled for normal Windows Core',
       'internal static string PrepareVerifiedGroup(' in group_ledger and
       'string id = PrepareVerifiedGroup(root, group);' in group_ledger and
       'using var mutationLease = MutationLease.Acquire();' in group_ledger)
+check('B2: shared internal full-group commit remains gated from WPF',
+      'internal static string MergeVerifiedGroup(' in group_ledger and
+      'internal static void ConfirmPreparedGroup(' in group_ledger and
+      'DedupeEngine.RunPreparedGroup(root, group, id, null, ct)' in group_ledger and
+      'ConfirmPreparedGroup(root, id);' in group_ledger and
+      'return MergeVerifiedGroup(RequireSynthetic(input), group,' in group_ledger and
+      'public static void ConfirmPreparedSynthetic(' in group_ledger and
+      'public static bool ProductionMutationEnabled = true' not in group_ledger and
+      'MergeVerifiedGroup(' not in source)
 check('B2: synthetic operation wrappers and Undo remain compile-gated',
       'public static string MergeSynthetic(' in group_ledger and
       '#if CHAPPY_TESTING\n    /// <summary>\n    /// Explicit TEST-ONLY confirmation' in group_ledger and

@@ -482,16 +482,14 @@ public static class CompletedGroupLedger
         }
     }
 
-#if CHAPPY_TESTING
-    /// <summary>
-    /// Explicit TEST-ONLY confirmation of a fully successful group after an
-    /// interruption between Core completion and the prepared->completed move.
-    /// Never infer success from hash alone, never resolve/erase pending
-    /// journals, and never promote a partial group or unexpected hardlink.
-    /// </summary>
-    public static void ConfirmPreparedSynthetic(string input, string id)
+    // The same ID-bound prepared->completed transition is available to the
+    // normal Windows Core, but is INTERNAL and has no public/WPF caller.
+    // Always re-inspect all aliases under the mutation lease. A matching SHA
+    // alone never promotes a prepared operation after a crash.
+    internal static void ConfirmPreparedGroup(string input, string id)
     {
-        string root = RequireSynthetic(input);
+        string root = Safety.ValidateRoot(input);
+        using var mutationLease = MutationLease.Acquire();
         if (!Guid.TryParseExact(id, "N", out _) ||
             Journal.Pending().Any() || Journal.UnresolvedRecordFiles().Any())
             throw new InvalidOperationException("Pending or malformed journal prevents confirmation");
@@ -509,6 +507,14 @@ public static class CompletedGroupLedger
         File.Move(PathFor(root, id, "prepared"), PathFor(root, id, "completed"));
     }
 
+#if CHAPPY_TESTING
+    /// <summary>
+    /// Explicit TEST-ONLY confirmation. No general public promotion API.
+    /// </summary>
+    public static void ConfirmPreparedSynthetic(string input, string id)
+    {
+        ConfirmPreparedGroup(RequireSynthetic(input), id);
+    }
 #endif
 
     // Compiled into BOTH Windows builds. This is the existing single
@@ -558,30 +564,45 @@ public static class CompletedGroupLedger
         return id;
     }
 
+    // B2: production-compiled INTERNAL transaction: durable intent, pinned-ID
+    // Core, full-group verification, then the same verified durable commit.
+    // G2/G3/G5 release locks remain in place: no public/WPF caller is added.
+    // Any failed step retains prepared evidence for explicit manual review.
+    internal static string MergeVerifiedGroup(string input, DuplicateGroup group,
+        CancellationToken ct
+#if CHAPPY_TESTING
+        , Action? testOnlyAfterVerifiedCore = null
+#endif
+        )
+    {
+        string root = Safety.ValidateRoot(input);
+        ct.ThrowIfCancellationRequested();
+        string id = PrepareVerifiedGroup(root, group);
+        Manifest x = Read(root, id, "prepared");
+        long expected = group.Savings;
+        long actual = DedupeEngine.RunPreparedGroup(root, group, id, null, ct);
+        if (actual != expected || Journal.Pending().Any() ||
+            Journal.UnresolvedRecordFiles().Any() ||
+            !Verify(x, new Checkpoint { Id = id }))
+            throw new InvalidDataException(
+                "Group merge incomplete: retain prepared manifest for manual review");
+        // A process can stop between the completed physical merge and the
+        // durable phase change. On restart this remains ManualReview until
+        // explicit full-ID, metadata, and byte verification.
+#if CHAPPY_TESTING
+        testOnlyAfterVerifiedCore?.Invoke();
+#endif
+        ct.ThrowIfCancellationRequested();
+        ConfirmPreparedGroup(root, id);
+        return id;
+    }
+
 #if CHAPPY_TESTING
     public static string MergeSynthetic(string input, DuplicateGroup group,
         Action? testOnlyAfterVerifiedCore = null)
     {
-        string root = RequireSynthetic(input);
-        string id = PrepareVerifiedGroup(root, group);
-        Manifest x = Read(root, id, "prepared");
-        // Use the REAL Core engine, not a synthetic prelinked imitation.
-        // One group manifest covers both a single duplicate alias and 3+
-        // names. Older CompletedMergeLedger entries remain read-only legacy
-        // evidence; do not write another per-alias ledger for new operations.
-        long expected = group.Savings;
-        long actual = DedupeEngine.RunPreparedGroup(root, group, id, null,
-            CancellationToken.None);
-        var empty = new Checkpoint { Id = id };
-        if (actual != expected || Journal.Pending().Any() ||
-            Journal.UnresolvedRecordFiles().Any() || !Verify(x, empty))
-            throw new InvalidDataException("Group merge incomplete: retain prepared manifest for manual review");
-        // A real process can die here, after all aliases are linked but
-        // before the durable phase transition. Keep prepared evidence for
-        // explicit, full-ID+metadata+byte verification on restart.
-        testOnlyAfterVerifiedCore?.Invoke();
-        ConfirmPreparedSynthetic(root, id);
-        return id;
+        return MergeVerifiedGroup(RequireSynthetic(input), group,
+            CancellationToken.None, testOnlyAfterVerifiedCore);
     }
 
     public static int ResumeUndoSynthetic(string input, string id, string evidence,

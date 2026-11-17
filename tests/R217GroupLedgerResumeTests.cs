@@ -957,6 +957,120 @@ internal static class R217GroupLedgerResumeTests
         finally { Journal.TestFolderPath = previousJournal; }
     }
 
+    private static void VerifyUndoCapacityRefusals(string parent,
+        Action<bool, string> check, Action<Action, string> expectThrows)
+    {
+        string root = Path.Combine(parent, "g3-undo-capacity-real-core");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, ".chappy-part23-generated-only"),
+            "Part23 synthetic data only");
+        string? oldJournal = Journal.TestFolderPath;
+        var oldCapacity = CapacityGuard.TestOnlyReadAvailable;
+        try
+        {
+            Journal.TestFolderPath = Path.Combine(root, "g3-capacity-journal");
+            string first = Path.Combine(root, "media-0.mp4");
+            File.WriteAllBytes(first, RandomNumberGenerator.GetBytes(256 * 1024));
+            foreach (string dest in new[] {
+                Path.Combine(root, "media-1.mp4"),
+                Path.Combine(root, "media-2.mp4") })
+            {
+                File.Copy(first, dest);
+                File.SetCreationTimeUtc(dest, File.GetCreationTimeUtc(first));
+                File.SetLastWriteTimeUtc(dest, File.GetLastWriteTimeUtc(first));
+            }
+            var group = Scanner.Run(root, true, null, CancellationToken.None)
+                .Groups.Single();
+            var original = group.Files.ToDictionary(x => x.Path,
+                StringComparer.OrdinalIgnoreCase);
+            string id = CompletedGroupLedger.MergeSynthetic(root, group);
+            string master = Path.Combine(Safety.StorePath(root), group.Hash + ".mp4");
+            string evidence = Path.Combine(root, "g3-undo-evidence");
+            Directory.CreateDirectory(evidence);
+            string checkpoint = Path.Combine(Safety.StorePath(root),
+                ".chappy-group-completed", id + ".checkpoint.json");
+            long bytes = checked(group.Representative.Length *
+                (group.Files.Count - 1));
+            long required = checked(bytes + CapacityGuard.TargetReserve);
+            try
+            {
+                CapacityGuard.TestOnlyReadAvailable = _ =>
+                    (required - 1, CapacityGuard.JournalReserve + 1024);
+                expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(
+                    root, id, evidence),
+                    "G3-04: missing one target byte rejects group Undo BEFORE any checkpoint, copy, or alias deletion");
+                check(!File.Exists(checkpoint) &&
+                    CompletedGroupLedger.Inspect(root).VerifiedCompleted == 1 &&
+                    group.Files.All(x => NativeFile.SameFile(x.Path, master) &&
+                        Hash(x.Path) == group.Hash),
+                    "G3-04: target low-space denial preserves all shared IDs, bytes and durable completed manifest");
+                CapacityGuard.TestOnlyReadAvailable = _ =>
+                    (required + 1024, CapacityGuard.JournalReserve - 1);
+                expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(
+                    root, id, evidence),
+                    "G3-04: insufficient journal capacity refuses before any group Undo checkpoint");
+                check(!File.Exists(checkpoint) &&
+                    CompletedGroupLedger.Inspect(root).VerifiedCompleted == 1 &&
+                    NativeFile.GetIdentity(master).LinkCount == 4,
+                    "G3-04: journal low-space refusal does not change any original alias or ledger");
+            }
+            finally { CapacityGuard.TestOnlyReadAvailable = oldCapacity; }
+
+            bool reachedFinalBoundary = false;
+            try
+            {
+                expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(
+                    root, id, evidence,
+                    testOnlyBeforeFinalUndoValidation: (stage, alias) =>
+                    {
+                        reachedFinalBoundary = true;
+                        if (!File.Exists(stage) ||
+                            !NativeFile.SameFile(alias, master))
+                            throw new InvalidDataException(
+                                "G3 staged original/alias evidence changed");
+                        CapacityGuard.TestOnlyReadAvailable = _ =>
+                            (CapacityGuard.TargetReserve - 1,
+                                CapacityGuard.JournalReserve + 1024);
+                    }),
+                    "G3-04: second capacity check prevents irreversible File.Replace after already durable staging");
+            }
+            finally { CapacityGuard.TestOnlyReadAvailable = oldCapacity; }
+            var interruption = CompletedGroupLedger.Inspect(root);
+            check(reachedFinalBoundary &&
+                interruption.Entries.Single().State ==
+                    "InterruptedSharedNeedsRetry" &&
+                group.Files.All(x => NativeFile.SameFile(x.Path, master) &&
+                    Hash(x.Path) == group.Hash) &&
+                NativeFile.GetIdentity(master).LinkCount == 4,
+                "G3-03/04: late capacity loss retains prepared stage and shared originals for explicit restart; no File.Replace occurred");
+            int recovered = CompletedGroupLedger.ResumeUndoSynthetic(
+                root, id, evidence);
+            check(recovered == 2 &&
+                CompletedGroupLedger.Inspect(root).VerifiedRestored == 1 &&
+                group.Files.All(x =>
+                {
+                    FileSnapshot now = Safety.Capture(x.Path);
+                    FileSnapshot saved = original[x.Path];
+                    return now.Length == saved.Length &&
+                        now.Attributes == saved.Attributes &&
+                        now.CreationUtc == saved.CreationUtc &&
+                        now.ModifiedUtc == saved.ModifiedUtc &&
+                        now.SecurityDescriptor.AsSpan().SequenceEqual(
+                            saved.SecurityDescriptor) &&
+                        Hash(x.Path) == group.Hash;
+                }) &&
+                group.Files.Skip(1).All(x =>
+                    !NativeFile.SameFile(x.Path, master) &&
+                    NativeFile.GetIdentity(x.Path).LinkCount == 1),
+                "G3-02/03: explicit retry after pre-cutover low-space refusal verifies two independent IDs with exact SHA/ACL/times");
+        }
+        finally
+        {
+            CapacityGuard.TestOnlyReadAvailable = oldCapacity;
+            Journal.TestFolderPath = oldJournal;
+        }
+    }
+
     public static void Run(string parent, Action<bool, string> check,
         Action<Action, string> expectThrows)
     {
@@ -1169,6 +1283,7 @@ internal static class R217GroupLedgerResumeTests
             VerifyMidTransactionCapacityRefusal(parent, check, expectThrows);
             var allocationMatrix = VerifyKilledMultiGroupBatch(parent, check, expectThrows);
             VerifyBatchSourceSwapIsolation(parent, check, expectThrows);
+            VerifyUndoCapacityRefusals(parent, check, expectThrows);
             // The helper uses a separately guarded generated journal folder.
             Journal.TestFolderPath = Path.Combine(root, "part27-journal");
 
@@ -1196,6 +1311,8 @@ internal static class R217GroupLedgerResumeTests
                     g3UnknownLinkAndRestoredGroupNoUndoCandidate = true,
                     g3SharedNormalCompiledUndoCoreUsedInSyntheticGroup = true,
                     g3IndependentWriteAfterUndoOtherOriginalsPreserved = unaffected,
+                    g3PrecopyAndFinalCutoverTargetJournalCapacityRefused = true,
+                    g3ExplicitStageRecoveryAfterCapacityLossVerified = true,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
                     actualCorePartialAllocationMatrix = allocationMatrix,

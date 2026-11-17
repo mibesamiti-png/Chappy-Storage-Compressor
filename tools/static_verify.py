@@ -121,6 +121,28 @@ check('G4-02/03/05: saved candidate must be rechecked with whole bytes, NTFS ID/
       'var fidelity = ReplacementReadiness.InspectCandidatePair(' in jpeg_metadata_tests and
       'G4-03: 書込み可能な排他ハンドルが開いた原本では置換直前の検査を拒否' in test)
 
+# G4-03: pre-Apply PNG/JPEG authentication must bind the saved *original*
+# source hash to actual bytes, not merely compare today's source to itself.
+png_queue = (root/'Core/PngBatchPreviewEngine.cs').read_text(encoding='utf-8')
+png_journal = (root/'Core/PngBatchJournalTools.cs').read_text(encoding='utf-8')
+jpeg_queue = (root/'Core/JpegBatchPreviewEngine.cs').read_text(encoding='utf-8')
+check('G4-03: PNG source SHA persisted during preview and reread on audit/resume',
+      'public string? SourceSha256 { get; set; }' in png_queue and
+      'entry.SourceSha256 = originalSha;' in png_queue and
+      'Safety.SameSnapshot(originalSnapshot)' in png_queue and
+      'original.SourceSha256 = parsed.SourceSha256;' in png_queue and
+      'item.SourceSha256 = parsed.SourceSha256;' in png_journal and
+      'entry.SourceSha256 is { Length: 64 }' in png_journal and
+      'entry.SourceSha256, entry.PreviewSha256' in png_journal)
+check('G4-03: JPEG and PNG readiness require journal-original and journal-candidate SHA',
+      'e.SourceSha256, e.CandidateSha256' in jpeg_queue and
+      'candidate.SourceSha256, candidate.PreviewSha256' in replacement_readiness and
+      'candidate.SourceSha256, candidate.CandidateSha256' in replacement_readiness and
+      'fidelity.OriginalSha256.Equals(saved.SourceSha256,' in replacement_readiness and
+      'fidelity.CandidateSha256.Equals(saved.CandidateSha256,' in replacement_readiness and
+      'G4-03: PNG原本のサイズ/日時を元に戻してもSHA変化で旧候補を拒否' in test and
+      'G4-03: 過去の原本SHA無しの候補台帳は不合格・手動確認のみ' in test)
+
 # G4-02: official pinned JPEG executable provenance must be enforced by
 # the actual WinExe native execution path (not only by the CI test helper).
 wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')

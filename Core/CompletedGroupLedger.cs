@@ -502,8 +502,12 @@ public static class CompletedGroupLedger
             File.Exists(PathFor(root, id, "checkpoint")))
             throw new InvalidDataException("Unknown or conflicting group evidence prevents confirmation");
         Manifest saved = Read(root, id, "prepared");
+        using var parents = NativeFile.PinnedDirectories.Open(root,
+            new[] { saved.Representative.Path, saved.Master }
+                .Concat(saved.Aliases.Select(a => a.Path)));
         if (!Verify(saved, new Checkpoint { Id = id }))
             throw new InvalidDataException("Incomplete or changed group cannot be promoted");
+        parents.AssertUnchanged();
         File.Move(PathFor(root, id, "prepared"), PathFor(root, id, "completed"));
     }
 
@@ -526,6 +530,10 @@ public static class CompletedGroupLedger
     {
         string root = Safety.ValidateRoot(input);
         using var mutationLease = MutationLease.Acquire();
+        // Keep parent identities stable while writing the durable intent too,
+        // even when the internal prepare function is invoked by itself.
+        using var parents = NativeFile.PinnedDirectories.Open(root,
+            group.Files.Select(a => a.Path));
         CapacityGuard.AssertCanStart(root);
         if (group.Files.Count is < 2 or > 33 ||
             group.BlockReason(false) is not null ||
@@ -560,6 +568,7 @@ public static class CompletedGroupLedger
             Aliases = group.Files.Skip(1).ToList()
         };
         Validate(root, x, id);
+        parents.AssertUnchanged();
         AtomicWrite(PathFor(root, id, "prepared"), x);
         return id;
     }
@@ -577,6 +586,10 @@ public static class CompletedGroupLedger
     {
         string root = Safety.ValidateRoot(input);
         ct.ThrowIfCancellationRequested();
+        // One hierarchy lease spans prepare -> real Core -> verification ->
+        // durable completed record. It cannot be released between phases.
+        using var parents = NativeFile.PinnedDirectories.Open(root,
+            group.Files.Select(a => a.Path));
         string id = PrepareVerifiedGroup(root, group);
         Manifest x = Read(root, id, "prepared");
         long expected = group.Savings;
@@ -593,6 +606,7 @@ public static class CompletedGroupLedger
         testOnlyAfterVerifiedCore?.Invoke();
 #endif
         ct.ThrowIfCancellationRequested();
+        parents.AssertUnchanged();
         ConfirmPreparedGroup(root, id);
         return id;
     }

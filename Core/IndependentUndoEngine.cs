@@ -98,6 +98,9 @@ public static class IndependentUndoEngine
 
         using var exclusive = MutationLease.Acquire();
         Journal.AssertCleanBeforeMerge();
+        // Stage copy requires a fresh source-volume observation. Fail before
+        // writing any undo evidence or independent stage if it cannot fit.
+        CapacityGuard.AssertCanRestore(root, originalIndependent.Length);
         if (!Safety.SameSnapshot(originalIndependent) &&
             !NativeFile.SameFile(alias, master))
             throw new InvalidDataException("Original source changed or expected link missing");
@@ -226,6 +229,10 @@ public static class IndependentUndoEngine
                     "Pathname was renamed, deleted, replaced or modified after final Undo validation; no cutover performed");
         }
 
+        // G3: the prepared copy now occupies disk; observe BOTH volumes
+        // again immediately before the irreversible alias cutover. This
+        // cannot reserve free space or make path races atomic.
+        CapacityGuard.AssertCanRestore(root, 0, stageAlreadyAllocated: true);
         // This is a single test-owned alias, NOT the master. The independent
         // source and store link remain untouched by the replace operation.
         File.Replace(stage, alias, null);

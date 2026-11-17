@@ -1037,6 +1037,38 @@ internal static class R217GroupLedgerResumeTests
                         NativeFile.SameFile(s.Path, master) && Hash(s.Path) == groupHash));
             check(merged,
                 "R2.17 part27: real Core consolidates four generated files with durable group-wide original metadata");
+            // G3-01: a completely fresh process, NOT the live scanner object,
+            // must read every original ID/metadata from the durable receipt.
+            VerifyRestartUndoReview(root, id, before, 0, check);
+            var goodReview = CompletedGroupLedger.InspectUndoCandidates(root)
+                .Single(x => x.OperationId == id);
+            check(goodReview.ReviewReady && goodReview.OriginalFiles.Count == 4 &&
+                goodReview.RemainingAliases == 3 &&
+                !goodReview.ProductionUndoAuthorized,
+                "G3-01: normal-built read-only Undo review identifies a full completed group without authorizing a write");
+
+            // G3-04 preflight ONLY: refuse to claim the Undo is ready when
+            // the target or the journal volume cannot cover restore bytes.
+            var originalCapacityHook = CapacityGuard.TestOnlyReadAvailable;
+            try
+            {
+                CapacityGuard.TestOnlyReadAvailable = _ =>
+                    (goodReview.RequiredAdditionalBytes - 1,
+                        CapacityGuard.JournalReserve + 64);
+                var lowTarget = CompletedGroupLedger.InspectUndoCandidates(root)
+                    .Single(x => x.OperationId == id);
+                check(!lowTarget.ReviewReady && !lowTarget.CapacityEnough &&
+                    lowTarget.RequiredAdditionalBytes == goodReview.RequiredAdditionalBytes,
+                    "G3-04: preview refuses a one-byte-short NTFS target volume without touching media");
+                CapacityGuard.TestOnlyReadAvailable = _ =>
+                    (goodReview.RequiredAdditionalBytes + 64,
+                        CapacityGuard.JournalReserve - 1);
+                var lowJournal = CompletedGroupLedger.InspectUndoCandidates(root)
+                    .Single(x => x.OperationId == id);
+                check(!lowJournal.ReviewReady && !lowJournal.CapacityEnough,
+                    "G3-04: preview refuses insufficient journal drive even with target capacity available");
+            }
+            finally { CapacityGuard.TestOnlyReadAvailable = originalCapacityHook; }
 
             string foreign = Path.Combine(root, "part27-known-extra-hardlink.tmp");
             NativeFile.NewHardLink(foreign, master);
@@ -1047,6 +1079,8 @@ internal static class R217GroupLedgerResumeTests
                 "R2.17 part27: unrecorded extra NTFS hardlink makes whole group untrusted");
             check(CompletedGroupLedger.InspectOriginals(root).Count == 0,
                 "B2 G2-02: unknown external hardlink hides every formerly verified original from trusted WPF history");
+            check(CompletedGroupLedger.InspectUndoCandidates(root).Count == 0,
+                "G3-01/04: unknown external hardlink never yields a trusted Undo candidate");
             check(RecoveryEvidenceOverview.Inspect(root).Rows.All(e =>
                     e.Source != "グループ元ファイルの個別履歴"),
                 "B2 G2-02: untrusted shared-link history cannot leak unverified source records to UI");
@@ -1075,6 +1109,7 @@ internal static class R217GroupLedgerResumeTests
                 Journal.UnresolvedRecordFiles().Count == 0;
             check(realKill,
                 "R2.17 part27: actual child kill after durable first Undo checkpoint leaves recoverable partial group");
+            VerifyRestartUndoReview(root, id, before, 1, check);
             int recovered = CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence);
             var restored = CompletedGroupLedger.Inspect(root);
             var persistedAfterUndo = CompletedGroupLedger.InspectOriginals(root);
@@ -1105,6 +1140,8 @@ internal static class R217GroupLedgerResumeTests
             }
             check(recovered == 3 && originals,
                 "R2.17 part27: explicit restart completes remaining two Undo aliases; all original bytes/metadata and separate NTFS identities verified");
+            check(CompletedGroupLedger.InspectUndoCandidates(root).Count == 0,
+                "G3-01: fully restored group does not offer an already-complete Undo again");
             expectThrows(() => CompletedGroupLedger.ResumeUndoSynthetic(root, id, evidence),
                 "R2.17 part27: final restored group cannot be replayed as another Undo");
 
@@ -1135,6 +1172,10 @@ internal static class R217GroupLedgerResumeTests
                         persistedAfterUndo.Count == 4,
                     untrustedGroupOriginalRecordsDenied = true,
                     completedHistoryRestored = restored.VerifiedRestored == 1,
+                    g3RestartedProcessOriginalGroupFullIdProof = true,
+                    g3RestartedProcessPartialUndoRemainingAliasProof = true,
+                    g3LowTargetAndJournalSpaceReadOnlyRefusal = true,
+                    g3UnknownLinkAndRestoredGroupNoUndoCandidate = true,
                     actualCoreKillCheckpointCount = BatchCrashCheckpoints.Length,
                     actualCoreKillCheckpoints = BatchCrashCheckpoints,
                     actualCorePartialAllocationMatrix = allocationMatrix,

@@ -120,7 +120,8 @@ jobs:
           Copy-Item -LiteralPath $built -Destination $tool -ErrorAction Stop
           "CHAPPY_R217_PINNED_JPEGTRAN=$tool" >> $env:GITHUB_ENV
           "CHAPPY_R217_JPEGTRAN_COMMIT=$expected" >> $env:GITHUB_ENV
-          $digest = (Get-FileHash -LiteralPath $tool -Algorithm SHA256).Hash.ToLowerInvariant()
+          $digest = (Get-FileHash -LiteralPath $tool -Algorithm SHA256).Hash.ToUpperInvariant()
+          "CHAPPY_R217_PINNED_SHA256=$digest" >> $env:GITHUB_ENV
           Write-Host "Verified libjpeg-turbo $tag upstream commit $expected"
           Write-Host "CI-only jpegtran.exe built locally without SIMD; SHA256 $digest"
           & $tool -version
@@ -185,14 +186,41 @@ jobs:
           }
           & $tool -version
           if ($LASTEXITCODE -ne 0) { throw "SIMD jpegtran version check failed" }
+          $trustedSha = (Get-FileHash -LiteralPath $tool -Algorithm SHA256).Hash.ToUpperInvariant()
           "CHAPPY_R217_SIMD_JPEGTRAN=$tool" >> $env:GITHUB_ENV
           "CHAPPY_R217_SIMD_VERIFIED=true" >> $env:GITHUB_ENV
-          Write-Host "SIMD libjpeg-turbo pinned source $expected, binary SHA-256 $((Get-FileHash $tool -Algorithm SHA256).Hash)"
+          # This trusted SHA is embedded into the compiled WinExe.
+          "CHAPPY_R217_SIMD_SHA256=$trustedSha" >> $env:GITHUB_ENV
+          Write-Host "SIMD libjpeg-turbo pinned source $expected, binary SHA-256 $trustedSha"
 
       - name: Build checked-in WPF source tree and isolated NTFS tests
         if: steps.source.outputs.mode == 'tree'
         shell: cmd
         run: call RUN_DIAGNOSTICS.bat
+
+      - name: Verify distributable jpegtran SHA-256 and upstream license
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $source = Join-Path $env:RUNNER_TEMP "chappy-r217-official-jpegtran/libjpeg-turbo"
+          $license = Join-Path $source "LICENSE.md"
+          $tool = "dist/win-x64/jpegtran.exe"
+          if (-not (Test-Path -LiteralPath $license) -or
+              -not (Test-Path -LiteralPath $tool) -or
+              $env:CHAPPY_R217_JPEGTRAN_COMMIT -ne "7b4993786d856cbccabfc0ed2f923ba000e326cc" -or
+              $env:CHAPPY_R217_SIMD_SHA256.Length -ne 64) {
+            throw "G4-02 official executable, license or pinned source proof missing"
+          }
+          $observed = (Get-FileHash -LiteralPath $tool -Algorithm SHA256).Hash
+          if ($observed -ne $env:CHAPPY_R217_SIMD_SHA256) {
+            throw "G4-02 distributable executable differs from SHA-256 embedded in WPF assembly"
+          }
+          Copy-Item -LiteralPath $license -Destination "dist/win-x64/libjpeg-turbo-LICENSE.md" -ErrorAction Stop
+          if (-not (Test-Path -LiteralPath "dist/win-x64/ChappyStorageCompressor.exe")) {
+            throw "G4-02 Windows application executable missing"
+          }
+          "G4-02: official source-pinned SIMD binary SHA $observed bundled with upstream LICENSE.md"
 
       - name: Require distinct Core and WPF test runners really executed
         if: steps.source.outputs.mode == 'tree'

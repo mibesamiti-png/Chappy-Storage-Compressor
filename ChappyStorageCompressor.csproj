@@ -11,6 +11,16 @@
     <RootNamespace>ChappyStorageCompressor</RootNamespace>
     <Version>0.2.6</Version>
   </PropertyGroup>
+  <!-- A trusted Windows release embeds the verified libjpeg-turbo jpegtran
+       binary fingerprint directly into its compiled assembly, not a writable
+       sidecar or a user-controlled runtime environment variable. Without a
+       release pin the JPEG executable launch fails closed. -->
+  <ItemGroup Condition="'$(ChappyTrustedJpegtranSha256)' != ''">
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>Chappy.TrustedJpegtranSha256</_Parameter1>
+      <_Parameter2>$(ChappyTrustedJpegtranSha256)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
     <Compile Remove="bootstrap\**\*.cs" />

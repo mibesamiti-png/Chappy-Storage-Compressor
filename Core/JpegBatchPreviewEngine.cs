@@ -66,6 +66,10 @@ public static class JpegBatchPreviewEngine
         CheckNoReparse(tool);
         if (!File.Exists(tool) || !Path.GetFileName(tool).Equals("jpegtran.exe", StringComparison.OrdinalIgnoreCase))
             throw new FileNotFoundException("公式libjpeg-turboのjpegtran.exeを指定してください。", tool);
+        // Check the embedded official-binary SHA BEFORE any batch manifest,
+        // output lock or candidate is written. Hold the no-write handle
+        // until the full run has stopped all its native children.
+        using var pinnedExecutable = JpegLosslessPreviewEngine.OpenTrustedTool(tool, ct);
         string previews = Path.Combine(output, PreviewName);
         ValidateWorkingPaths(output, previews);
         string planPath = Path.Combine(output, PlanName);

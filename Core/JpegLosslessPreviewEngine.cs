@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Reflection;
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -16,6 +18,84 @@ public static class JpegLosslessPreviewEngine
         long CandidateBytes, string Explanation)
     {
         public long EstimatedSavingBytes => Candidate is null ? 0 : SourceBytes - CandidateBytes;
+    }
+
+    // G4-02: do not start a user-selected executable based on its NAME.
+    // The ordinary Windows application embeds the SHA-256 of the official
+    // source-built jpegtran in its own assembly at package-build time.
+    // A missing/invalid build pin fails closed (no arbitrary local EXEs).
+    // The read-only handle stays open during Process.Start/WaitForExit to
+    // deny normal write, rename and replacement races after hashing.
+    internal static FileStream OpenTrustedTool(string executable,
+        CancellationToken ct = default)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("jpegtranはWindows専用です");
+        ct.ThrowIfCancellationRequested();
+        string tool = Path.GetFullPath(executable);
+        if (!Path.GetFileName(tool).Equals("jpegtran.exe",
+                StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(tool) || IsReparse(tool) ||
+            !Safety.EligibleAttributes(File.GetAttributes(tool)) ||
+            NativeFile.HasNamedDataStreams(tool))
+            throw new InvalidOperationException("未確認・特殊属性のjpegtran実行ファイルは拒否");
+        FileStream? held = null;
+        try
+        {
+            held = new FileStream(tool, FileMode.Open, FileAccess.Read,
+                FileShare.Read, 64 * 1024, FileOptions.SequentialScan);
+            if (held.Length is < 1024 or > 128 * 1024 * 1024)
+                throw new InvalidDataException("jpegtran実行ファイルのサイズが不正");
+            FileIdentity before = NativeFile.GetIdentity(tool);
+            if (before.LinkCount != 1)
+                throw new InvalidDataException("外部共有ハードリンクのjpegtranは拒否");
+            string actual = Convert.ToHexString(SHA256.HashData(held));
+            FileIdentity after = NativeFile.GetIdentity(tool);
+            if (!before.SameFile(after) || after.LinkCount != 1 ||
+                held.Length <= 0 || NativeFile.HasNamedDataStreams(tool))
+                throw new InvalidDataException("検証中にjpegtranのID・属性が変化");
+            string? embedded = typeof(JpegLosslessPreviewEngine).Assembly
+                .GetCustomAttributes<AssemblyMetadataAttribute>()
+                .SingleOrDefault(x => x.Key == "Chappy.TrustedJpegtranSha256")?.Value;
+            bool trusted = embedded is { Length: 64 } &&
+                embedded.All(Uri.IsHexDigit) &&
+                actual.Equals(embedded, StringComparison.OrdinalIgnoreCase);
+#if CHAPPY_TESTING
+            // Only the isolated, test-compiled Core accepts CI's two EXEs
+            // from a verified exact upstream Git commit. These environment
+            // variables cannot authorize anything in the normal app binary.
+            if (!trusted &&
+                Environment.GetEnvironmentVariable("CHAPPY_R217_JPEGTRAN_COMMIT") ==
+                    "7b4993786d856cbccabfc0ed2f923ba000e326cc")
+            {
+                static bool CiMatch(string exe, string digest,
+                    string? expectedExe, string? expectedDigest) =>
+                    !string.IsNullOrEmpty(expectedExe) &&
+                    expectedDigest is { Length: 64 } &&
+                    expectedDigest.All(Uri.IsHexDigit) &&
+                    exe.Equals(Path.GetFullPath(expectedExe),
+                        StringComparison.OrdinalIgnoreCase) &&
+                    digest.Equals(expectedDigest, StringComparison.OrdinalIgnoreCase);
+                trusted = CiMatch(tool, actual,
+                    Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_JPEGTRAN"),
+                    Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_SHA256")) ||
+                    CiMatch(tool, actual,
+                    Environment.GetEnvironmentVariable("CHAPPY_R217_SIMD_JPEGTRAN"),
+                    Environment.GetEnvironmentVariable("CHAPPY_R217_SIMD_SHA256"));
+            }
+#endif
+            if (!trusted)
+                throw new InvalidOperationException(
+                    "このjpegtran.exeのSHA-256は正規配布ビルドに固定された値と一致しません。" +
+                    "未知の実行ファイルは起動しません。");
+            ct.ThrowIfCancellationRequested();
+            return held;
+        }
+        catch
+        {
+            held?.Dispose();
+            throw;
+        }
     }
 
     public static Result CreatePreview(string sourcePath, string outputDirectory,
@@ -36,6 +116,9 @@ public static class JpegLosslessPreviewEngine
             throw new FileNotFoundException("出力先またはjpegtran.exeが見つかりません。");
         if (IsReparse(source) || IsReparse(output) || IsReparse(tool))
             throw new InvalidOperationException("リンク・ジャンクション経由は対象外です。");
+        // Keep the validated tool handle alive through the actual native
+        // execution. The basename is NEVER sufficient to grant execution.
+        using var pinnedExecutable = OpenTrustedTool(tool, ct);
         if (IsInside(output, Path.GetDirectoryName(source)!))
             throw new InvalidOperationException("候補出力は原本フォルダの外を選んでください。");
         using var sourceLock = new FileStream(source, FileMode.Open, FileAccess.Read,

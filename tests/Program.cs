@@ -797,6 +797,19 @@ static class Program
             "R1.8: EXIFなどのAPP追加をマーカー保護検査で検出");
     }
 
+    // G4-02: the old local tests used a deliberately fake jpegtran.exe.
+    // Runtime execution now refuses it. CI exercises the *same* test flow
+    // with the exact source-pinned official binary instead. No local fake
+    // executable is silently given test-only launch authority.
+    private static string? TrustedJpegtranForTests()
+    {
+        string? tool = Environment.GetEnvironmentVariable("CHAPPY_R217_PINNED_JPEGTRAN");
+        if (string.IsNullOrWhiteSpace(tool))
+            return null;
+        using var locked = JpegLosslessPreviewEngine.OpenTrustedTool(tool);
+        return tool;
+    }
+
     private static void TestR19JpegQueue(string root)
     {
         string input = Path.Combine(root, "r19-jpg-input");
@@ -825,6 +838,15 @@ static class Program
             "R1.9: 進捗計画からのディレクトリ脱出を拒否");
         ExpectThrows(() => JpegBatchPreviewEngine.BuildPlan(input, nested, tool, CancellationToken.None),
             "R1.9: 原本と候補が入れ子になる保存先を拒否");
+        ExpectThrows(() => JpegLosslessPreviewEngine.OpenTrustedTool(tool).Dispose(),
+            "G4-02: 従来の偽jpegtran.exeはProcess.Startの前に必ず拒否");
+        string? approvedTool = TrustedJpegtranForTests();
+        if (approvedTool is null)
+        {
+            Console.WriteLine("R1.9 official jpegtran queue SKIPPED without verified CI tool; no fake execution");
+            return;
+        }
+        tool = approvedTool;
 
         var first = JpegBatchPreviewEngine.Run(input, output, tool);
         Check(first.Total == 2 && first.Failed == 2 && first.Completed == 0 &&
@@ -870,6 +892,12 @@ static class Program
 
     private static void TestR20CombinedAndJpegRepair(string root)
     {
+        string? approvedTool = TrustedJpegtranForTests();
+        if (approvedTool is null)
+        {
+            Console.WriteLine("R2.0 combined JPEG queue SKIPPED without verified CI tool; no fake execution");
+            return;
+        }
         string input = Path.Combine(root, "r20-source");
         string output = Path.Combine(root, "r20-candidates");
         Directory.CreateDirectory(input);
@@ -877,7 +905,7 @@ static class Program
         string png = CreateR16Png(input, "r20-image.png", 128, 128, 6, 8, false, true);
         string jpg = Path.Combine(input, "r20-invalid.jpg");
         File.WriteAllBytes(jpg, new byte[] { 0xFF, 0xD8, 0xFF, 0xD9 });
-        string tool = Path.Combine(root, "jpegtran.exe");
+        string tool = approvedTool;
         string pngHash = Safety.ComputeSha256(png, CancellationToken.None);
         string jpgHash = Safety.ComputeSha256(jpg, CancellationToken.None);
         Check(PngBatchPreviewEngine.Run(input, output).Total == 1,

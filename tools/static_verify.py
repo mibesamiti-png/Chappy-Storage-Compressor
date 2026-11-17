@@ -121,6 +121,42 @@ check('G4-02/03/05: saved candidate must be rechecked with whole bytes, NTFS ID/
       'var fidelity = ReplacementReadiness.InspectCandidatePair(' in jpeg_metadata_tests and
       'G4-03: 書込み可能な排他ハンドルが開いた原本では置換直前の検査を拒否' in test)
 
+# G4-02: official pinned JPEG executable provenance must be enforced by
+# the actual WinExe native execution path (not only by the CI test helper).
+wpf_project = (root/'ChappyStorageCompressor.csproj').read_text(encoding='utf-8')
+diagnostics_batch = (root/'RUN_DIAGNOSTICS.bat').read_text(encoding='utf-8')
+pinned_profile = (root/'tests/R217PinnedJpegtranProfile.cs').read_text(encoding='utf-8')
+jpeg_batch_source = (root/'Core/JpegBatchPreviewEngine.cs').read_text(encoding='utf-8')
+workflow = (root/'.github/workflows/build-windows.yml').read_text(encoding='utf-8')
+check('G4-02: compiled SHA pin is in WPF assembly metadata, not runtime config or writable sidecar',
+      'Chappy.TrustedJpegtranSha256' in wpf_project and
+      'ChappyTrustedJpegtranSha256' in wpf_project and
+      'AssemblyMetadataAttribute' in wpf_project and
+      'Assembly.GetCustomAttributes' not in jpeg_engine and
+      '.GetCustomAttributes<AssemblyMetadataAttribute>()' in jpeg_engine)
+check('G4-02: same tool identity and SHA verification immediately before native launch',
+      'internal static FileStream OpenTrustedTool(' in jpeg_engine and
+      'SHA256.HashData(held)' in jpeg_engine and
+      'FileShare.Read, 64 * 1024' in jpeg_engine and
+      'NativeFile.GetIdentity(tool)' in jpeg_engine and
+      'NativeFile.HasNamedDataStreams(tool)' in jpeg_engine and
+      'using var pinnedExecutable = OpenTrustedTool(tool, ct);' in jpeg_engine and
+      'using var pinnedExecutable = JpegLosslessPreviewEngine.OpenTrustedTool(tool, ct);' in jpeg_batch_source and
+      'using (var process = Process.Start(psi)' in jpeg_engine)
+check('G4-02: official CI pinned source hashes compiled and exact exe bundled into release',
+      'CHAPPY_R217_SIMD_SHA256=$trustedSha' in workflow and
+      'CHAPPY_R217_PINNED_SHA256=$digest' in workflow and
+      'Get-FileHash -LiteralPath $tool -Algorithm SHA256' in workflow and
+      'libjpeg-turbo-LICENSE.md' in workflow and
+      'ChappyTrustedJpegtranSha256=%CHAPPY_R217_SIMD_SHA256%' in diagnostics_batch and
+      'dist\\win-x64\\jpegtran.exe' in diagnostics_batch)
+check('G4-02: genuine CI JPEG engine rejects any untrusted same-name executable before filesystem outputs',
+      'fakeRejected && fakeBatchRejected' in pinned_profile and
+      'mismatchedRejected' in pinned_profile and
+      'OpenTrustedTool(tool)' in pinned_profile and
+      'CHAPPY_R217_JPEGTRAN_COMMIT' in jpeg_engine and
+      '#if CHAPPY_TESTING' in jpeg_engine)
+
 check('R1.5/B2: public product merge stays locked',
       'public static long Run(' in core and
       '#else\n        throw new NotSupportedException' in core and

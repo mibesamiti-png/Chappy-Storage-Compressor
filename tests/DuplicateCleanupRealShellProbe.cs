@@ -23,6 +23,7 @@ internal static class DuplicateCleanupRealShellProbe
         int Schema, string Verdict, bool RealShellAttempted,
         bool RecyclePairIndependentlyVerified,
         bool KeeperUnchanged, bool OriginalCandidatePathRemainsAbsent,
+        bool SecondCandidateRestoredToOriginalPath,
         bool ProductMutationEnabled, bool RealUserFilesTouched,
         string Reason);
 
@@ -54,6 +55,7 @@ internal static class DuplicateCleanupRealShellProbe
         bool attempted = false;
         bool sameKeeper = false;
         bool originalAbsent = false;
+        bool secondRestored = false;
         bool verified = false;
         string verdict = "NOT_RUN";
         string reason = "No Shell operation started.";
@@ -68,43 +70,67 @@ internal static class DuplicateCleanupRealShellProbe
             string root = Path.Combine(parent, "GeneratedOnly");
             string keeperDir = Path.Combine(root, "Keep");
             string candidateDir = Path.Combine(root, "Source");
+            string restoreDir = Path.Combine(root, "OriginalRestore");
             Directory.CreateDirectory(keeperDir);
             Directory.CreateDirectory(candidateDir);
+            Directory.CreateDirectory(restoreDir);
 
             // Only two new random names created by this test, max 64KiB.
             string keeperPath = Path.Combine(keeperDir, "GeneratedKeeper.txt");
             string candidatePath = Path.Combine(candidateDir, "GeneratedCandidate.bin");
+            string restorePath = Path.Combine(restoreDir, "GeneratedRestoreCandidate.dat");
             byte[] payload = RandomNumberGenerator.GetBytes(64 * 1024);
             File.WriteAllBytes(keeperPath, payload);
             File.WriteAllBytes(candidatePath, payload);
-            File.SetCreationTimeUtc(candidatePath, File.GetCreationTimeUtc(keeperPath));
-            File.SetLastWriteTimeUtc(candidatePath, File.GetLastWriteTimeUtc(keeperPath));
+            File.WriteAllBytes(restorePath, payload);
+            foreach (string item in new[] { candidatePath, restorePath })
+            {
+                File.SetCreationTimeUtc(item, File.GetCreationTimeUtc(keeperPath));
+                File.SetLastWriteTimeUtc(item, File.GetLastWriteTimeUtc(keeperPath));
+            }
             string keeperHash = Safety.ComputeSha256(keeperPath, CancellationToken.None);
             FileSnapshot keeperBefore = Safety.Capture(keeperPath);
 
             var scan = Scanner.Run(root, false, null, CancellationToken.None);
             var group = scan.Groups.Single();
             var plan = DuplicateCleanupPreview.Inspect(root, group, keeperPath);
-            if (plan.DeleteCandidates.Count != 1 ||
-                !string.Equals(plan.DeleteCandidates[0].OriginalPath,
-                    candidatePath, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("Generated fixture scan is not exactly a duplicate pair");
+            if (plan.DeleteCandidates.Count != 2 ||
+                !plan.DeleteCandidates.Any(x => string.Equals(x.OriginalPath,
+                    candidatePath, StringComparison.OrdinalIgnoreCase)) ||
+                !plan.DeleteCandidates.Any(x => string.Equals(x.OriginalPath,
+                    restorePath, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("Generated fixture scan is not an exact duplicate trio");
 
             string id = DuplicateCleanupWorkflow.BeginSynthetic(parent, plan, group);
             DuplicateCleanupWorkflow.StageSynthetic(parent, root, id, 0);
+            DuplicateCleanupWorkflow.StageSynthetic(parent, root, id, 1);
             DuplicateCleanupWorkflow.WriteReportSynthetic(parent, root, id);
-            DuplicateCleanupWorkflow.ConfirmSynthetic(parent, root, id, 0, true);
+            // Restore an unselected original using the durable no-overwrite
+            // path; this is the same synthetic transaction as the Shell test.
+            int restoreIndex = plan.DeleteCandidates
+                .ToList().FindIndex(x => string.Equals(x.OriginalPath, restorePath,
+                    StringComparison.OrdinalIgnoreCase));
+            int shellIndex = 1 - restoreIndex;
+            DuplicateCleanupWorkflow.RestoreSynthetic(parent, root, id, restoreIndex);
+            secondRestored = File.Exists(restorePath) &&
+                string.Equals(Safety.ComputeSha256(restorePath, CancellationToken.None),
+                    keeperHash, StringComparison.OrdinalIgnoreCase) &&
+                DuplicateCleanupWorkflow.InspectSynthetic(parent, root, id)
+                    [restoreIndex].State == "RestoredOriginal";
+            if (!secondRestored)
+                throw new InvalidDataException("Unselected original restore failed");
+            DuplicateCleanupWorkflow.ConfirmSynthetic(parent, root, id, shellIndex, true);
 
             string intentPath = Path.Combine(root, ".chappy-cleanup-evidence",
                 id + ".intent.json");
             var immutable = JsonSerializer.Deserialize<DuplicateCleanupWorkflow.Intent>(
                 File.ReadAllBytes(intentPath)) ??
                 throw new InvalidDataException("Generated test intent missing");
-            var candidate = immutable.Candidates.Single();
+            var candidate = immutable.Candidates[shellIndex];
             if (candidate.Original.Length != payload.Length ||
                 !File.Exists(candidate.DestinationPath) ||
                 File.Exists(candidate.SourcePath))
-                throw new InvalidDataException("Generated-only staging failed");
+                throw new InvalidDataException("Generated-only staged Shell candidate invalid");
 
             // The worker's real Shell call may block on an OS dialog.
             // PowerShell Actions step terminates this ENTIRE child process
@@ -116,7 +142,7 @@ internal static class DuplicateCleanupRealShellProbe
                 try
                 {
                     DuplicateCleanupWorkflow.RecycleViaShellSynthetic(parent,
-                        root, id, 0);
+                        root, id, shellIndex);
                 }
                 catch (Exception ex) { shellError = ex; }
             })
@@ -134,25 +160,28 @@ internal static class DuplicateCleanupRealShellProbe
             sameKeeper = Safety.SameSnapshot(keeperBefore) &&
                 string.Equals(Safety.ComputeSha256(keeperPath, CancellationToken.None),
                     keeperHash, StringComparison.OrdinalIgnoreCase);
-            originalAbsent = !File.Exists(candidatePath) &&
-                !Directory.Exists(candidatePath);
+            originalAbsent = !File.Exists(candidate.SourcePath) &&
+                !Directory.Exists(candidate.SourcePath);
 
             string receipt = Path.Combine(root, ".chappy-cleanup-evidence",
-                id + ".item-0000.recycled.json");
+                id + ".item-" + shellIndex.ToString("D4") + ".recycled.json");
             string shellIntent = Path.Combine(root, ".chappy-cleanup-evidence",
-                id + ".item-0000.recycle-intent.json");
+                id + ".item-" + shellIndex.ToString("D4") + ".recycle-intent.json");
             string shellOutcome = Path.Combine(root, ".chappy-cleanup-evidence",
-                id + ".item-0000.shell-outcome.json");
+                id + ".item-" + shellIndex.ToString("D4") + ".shell-outcome.json");
 
             RecycleBinEvidence.Finding proof =
                 RecycleBinEvidence.VerifyForCurrentUser(candidate.DestinationPath,
                     candidate.Original, startUtc, DateTime.UtcNow);
             verified = proof.Verified && File.Exists(shellIntent) &&
                 File.Exists(shellOutcome) && File.Exists(receipt);
-            if (!sameKeeper || !originalAbsent)
+            if (!sameKeeper || !originalAbsent || !secondRestored ||
+                !File.Exists(restorePath) ||
+                !string.Equals(Safety.ComputeSha256(restorePath, CancellationToken.None),
+                    keeperHash, StringComparison.OrdinalIgnoreCase))
             {
                 verdict = "SAFETY_FAILURE";
-                reason = "Keeper or pre-staging source was unexpectedly changed.";
+                reason = "Keeper, source, or separately restored synthetic file unexpectedly changed.";
                 exit = 86;
             }
             else if (verified)
@@ -180,7 +209,7 @@ internal static class DuplicateCleanupRealShellProbe
             exit = 85;
         }
         var result = new ProbeResult(1, verdict, attempted, verified,
-            sameKeeper, originalAbsent,
+            sameKeeper, originalAbsent, secondRestored,
             DuplicateCleanupWorkflow.ProductionMutationEnabled,
             false, reason);
         try

@@ -13,5 +13,9 @@
          standalone Core-only synthetic assembly. -->
     <Compile Remove="UiInteractionSmoke.cs" />
     <Compile Include="..\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+    <!-- Compile the EXACT production WPF review/history source under
+         CHAPPY_TESTING in this non-shipped synthetic smoke executable. -->
+    <Compile Include="..\DuplicateCleanupReviewWindow.cs" Link="Wpf\DuplicateCleanupReviewWindow.cs" />
+    <Compile Include="..\DuplicateCleanupHistoryWindow.cs" Link="Wpf\DuplicateCleanupHistoryWindow.cs" />
   </ItemGroup>
 </Project>

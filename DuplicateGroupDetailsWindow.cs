@@ -280,125 +280,22 @@ internal sealed class DuplicateGroupDetailsWindow : Window
     private void ReviewCleanupPlan()
     {
         if (string.IsNullOrWhiteSpace(_scanRoot)) return;
-        DuplicateCleanupPreview.Result plan;
         try
         {
-            plan = DuplicateCleanupPreview.Inspect(_scanRoot, _group, _keeper.FullPath);
+            var plan = DuplicateCleanupPreview.Inspect(_scanRoot, _group, _keeper.FullPath);
+            new DuplicateCleanupReviewWindow(plan, _group)
+            {
+                Owner = this
+            }.ShowDialog();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
             InvalidOperationException or ArgumentException or OverflowException)
         {
-            MessageBox.Show(this, ex.Message + "\nスキャン結果と実際のファイル状態を確認してください。",
-                "整理先の確認を中止しました", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
+            MessageBox.Show(this, ex.Message +
+                "\nスキャン結果と実際のファイル状態を確認してください。",
+                "整理先の確認を中止しました",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-
-        var dialog = new Window
-        {
-            Owner = this,
-            Title = "重複ファイルの整理予定・削除前確認（未実行）",
-            Width = 900,
-            Height = 620,
-            MinWidth = 680,
-            MinHeight = 430,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = Background,
-            Foreground = Light,
-            FontFamily = FontFamily
-        };
-        var content = new DockPanel { Margin = new Thickness(18), LastChildFill = true };
-        var header = new TextBlock
-        {
-            Text = "残すファイルを固定し、元ディレクトリを記録した整理先を確認します。\n" +
-                   "同名ファイル/元フォルダ構造/連番と、最上位の同名ファイル一覧.txtの方式を再利用します。",
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = Light,
-            Margin = new Thickness(0, 0, 0, 10)
-        };
-        DockPanel.SetDock(header, Dock.Top);
-        content.Children.Add(header);
-
-        var status = new TextBlock
-        {
-            Text = "確認済み 0 / " + plan.DeleteCandidates.Count +
-                   " 件（画面上の予定のみ、削除機能は未解禁）",
-            Foreground = Muted,
-            Margin = new Thickness(0, 8, 0, 6)
-        };
-        var individual = new StackPanel
-        {
-            Margin = new Thickness(0, 4, 0, 4)
-        };
-        var choices = new List<CheckBox>();
-        void RefreshReviewCount()
-        {
-            int count = choices.Count(x => x.IsChecked == true);
-            status.Text = $"確認済み {count} / {choices.Count} 件 " +
-                          "（未保存の仮選択。実際の削除はできません）";
-        }
-        foreach (var candidate in plan.DeleteCandidates)
-        {
-            var cb = new CheckBox
-            {
-                Foreground = Light,
-                IsChecked = false,
-                Content = "確認済みにする: " + candidate.OriginalRelativePath +
-                          "   →   " + candidate.ProposedCollectionRelativePath,
-                ToolTip = "この行の確認状態は保存されません。元パスと整理予定先を照合してください。",
-                Margin = new Thickness(0, 5, 0, 5)
-            };
-            cb.Checked += (_, _) => RefreshReviewCount();
-            cb.Unchecked += (_, _) => RefreshReviewCount();
-            choices.Add(cb);
-            individual.Children.Add(cb);
-        }
-        var reviewList = new ScrollViewer
-        {
-            Height = 110,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            Content = individual
-        };
-        var footer = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
-        footer.Children.Add(new TextBlock
-        {
-            Text = "削除候補ごとの確認（まだ実ファイルへ適用しません）",
-            Foreground = Light,
-            FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 5)
-        });
-        footer.Children.Add(reviewList);
-        footer.Children.Add(status);
-        var buttons = new WrapPanel();
-        buttons.Children.Add(MakeButton("一覧メモをコピー", (_, _) =>
-        {
-            try { Clipboard.SetText(plan.Describe()); }
-            catch (Exception ex) { ShowError(ex); }
-        }, "保存先と元パスを含む、未実行の整理予定表をコピーします。"));
-        var delete = MakeButton("確認後にごみ箱へ移動（未解禁）", (_, _) => { },
-            "実装・復元確認・競合検証・実機受入・明示承認が済むまで操作できません。");
-        delete.IsEnabled = false;
-        buttons.Children.Add(delete);
-        buttons.Children.Add(MakeButton("閉じる", (_, _) => dialog.Close(),
-            "対象ファイルは一切変更されません。"));
-        footer.Children.Add(buttons);
-        DockPanel.SetDock(footer, Dock.Bottom);
-        content.Children.Add(footer);
-
-        var memo = new TextBox
-        {
-            Text = plan.Describe(),
-            IsReadOnly = true,
-            Background = Panel,
-            Foreground = Light,
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(12),
-            TextWrapping = TextWrapping.Wrap,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-        };
-        content.Children.Add(memo);
-        dialog.Content = content;
-        dialog.ShowDialog();
     }
 
     private static bool IsImage(string path)

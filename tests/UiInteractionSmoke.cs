@@ -206,6 +206,12 @@ internal static class UiInteractionSmoke
                     !DuplicateCleanupReviewStore.CanMoveOrDeleteFiles &&
                     reviewWindow.Title.Contains("未実行", StringComparison.Ordinal),
                 "UI: metadata save gated by fresh preflight; deletion remains disabled");
+            Require(reviewType.GetField("_syntheticStageButton",
+                        BindingFlags.NonPublic | BindingFlags.Instance) is null &&
+                    reviewType.GetMethod("ArmGeneratedOnlyForTests",
+                        BindingFlags.NonPublic | BindingFlags.Instance) is null &&
+                    !DuplicateCleanupWorkflow.ProductionMutationEnabled,
+                "UI: shipped WPF contains no generated-stage controls or test-only mutation entrypoint");
             reviewWindow.Show();
             reviewBox.IsChecked = true;
             preflightButton.RaiseEvent(new RoutedEventArgs(

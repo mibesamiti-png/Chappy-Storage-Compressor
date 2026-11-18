@@ -2156,6 +2156,11 @@ static class Program
 
     public static int Main(string[] args)
     {
+        // Dedicated ephemeral Windows GitHub runner probe. No user paths,
+        // and this test-only command is NOT compiled into the shipped WinExe.
+        if (DuplicateCleanupRealShellProbe.IsProbe(args))
+            return DuplicateCleanupRealShellProbe.Run(args);
+
         // G4-03: a separate OS process must rehydrate the same persistent
         // independent-copy receipt, without inheriting in-memory snapshots.
         // CI-only, read-only, and only for the disposable smoke-test root.

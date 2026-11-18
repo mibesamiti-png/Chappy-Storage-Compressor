@@ -320,6 +320,62 @@ jobs:
           }
           "G4-02: official source-pinned SIMD binary SHA $observed bundled with upstream LICENSE.md"
 
+      - name: Verify G5-04 generated manual WPF acceptance kit (not human PASS)
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $kit = "dist/win-x64/G5-04-WPF-Acceptance.ps1"
+          $launcher = "dist/win-x64/RUN-WPF-MANUAL-CHECK.cmd"
+          if (-not (Test-Path -LiteralPath $kit) -or
+              -not (Test-Path -LiteralPath $launcher) -or
+              -not (Test-Path -LiteralPath "dist/win-x64/BUILD-MANIFEST.json")) {
+            throw "G5 human acceptance bundle is missing"
+          }
+          $package = Get-Content -LiteralPath "dist/win-x64/BUILD-MANIFEST.json" -Raw | ConvertFrom-Json
+          if ($package.productionMutationAuthorized -ne $false -or
+              $package.officialRelease -ne $false -or
+              $package.humanWpfAcceptance -ne "NOT_RUN" -or
+              $package.manualAcceptanceKit -ne "G5-04-WPF-Acceptance.ps1") {
+            throw "G5 manual kit must never claim human or production acceptance"
+          }
+          $sums = Get-Content -LiteralPath "dist/win-x64/SHA256SUMS.txt"
+          foreach ($file in @("G5-04-WPF-Acceptance.ps1", "RUN-WPF-MANUAL-CHECK.cmd")) {
+            $actual = (Get-FileHash -LiteralPath "dist/win-x64/$file" -Algorithm SHA256).Hash.ToLowerInvariant()
+            if (-not ($sums -contains "$actual  $file")) {
+              throw "G5 manual kit SHA-256 is not in the distributed hash manifest: $file"
+            }
+          }
+          $fixture = Join-Path ([IO.Path]::GetTempPath()) ("ChappyStorageManualG5_CI_" + [guid]::NewGuid().ToString("N"))
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $kit -PrepareOnly -OutputRoot $fixture
+          if ($LASTEXITCODE -ne 0) { throw "G5 generated-only fixture creation failed" }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $kit -VerifyOnly -OutputRoot $fixture
+          if ($LASTEXITCODE -ne 0) { throw "G5 fixture baseline verification failed" }
+          $record = Get-Content -LiteralPath (Join-Path $fixture "BASELINE.json") -Raw | ConvertFrom-Json
+          if ($record.FileCount -ne 173 -or $record.HumanWpfPassed -ne $false -or
+              $record.ProductionWriteAuthorized -ne $false -or
+              -not (Test-Path -LiteralPath (Join-Path $fixture "G5-04-CHECKLIST.txt"))) {
+            throw "Generated WPF acceptance fixture incorrectly claims acceptance or has wrong file count"
+          }
+          $dataset = Join-Path $fixture "dataset"
+          foreach ($ext in @("png", "jpg")) {
+            $keep = (Get-FileHash -LiteralPath (Join-Path $dataset "Keep/generated.$ext") -Algorithm SHA256).Hash
+            $copy = (Get-FileHash -LiteralPath (Join-Path $dataset "Copies/A/generated.$ext") -Algorithm SHA256).Hash
+            if ($keep -ne $copy) { throw "Synthetic $ext group is not byte-exact" }
+          }
+          [ordered]@{
+            verdict = "PREPARED_ONLY"
+            humanWpfAcceptance = "NOT_RUN"
+            releaseApproval = $false
+            productionMutationAuthorized = $false
+            fixtureFiles = $record.FileCount
+            fixtureIntegrityVerified = $true
+            bundledKitSha256Verified = $true
+            sourceCommit = $env:GITHUB_SHA
+            note = "GitHub-hosted tests cannot simulate a human mouse/keyboard signoff."
+          } | ConvertTo-Json | Set-Content -LiteralPath "diagnostics/g5-manual-acceptance-preparation.json" -Encoding utf8
+          Write-Host "G5-04 manual WPF acceptance fixture prepared and verified, human PASS deliberately NOT asserted."
+
       - name: Require distinct Core and WPF test runners really executed
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

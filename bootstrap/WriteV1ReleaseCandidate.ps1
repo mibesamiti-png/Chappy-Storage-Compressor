@@ -12,6 +12,8 @@ $app = Join-Path $dist 'ChappyStorageCompressor.exe'
 $jpeg = Join-Path $dist 'jpegtran.exe'
 $license = Join-Path $env:RUNNER_TEMP 'chappy-r217-official-jpegtran/libjpeg-turbo/LICENSE.md'
 $readme = Join-Path $PSScriptRoot '../README.md'
+$manualFixtureTool = Join-Path $PSScriptRoot '../tools/G5-04-WPF-Acceptance.ps1'
+$manualLauncher = Join-Path $PSScriptRoot '../tools/RUN-WPF-MANUAL-CHECK.cmd'
 $commit = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
     throw 'Candidate source commit could not be verified.'
@@ -26,7 +28,13 @@ if ((Get-FileHash -LiteralPath $jpeg -Algorithm SHA256).Hash -ne $env:CHAPPY_R21
 
 Copy-Item -LiteralPath $license -Destination (Join-Path $dist 'libjpeg-turbo-LICENSE.md')
 Copy-Item -LiteralPath $readme -Destination (Join-Path $dist 'README.md')
-$files = @('ChappyStorageCompressor.exe', 'jpegtran.exe', 'libjpeg-turbo-LICENSE.md', 'README.md')
+Copy-Item -LiteralPath $manualFixtureTool -Destination (Join-Path $dist 'G5-04-WPF-Acceptance.ps1')
+Copy-Item -LiteralPath $manualLauncher -Destination (Join-Path $dist 'RUN-WPF-MANUAL-CHECK.cmd')
+$files = @(
+    'ChappyStorageCompressor.exe', 'jpegtran.exe',
+    'libjpeg-turbo-LICENSE.md', 'README.md',
+    'G5-04-WPF-Acceptance.ps1', 'RUN-WPF-MANUAL-CHECK.cmd'
+)
 $checksums = foreach ($name in $files) {
     $digest = (Get-FileHash -LiteralPath (Join-Path $dist $name) -Algorithm SHA256).Hash.ToLowerInvariant()
     "$digest  $name"
@@ -44,4 +52,7 @@ $checksums | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encodi
     checksumFile = 'SHA256SUMS.txt'
     productionMutationAuthorized = $false
     officialRelease = $false
+    humanWpfAcceptance = 'NOT_RUN'
+    manualAcceptanceKit = 'G5-04-WPF-Acceptance.ps1'
+    manualAcceptanceLauncher = 'RUN-WPF-MANUAL-CHECK.cmd'
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $dist 'BUILD-MANIFEST.json') -Encoding utf8

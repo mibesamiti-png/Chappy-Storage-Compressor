@@ -190,12 +190,24 @@ internal static class UiInteractionSmoke
                 BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
             var recycleButton = (Button)reviewType.GetField("_deleteButton",
                 BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
+            var saveReviewedButton = (Button)reviewType.GetField("_saveReviewButton",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
+            var loadReviewedButton = (Button)reviewType.GetField("_loadReviewButton",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
+            var checkList = (System.Collections.IEnumerable)reviewType.GetField("_choices",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
+            object firstReviewChoice = checkList.Cast<object>().Single();
+            var reviewBox = (CheckBox)firstReviewChoice.GetType().GetField("Item2")!
+                .GetValue(firstReviewChoice)!;
             var preflightStatus = (TextBlock)reviewType.GetField("_summary",
                 BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
-            Require(preflightButton.IsEnabled && !recycleButton.IsEnabled &&
+            Require(preflightButton.IsEnabled && !saveReviewedButton.IsEnabled &&
+                    loadReviewedButton.IsEnabled && !recycleButton.IsEnabled &&
+                    !DuplicateCleanupReviewStore.CanMoveOrDeleteFiles &&
                     reviewWindow.Title.Contains("未実行", StringComparison.Ordinal),
-                "UI: final review is available but direct recycle action stays locked");
+                "UI: metadata save gated by fresh preflight; deletion remains disabled");
             reviewWindow.Show();
+            reviewBox.IsChecked = true;
             preflightButton.RaiseEvent(new RoutedEventArgs(
                 ButtonBase.ClickEvent, preflightButton));
             Require(!preflightButton.IsEnabled && !recycleButton.IsEnabled,
@@ -208,6 +220,32 @@ internal static class UiInteractionSmoke
                     !Directory.Exists(Path.Combine(existingCollection, "同名ファイル")) &&
                     !File.Exists(Path.Combine(allFileRoot, "同名ファイル一覧 (1).txt")),
                 "UI: routed final preflight checks full bytes and preserves every original file");
+            Require(saveReviewedButton.IsEnabled && !recycleButton.IsEnabled,
+                "UI: verified candidate can save review METADATA but never delete");
+            saveReviewedButton.RaiseEvent(new RoutedEventArgs(
+                ButtonBase.ClickEvent, saveReviewedButton));
+            Require(!saveReviewedButton.IsEnabled && !recycleButton.IsEnabled,
+                "UI: saving metadata disables duplicate submission and keeps delete locked");
+            PumpUntil(() => loadReviewedButton.IsEnabled &&
+                preflightStatus.Text.Contains("保存しました", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(30));
+            reviewBox.IsChecked = false;
+            Require(!saveReviewedButton.IsEnabled &&
+                    !recycleButton.IsEnabled,
+                "UI: checkbox edits invalidate prior preflight");
+            loadReviewedButton.RaiseEvent(new RoutedEventArgs(
+                ButtonBase.ClickEvent, loadReviewedButton));
+            PumpUntil(() => loadReviewedButton.IsEnabled &&
+                preflightStatus.Text.Contains("保存済み確認 1 件", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(30));
+            Require(reviewBox.IsChecked == true &&
+                    !saveReviewedButton.IsEnabled &&
+                    !recycleButton.IsEnabled &&
+                    OracleHash(textFile) == originalTextSha &&
+                    OracleHash(binaryFile) == originalBinSha &&
+                    !Directory.Exists(Path.Combine(existingCollection, "同名ファイル")) &&
+                    File.ReadAllText(existingReport) == "Existing user memo: do not overwrite.",
+                "UI: real routed save/reload restores checked metadata only; no file mutations");
             reviewWindow.Close();
 
             string originals = Path.Combine(testRoot, "synthetic-originals");

@@ -418,6 +418,19 @@ internal static class DuplicateCleanupBatchTests
         DuplicateCleanupWorkflow.StageSynthetic(testRoot, noopRoot, noopId, 0);
         DuplicateCleanupWorkflow.WriteReportSynthetic(testRoot, noopRoot, noopId);
         DuplicateCleanupWorkflow.ConfirmSynthetic(testRoot, noopRoot, noopId, 0, true);
+        // The normal Core smoke run MUST NOT carry the opt-in for the real
+        // Shell probe; missing opt-in is refused before writing any intent.
+        check(Environment.GetEnvironmentVariable("CHAPPY_TEST_REAL_RECYCLE_BIN") !=
+                  "I_ACCEPT_SYNTHETIC_RECYCLE" &&
+              Environment.GetEnvironmentVariable("CHAPPY_TEST_CI_SYNTHETIC_RECYCLE") !=
+                  "EXPLICIT_EPHEMERAL_RUNNER",
+            "C: ordinary Windows Core tests cannot opt into real Recycle Bin");
+        expectThrows(() => DuplicateCleanupWorkflow.RecycleViaShellSynthetic(
+            testRoot, noopRoot, noopId, 0),
+            "C: without explicit opt-in, real Shell path refuses before mutation");
+        check(!File.Exists(Path.Combine(noopRoot, ".chappy-cleanup-evidence",
+                  noopId + ".item-0000.recycle-intent.json")),
+            "C: rejected real Shell path leaves no recycle-intent");
         DuplicateCleanupWorkflow.RecycleViaShellSynthetic(testRoot, noopRoot, noopId, 0,
             testTransport: _ => { }); // no-op transport, NEVER Windows shell
         string noopStage = Path.Combine(noopRoot,

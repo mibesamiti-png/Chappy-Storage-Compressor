@@ -1,4 +1,4 @@
-# G5-04 human-operated WPF acceptance fixture, NOT an automated PASS.
+﻿# G5-04 human-operated WPF acceptance fixture, NOT an automated PASS.
 # Windows PowerShell 5.1+. Creates new, disposable data ONLY under %TEMP%.
 # No operation here moves, deletes, replaces, or restores scanned originals.
 param(

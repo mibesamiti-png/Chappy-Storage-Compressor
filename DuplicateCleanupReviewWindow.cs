@@ -31,6 +31,8 @@ internal sealed class DuplicateCleanupReviewWindow : Window
     private readonly TextBlock _status;
     private readonly TextBlock _summary;
     private readonly Button _preflightButton;
+    private readonly Button _saveReviewButton;
+    private readonly Button _loadReviewButton;
     private readonly Button _deleteButton;
     private readonly CancellationTokenSource _closeCancel = new();
     private bool _running;
@@ -80,7 +82,7 @@ internal sealed class DuplicateCleanupReviewWindow : Window
         var footer = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         footer.Children.Add(new TextBlock
         {
-            Text = "削除候補ごとの仮確認（未保存・未実行）",
+            Text = "削除候補ごとの確認（アプリ内へ保存可能・実処理は未解禁）",
             Foreground = TextColor,
             FontWeight = FontWeights.SemiBold
         });
@@ -96,7 +98,7 @@ internal sealed class DuplicateCleanupReviewWindow : Window
                 IsChecked = false,
                 Margin = new Thickness(0, 5, 0, 5),
                 ToolTip = "元のフルパス: " + path +
-                          "\nこのチェックは画面限りで、ディスクや履歴を変更しません。"
+                          "\n確認を保存するとアプリの設定領域にだけ記録されます。元ファイルは変更されません。"
             };
             choice.Checked += (_, _) => ResetVerification();
             choice.Unchecked += (_, _) => ResetVerification();
@@ -115,7 +117,7 @@ internal sealed class DuplicateCleanupReviewWindow : Window
         _status = new TextBlock
         {
             Text = "確認済み 0 / " + plan.DeleteCandidates.Count +
-                   " 件（画面限り。移動・削除は未解禁）",
+                   " 件（保存は明示操作。移動・削除は未解禁）",
             Foreground = Secondary,
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 6, 0, 3)
@@ -146,6 +148,16 @@ internal sealed class DuplicateCleanupReviewWindow : Window
             "チェックした候補だけでなくグループ全体を再照合します。NTFS ID・属性・権限・SHA-256・全バイトと整理先の衝突を確認します。変更は行いません。");
         _preflightButton.IsEnabled = plan.DeleteCandidates.Count <= 1000;
         actions.Children.Add(_preflightButton);
+        _saveReviewButton = MakeButton("照合済みの確認を保存", SaveReview_Click,
+            "全候補・残すファイルを再照合し、チェック内容だけをアプリ専用領域へ保存します。削除は行いません。");
+        _saveReviewButton.Name = "SaveReviewedButton";
+        _saveReviewButton.IsEnabled = false;
+        actions.Children.Add(_saveReviewButton);
+        _loadReviewButton = MakeButton("保存した確認を復元", LoadReview_Click,
+            "保存済みのチェックをファイルの再照合後に表示します。削除は許可されません。");
+        _loadReviewButton.Name = "LoadReviewedButton";
+        _loadReviewButton.IsEnabled = plan.DeleteCandidates.Count <= 1000;
+        actions.Children.Add(_loadReviewButton);
         _deleteButton = MakeButton("確認済みをごみ箱へ（未解禁）",
             (_, _) => { },
             "このビルドでは使用不可。本番のごみ箱・復元検証と独立レビュー・明示承認が必要です。");
@@ -201,6 +213,7 @@ internal sealed class DuplicateCleanupReviewWindow : Window
     {
         if (_running) return;
         _lastReport = null;
+        _saveReviewButton.IsEnabled = false;
         int checkedCount = _choices.Count(c => c.Box.IsChecked == true);
         _status.Text = $"確認済み {checkedCount} / {_plan.DeleteCandidates.Count} 件 " +
                        "（画面限り。移動・削除は未解禁）";
@@ -213,6 +226,8 @@ internal sealed class DuplicateCleanupReviewWindow : Window
         _running = true;
         _lastReport = null;
         _preflightButton.IsEnabled = false;
+        _saveReviewButton.IsEnabled = false;
+        _loadReviewButton.IsEnabled = false;
         foreach (var item in _choices) item.Box.IsEnabled = false;
         _summary.Text = "元データを読み取って安全照合中…（データ変更なし）";
         string[] checkedPaths = _choices
@@ -225,6 +240,7 @@ internal sealed class DuplicateCleanupReviewWindow : Window
                 _plan, _scanned, checkedPaths, _closeCancel.Token));
             if (_closing) return;
             _lastReport = report;
+            _saveReviewButton.IsEnabled = report.Passed;
             _status.Text = $"選択 {report.CheckedCount} 件・照合合格 " +
                            $"{report.VerifiedCount} / {report.Candidates.Count} 件";
             _summary.Text = report.Summary +
@@ -256,9 +272,119 @@ internal sealed class DuplicateCleanupReviewWindow : Window
             _running = false;
             if (!_closing)
             {
-                _preflightButton.IsEnabled = true;
+                _preflightButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
+                _loadReviewButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
                 foreach (var item in _choices) item.Box.IsEnabled = true;
             }
         }
     }
+    private async void SaveReview_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running || _closing || _lastReport?.Passed != true) return;
+        string[] selected = _choices.Where(c => c.Box.IsChecked == true)
+            .Select(c => c.Path).ToArray();
+        if (_lastReport.CheckedCount != selected.Length ||
+            _lastReport.Candidates.Any(c =>
+                c.CheckedByUser != selected.Contains(c.OriginalPath,
+                    StringComparer.OrdinalIgnoreCase)))
+        {
+            _summary.Text = "チェックが照合結果と一致しません。最終照合をやり直してください。";
+            ResetVerification();
+            return;
+        }
+        _running = true;
+        _saveReviewButton.IsEnabled = false;
+        _loadReviewButton.IsEnabled = false;
+        _preflightButton.IsEnabled = false;
+        foreach (var item in _choices) item.Box.IsEnabled = false;
+        _summary.Text = "元ファイル・整理先をもう一度照合して確認内容だけを保存中…";
+        try
+        {
+            var result = await Task.Run(() =>
+                DuplicateCleanupReviewStore.Save(_plan, _scanned, selected,
+                    _closeCancel.Token));
+            if (_closing) return;
+            _lastReport = null;
+            _status.Text = $"保存済み確認 {result.CheckedPaths.Count} 件 / " +
+                           _plan.DeleteCandidates.Count + " 件（削除不可）";
+            _summary.Text = result.Summary +
+                "\n実行操作には別の独立審査と直前照合が必要です。";
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_closing) _summary.Text = "保存を中断しました。元ファイルは変更していません。";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+            InvalidDataException or InvalidOperationException or ArgumentException or
+            NotSupportedException)
+        {
+            if (!_closing)
+                _summary.Text = "確認内容を保存できません：" + ex.Message +
+                    "。元ファイルは一切変更していません。";
+        }
+        finally
+        {
+            _running = false;
+            if (!_closing)
+            {
+                _preflightButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
+                _loadReviewButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
+                foreach (var item in _choices) item.Box.IsEnabled = true;
+            }
+        }
+    }
+
+    private async void LoadReview_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running || _closing || _plan.DeleteCandidates.Count > 1000) return;
+        _running = true;
+        _saveReviewButton.IsEnabled = false;
+        _loadReviewButton.IsEnabled = false;
+        _preflightButton.IsEnabled = false;
+        foreach (var item in _choices) item.Box.IsEnabled = false;
+        _lastReport = null;
+        _summary.Text = "保存済み確認と元ファイル・整理先を再照合中…";
+        try
+        {
+            var result = await Task.Run(() =>
+                DuplicateCleanupReviewStore.Load(_plan, _scanned,
+                    _closeCancel.Token));
+            if (_closing) return;
+            if (result.Exists && result.Valid)
+            {
+                var restored = new HashSet<string>(result.CheckedPaths,
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var (path, box) in _choices)
+                    box.IsChecked = restored.Contains(path);
+                _status.Text = $"保存済み確認 {restored.Count} 件 / " +
+                               _plan.DeleteCandidates.Count +
+                               " 件（再照合が必要。削除不可）";
+            }
+            _summary.Text = result.Summary +
+                "\nこの記録は実行権限ではありません。削除ボタンは引き続き無効です。";
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_closing) _summary.Text = "確認内容の読み取りを中断しました。";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+            InvalidDataException or InvalidOperationException or ArgumentException or
+            NotSupportedException)
+        {
+            if (!_closing)
+                _summary.Text = "確認内容を復元できません：" + ex.Message +
+                    "。元ファイルは変更していません。";
+        }
+        finally
+        {
+            _running = false;
+            if (!_closing)
+            {
+                _preflightButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
+                _loadReviewButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
+                foreach (var item in _choices) item.Box.IsEnabled = true;
+            }
+        }
+    }
+
 }

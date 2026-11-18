@@ -38,6 +38,19 @@ internal sealed class DuplicateCleanupReviewWindow : Window
     private bool _running;
     private bool _closing;
     private DuplicateCleanupPreflight.Report? _lastReport;
+#if CHAPPY_TESTING
+    // Compiled into the standalone smoke-test assembly ONLY, never the
+    // shipped WinExe. The real WPF review screen shares its source with
+    // this generated-only test, while all mutations use the existing Core.
+    private string? _syntheticOwnedRoot;
+    private string? _syntheticId;
+    private readonly Button _syntheticStageButton;
+    private readonly Button _syntheticRestoreButton;
+    private readonly Button _syntheticConfirmButton;
+    private readonly Button _syntheticRecycleButton;
+    private readonly TextBlock _syntheticStatus;
+    private bool _syntheticFailed;
+#endif
 
     internal DuplicateCleanupReviewWindow(DuplicateCleanupPreview.Result plan,
         DuplicateGroup scanned)
@@ -163,6 +176,34 @@ internal sealed class DuplicateCleanupReviewWindow : Window
             "このビルドでは使用不可。本番のごみ箱・復元検証と独立レビュー・明示承認が必要です。");
         _deleteButton.IsEnabled = false;
         actions.Children.Add(_deleteButton);
+#if CHAPPY_TESTING
+        _syntheticStageButton = MakeButton("生成データ: 保留2件＋メモ",
+            (_, _) => SyntheticStage(), "専用TEMP+sentinel上の人工データだけを操作");
+        _syntheticRestoreButton = MakeButton("生成データ: 元パスへ1件復元",
+            (_, _) => SyntheticRestore(), "NTFS IDを固定した元パスへの復帰");
+        _syntheticConfirmButton = MakeButton("生成データ: 1件だけ永続確認",
+            (_, _) => SyntheticConfirm(), "選択済み人工ファイルのみ永続確認");
+        _syntheticRecycleButton = MakeButton("生成データ: 模擬ごみ箱へ1件",
+            (_, _) => SyntheticRecycle(), "本物のごみ箱・永久削除は使わない");
+        _syntheticStageButton.Name = "SyntheticStageButton";
+        _syntheticRestoreButton.Name = "SyntheticRestoreButton";
+        _syntheticConfirmButton.Name = "SyntheticConfirmButton";
+        _syntheticRecycleButton.Name = "SyntheticRecycleButton";
+        foreach (var button in new[] {
+            _syntheticStageButton, _syntheticRestoreButton,
+            _syntheticConfirmButton, _syntheticRecycleButton
+        })
+        {
+            button.IsEnabled = false;
+            actions.Children.Add(button);
+        }
+        _syntheticStatus = new TextBlock {
+            Text = "テスト用生成NTFSの操作は未設定",
+            Foreground = Secondary, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 4, 0, 4)
+        };
+        footer.Children.Add(_syntheticStatus);
+#endif
         actions.Children.Add(MakeButton("閉じる", (_, _) => Close(),
             "キャンセルしてもファイルは変更されません。"));
         footer.Children.Add(actions);
@@ -214,6 +255,9 @@ internal sealed class DuplicateCleanupReviewWindow : Window
         if (_running) return;
         _lastReport = null;
         _saveReviewButton.IsEnabled = false;
+#if CHAPPY_TESTING
+        if (_syntheticId is null) SyntheticRefresh();
+#endif
         int checkedCount = _choices.Count(c => c.Box.IsChecked == true);
         _status.Text = $"確認済み {checkedCount} / {_plan.DeleteCandidates.Count} 件 " +
                        "（画面限り。移動・削除は未解禁）";
@@ -241,6 +285,9 @@ internal sealed class DuplicateCleanupReviewWindow : Window
             if (_closing) return;
             _lastReport = report;
             _saveReviewButton.IsEnabled = report.Passed;
+#if CHAPPY_TESTING
+            SyntheticRefresh();
+#endif
             _status.Text = $"選択 {report.CheckedCount} 件・照合合格 " +
                            $"{report.VerifiedCount} / {report.Candidates.Count} 件";
             _summary.Text = report.Summary +
@@ -386,5 +433,160 @@ internal sealed class DuplicateCleanupReviewWindow : Window
             }
         }
     }
+
+#if CHAPPY_TESTING
+    /// <summary>
+    /// Only the isolated Core smoke assembly compiles this entrypoint. The
+    /// generated root is revalidated by BeginSynthetic/StageSynthetic on each
+    /// mutation, so a forged UI flag cannot bypass the NTFS sentinel.
+    /// The UI is deliberately NOT made into a production mutation adapter.
+    /// </summary>
+    internal void ArmGeneratedOnlyForTests(string generatedParent)
+    {
+        if (_syntheticId is not null || _running || _closing)
+            throw new InvalidOperationException("Synthetic UI transaction already active");
+        string full = Safety.ValidateRoot(generatedParent);
+        string temp = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(Path.GetTempPath()));
+        if (!full.StartsWith(temp + Path.DirectorySeparatorChar +
+                "ChappyStorageSmoke_", StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(Path.Combine(full, ".chappy-part23-generated-only")) ||
+            File.ReadAllText(Path.Combine(full, ".chappy-part23-generated-only")) !=
+                "Part23 synthetic data only" ||
+            !_plan.Root.StartsWith(full + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase) ||
+            _plan.DeleteCandidates.Count != 2)
+            throw new InvalidOperationException("Generated-only review UI root rejected");
+        _syntheticOwnedRoot = full;
+        _syntheticStatus.Text = "専用TEMPの生成3件のみ。操作にはまず1候補のチェックと最終照合が必要。";
+        SyntheticRefresh();
+    }
+
+    private void SyntheticRefresh()
+    {
+        bool armed = _syntheticOwnedRoot is not null &&
+            !_syntheticFailed && !_closing && !_running;
+        bool ready = armed && _lastReport?.Passed == true &&
+            _lastReport.CheckedCount == 1 && _choices.Count == 2 &&
+            _choices[0].Box.IsChecked == true &&
+            _choices[1].Box.IsChecked != true;
+        _syntheticStageButton.IsEnabled = ready && _syntheticId is null;
+        _syntheticRestoreButton.IsEnabled = false;
+        _syntheticConfirmButton.IsEnabled = false;
+        _syntheticRecycleButton.IsEnabled = false;
+        if (!armed || _syntheticId is null) return;
+        try
+        {
+            var states = DuplicateCleanupWorkflow.InspectSynthetic(
+                _syntheticOwnedRoot!, _plan.Root, _syntheticId);
+            if (states.Count != 2) throw new InvalidDataException("Synthetic states count differs");
+            string a = states[0].State, b = states[1].State;
+            _syntheticRestoreButton.IsEnabled = b == "StagedUnconfirmed" &&
+                a == "StagedUnconfirmed";
+            _syntheticConfirmButton.IsEnabled = a == "StagedUnconfirmed" &&
+                b == "RestoredOriginal";
+            _syntheticRecycleButton.IsEnabled = a == "ConfirmedStaged" &&
+                b == "RestoredOriginal";
+            _syntheticStatus.Text = "実行ID: " + _syntheticId +
+                " | 人工候補0=" + a + " / 候補1=" + b +
+                " / 本番削除許可=false";
+        }
+        catch (Exception ex)
+        {
+            SyntheticStop("現在の証拠を判定できません：" + ex.GetType().Name);
+        }
+    }
+
+    private void SyntheticStop(string problem)
+    {
+        _syntheticFailed = true;
+        foreach (var button in new[] { _syntheticStageButton,
+            _syntheticRestoreButton, _syntheticConfirmButton, _syntheticRecycleButton })
+            button.IsEnabled = false;
+        _syntheticStatus.Text = "人工処理は安全停止。再実行せず要手動確認：" + problem;
+    }
+
+    private void SyntheticExecute(Action step, string description)
+    {
+        if (_syntheticOwnedRoot is null || _syntheticFailed || _closing ||
+            _running || DuplicateCleanupWorkflow.ProductionMutationEnabled)
+        {
+            SyntheticStop("実行対象・操作状態が未確認です");
+            return;
+        }
+        try
+        {
+            // All stages synchronously validate and commit durable evidence;
+            // only tiny generated 64KiB files are used in UI smoke.
+            step();
+            _syntheticStatus.Text = description;
+            SyntheticRefresh();
+        }
+        catch (Exception ex)
+        {
+            SyntheticStop(description + "：" + ex.GetType().Name + " " + ex.Message);
+        }
+    }
+
+    private void SyntheticStage()
+    {
+        if (!_syntheticStageButton.IsEnabled ||
+            _syntheticOwnedRoot is null || _syntheticId is not null ||
+            _lastReport?.Passed != true ||
+            _choices.Count != 2 || _choices[0].Box.IsChecked != true ||
+            _choices[1].Box.IsChecked == true)
+        {
+            SyntheticStop("保留前の1件のみの確認・最終照合が不一致");
+            return;
+        }
+        SyntheticExecute(() =>
+        {
+            string id = DuplicateCleanupWorkflow.BeginSynthetic(
+                _syntheticOwnedRoot, _plan, _scanned);
+            _syntheticId = id;
+            DuplicateCleanupWorkflow.StageSynthetic(_syntheticOwnedRoot,
+                _plan.Root, id, 0);
+            DuplicateCleanupWorkflow.StageSynthetic(_syntheticOwnedRoot,
+                _plan.Root, id, 1);
+            DuplicateCleanupWorkflow.WriteReportSynthetic(_syntheticOwnedRoot,
+                _plan.Root, id);
+            _lastReport = null;
+            _saveReviewButton.IsEnabled = false;
+            _loadReviewButton.IsEnabled = false;
+            _preflightButton.IsEnabled = false;
+            foreach (var item in _choices) item.Box.IsEnabled = false;
+        }, "人工候補2件の保留＋最上位メモ記録完了");
+    }
+
+    private void SyntheticRestore()
+    {
+        if (!_syntheticRestoreButton.IsEnabled ||
+            _syntheticOwnedRoot is null || _syntheticId is null) return;
+        SyntheticExecute(() => DuplicateCleanupWorkflow.RestoreSynthetic(
+            _syntheticOwnedRoot, _plan.Root, _syntheticId, 1),
+            "人工候補1を元パスへ復元");
+    }
+
+    private void SyntheticConfirm()
+    {
+        if (!_syntheticConfirmButton.IsEnabled ||
+            _syntheticOwnedRoot is null || _syntheticId is null) return;
+        SyntheticExecute(() => DuplicateCleanupWorkflow.ConfirmSynthetic(
+            _syntheticOwnedRoot, _plan.Root, _syntheticId, 0, true),
+            "人工候補0のみ永続確認");
+    }
+
+    private void SyntheticRecycle()
+    {
+        if (!_syntheticRecycleButton.IsEnabled ||
+            _syntheticOwnedRoot is null || _syntheticId is null) return;
+        SyntheticExecute(() => DuplicateCleanupWorkflow.RecycleSimulatedSynthetic(
+            _syntheticOwnedRoot, _plan.Root, _syntheticId, 0),
+            "人工候補0を模擬ごみ箱へ。実Windowsごみ箱は別のCI試験");
+    }
+
+    internal string? GeneratedOnlyOperationIdForTests => _syntheticId;
+    internal string GeneratedOnlyStatusForTests => _syntheticStatus.Text;
+#endif
 
 }

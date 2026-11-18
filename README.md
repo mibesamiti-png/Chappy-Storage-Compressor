@@ -10,6 +10,14 @@ Windows向け **完全一致ファイルの重複調査** と **PNG/JPG完全無
 
 > ⚠️ **開発中です。大切な写真・動画の原本には使用しないでください。** 通常版のハードリンク統合・原本置換は安全のため無効です。GitHub Actionsの合格は製品の安全性保証ではありません。
 
+### 使い捨てWindows環境での本物のごみ箱E2E診断（本番ロック継続）
+
+Windows CIは、標準の人工Core/WPFテストとは**別プロセス**で、GitHub-hosted Windowsランナーにだけ生成する64KiBの重複3件を使った追加診断を行います。専用TEMP＋sentinelを検証し、`検出 → 保留移動2件 → 元の場所へ1件復元 → 残る1件を個別確認 → 実Windows Shellでごみ箱要求 → $I/$R・NTFS ID・SHA独立照合` を試します。環境変数 `CHAPPY_TEST_REAL_RECYCLE_BIN=I_ACCEPT_SYNTHETIC_RECYCLE` と `CHAPPY_TEST_CI_SYNTHETIC_RECYCLE=EXPLICIT_EPHEMERAL_RUNNER` の同時指定が必須で、**通常の本番EXEには経路がコンパイルされません**。処理は他のファイルを一切受け付けない生成TEMP限定です。
+
+CIの診断結果 `diagnostics/duplicate-real-shell-e2e.json` は **`VERIFIED_SYNTHETIC_RECYCLE_PAIR`**（Windowsごみ箱内に同一NTFS ID・内容の独立証拠あり）と **`INCONCLUSIVE_MANUAL_REVIEW` / `INCONCLUSIVE_TIMEOUT_MANUAL_REVIEW`**（非対話環境・拒否・証拠欠落・処理停止）を厳密に分けます。UIダイアログ等で止まった場合は独立プロセスを25秒で強制終了し、自動再試行や完全削除への切替はしません。CIジョブ自体が成功しても、診断結果が `INCONCLUSIVE` であれば**実ごみ箱E2Eの合格を意味しません**。生成ファイルが実ごみ箱に残り得る点も通常ランナーの使い捨てデータだけに限定しています。
+
+この検証は**人のマウス・キーボード操作受入（G5-04）や独立レビュー・本番解禁（G5-06）の代替ではありません**。一般ファイルの重複整理・削除の有効化には、対話型Windows実機での受入と書込経路の独立監査、明示承認が必要です。
+
 ### Windowsごみ箱の独立証拠照合（人工データ限定）
 
 追加の `Core/RecycleBinEvidence.cs` は、Windowsのごみ箱で作られる `$I`（元パス・元サイズ・削除時刻）と `$R`（実ファイル）を**両方とも読み取り専用で確認**し、元NTFSファイルID・リンク数・全データSHA-256まで照合します。1件でも不一致、複数候補、未知の形式、読み取り拒否、元パスの再占有があれば成功とは認めません。既存のWindowsごみ箱の内容を変更する仕組みではありません。

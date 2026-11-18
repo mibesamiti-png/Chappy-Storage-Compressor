@@ -553,16 +553,27 @@ public static class DuplicateCleanupWorkflow
         // Limit the real-shell exercise to a tiny generated file and an
         // explicit opt-in. CI's normal test path only uses an injected
         // failure transport, so it does not alter the Windows Recycle Bin.
+        // The CI exception below still requires explicit opt-in, an owned
+        // Windows TEMP fixture, STA, and a tiny single-link synthetic file.
+        // It never enables mutation for a shipped executable. Some hosted
+        // Windows runners are noninteractive; they use error-only dialogs
+        // and an external process timeout. Unknown results stay manual-only.
+        bool ciOptIn = string.Equals(
+                Environment.GetEnvironmentVariable("GITHUB_ACTIONS"),
+                "true", StringComparison.Ordinal) &&
+            string.Equals(Environment.GetEnvironmentVariable(
+                "CHAPPY_TEST_CI_SYNTHETIC_RECYCLE"), "EXPLICIT_EPHEMERAL_RUNNER",
+                StringComparison.Ordinal);
         if (testTransport is null)
         {
             if (!string.Equals(
                     Environment.GetEnvironmentVariable("CHAPPY_TEST_REAL_RECYCLE_BIN"),
                     "I_ACCEPT_SYNTHETIC_RECYCLE", StringComparison.Ordinal) ||
-                !Environment.UserInteractive ||
+                (!Environment.UserInteractive && !ciOptIn) ||
                 Thread.CurrentThread.GetApartmentState() != ApartmentState.STA ||
                 c.Original.Length > 1024 * 1024)
                 throw new InvalidOperationException(
-                    "Real shell recycle requires explicit synthetic-test opt-in on an interactive STA");
+                    "Real shell recycle requires explicit generated-only STA opt-in");
         }
 
         DateTime startedUtc = DateTime.UtcNow;
@@ -579,7 +590,9 @@ public static class DuplicateCleanupWorkflow
             else
                 Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
                     c.DestinationPath,
-                    Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,
+                    ciOptIn
+                        ? Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs
+                        : Microsoft.VisualBasic.FileIO.UIOption.AllDialogs,
                     Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin,
                     Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
         }

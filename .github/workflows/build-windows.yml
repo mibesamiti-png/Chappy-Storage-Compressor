@@ -221,6 +221,81 @@ jobs:
         shell: cmd
         run: call RUN_DIAGNOSTICS.bat
 
+      # Real Windows Shell E2E, but ONLY on random generated TEMP files
+      # in a throwaway GitHub-hosted Windows runner. The standalone Core
+      # test executable is not shipped in the WinExe artifact. If this
+      # hosted session has no usable Recycle Bin, record INCONCLUSIVE:
+      # do not count this as human G5 acceptance or a product unlock.
+      - name: Probe Windows Shell Recycle Bin with timeout and independent evidence (synthetic only)
+        if: steps.source.outputs.mode == 'tree'
+        shell: pwsh
+        env:
+          CHAPPY_TEST_REAL_RECYCLE_BIN: I_ACCEPT_SYNTHETIC_RECYCLE
+          CHAPPY_TEST_CI_SYNTHETIC_RECYCLE: EXPLICIT_EPHEMERAL_RUNNER
+        run: |
+          $ErrorActionPreference = "Stop"
+          $runner = Join-Path (Get-Location).Path "tests/bin/Release/net10.0-windows/ChappyStorageCompressor.SmokeTests.dll"
+          if (-not (Test-Path -LiteralPath $runner)) {
+            throw "Separate synthetic Core test executable not built"
+          }
+          New-Item -ItemType Directory -Force "diagnostics" | Out-Null
+          $report = Join-Path (Get-Location).Path "diagnostics/duplicate-real-shell-e2e.json"
+          $stdout = Join-Path (Get-Location).Path "diagnostics/duplicate-real-shell-e2e.log"
+          $stderr = Join-Path (Get-Location).Path "diagnostics/duplicate-real-shell-e2e-errors.log"
+          if (Test-Path -LiteralPath $report) {
+            throw "Synthetic Shell probe report already exists; refusing overwrite"
+          }
+          # A real Windows Shell dialog can block in noninteractive CI.
+          # Kill its independent process instead of hanging or retrying an
+          # ambiguous deletion. The generated fixture remains disposable.
+          $arguments = ('"{0}" --duplicate-shell-probe "{1}"' -f $runner, $report)
+          $p = Start-Process -FilePath "dotnet" -ArgumentList $arguments -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (-not $p.WaitForExit(25000)) {
+            try { $p.Kill($true) } catch { }
+            $p.WaitForExit(5000) | Out-Null
+            @{
+              Schema = 1
+              Verdict = "INCONCLUSIVE_TIMEOUT_MANUAL_REVIEW"
+              RealShellAttempted = $false
+              RecyclePairIndependentlyVerified = $false
+              KeeperUnchanged = $false
+              OriginalCandidatePathRemainsAbsent = $false
+              SecondCandidateRestoredToOriginalPath = $false
+              ProductMutationEnabled = $false
+              RealUserFilesTouched = $false
+              Reason = "Hosted Windows Shell did not finish; process killed without retry"
+            } | ConvertTo-Json | Set-Content -LiteralPath $report -Encoding utf8
+            Write-Warning "Real Recycle Bin did not finish in unattended CI. This is INCONCLUSIVE, not PASS."
+          }
+          if (-not (Test-Path -LiteralPath $report)) {
+            if (Test-Path $stderr) { Get-Content $stderr | Select-Object -Last 25 }
+            throw "Real-Shell probe produced no durable verdict"
+          }
+          $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($result.Schema -ne 1 -or
+              $result.ProductMutationEnabled -ne $false -or
+              $result.RealUserFilesTouched -ne $false -or
+              $result.Verdict -notin @(
+                "VERIFIED_SYNTHETIC_RECYCLE_PAIR",
+                "INCONCLUSIVE_MANUAL_REVIEW",
+                "INCONCLUSIVE_TIMEOUT_MANUAL_REVIEW"
+              )) {
+            throw "Generated Shell probe reported a safety failure or invalid evidence"
+          }
+          if ($result.Verdict -eq "VERIFIED_SYNTHETIC_RECYCLE_PAIR") {
+            if ($result.RecyclePairIndependentlyVerified -ne $true -or
+                $result.KeeperUnchanged -ne $true -or
+                $result.OriginalCandidatePathRemainsAbsent -ne $true -or
+                $result.SecondCandidateRestoredToOriginalPath -ne $true) {
+              throw "Shell proof claimed success without full synthetic E2E evidence"
+            }
+            Write-Host "Real Windows Shell synthetic index/payload evidence VERIFIED (not product unlock)"
+          } else {
+            Write-Warning "Real Windows Shell acceptance INCONCLUSIVE. G5-04/06 stay open."
+          }
+          Get-Content -LiteralPath $report
+          if (Test-Path $stdout) { Get-Content $stdout | Select-Object -Last 12 }
+
       - name: Verify distributable jpegtran SHA-256 and upstream license
         if: steps.source.outputs.mode == 'tree'
         shell: pwsh

@@ -175,6 +175,41 @@ internal static class UiInteractionSmoke
                 "UI: duplicate cleanup preview preserves existing nested collection, memo and source hashes");
 
 
+            // The real product review screen performs read-only revalidation
+            // through an actual routed WPF Button.Click and async dispatcher.
+            // A passing preflight NEVER unlocks the delete/recycle button.
+            var reviewType = typeof(MainWindow).Assembly.GetType(
+                "ChappyStorageCompressor.DuplicateCleanupReviewWindow",
+                throwOnError: true)!;
+            var reviewWindow = (Window)Activator.CreateInstance(reviewType,
+                BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null,
+                args: new object[] { nestedCleanup, allFileResult.Groups[0] },
+                culture: null)!;
+            var preflightButton = (Button)reviewType.GetField("_preflightButton",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
+            var recycleButton = (Button)reviewType.GetField("_deleteButton",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
+            var preflightStatus = (TextBlock)reviewType.GetField("_summary",
+                BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(reviewWindow)!;
+            Require(preflightButton.IsEnabled && !recycleButton.IsEnabled &&
+                    reviewWindow.Title.Contains("未実行", StringComparison.Ordinal),
+                "UI: final review is available but direct recycle action stays locked");
+            reviewWindow.Show();
+            preflightButton.RaiseEvent(new RoutedEventArgs(
+                ButtonBase.ClickEvent, preflightButton));
+            Require(!preflightButton.IsEnabled && !recycleButton.IsEnabled,
+                "UI: asynchronous final preflight disables repeat launch and never unlocks recycle");
+            PumpUntil(() => preflightButton.IsEnabled, TimeSpan.FromSeconds(20));
+            Require(preflightStatus.Text.Contains("直前再照合合格", StringComparison.Ordinal) &&
+                    !recycleButton.IsEnabled &&
+                    OracleHash(textFile) == originalTextSha &&
+                    OracleHash(binaryFile) == originalBinSha &&
+                    !Directory.Exists(Path.Combine(existingCollection, "同名ファイル")) &&
+                    !File.Exists(Path.Combine(allFileRoot, "同名ファイル一覧 (1).txt")),
+                "UI: routed final preflight checks full bytes and preserves every original file");
+            reviewWindow.Close();
+
             string originals = Path.Combine(testRoot, "synthetic-originals");
             Directory.CreateDirectory(originals);
             string left = Path.Combine(originals, "test-a.mp4");

@@ -146,8 +146,31 @@ jobs:
           # 657E1252676CFB26A008835C20A760F731C8E0414469A4ED0F83F0FB059CDD35.
           # Refuse a different installed version.
           choco install nasm --version=2.16.3 --yes --no-progress --limit-output
-          if ($LASTEXITCODE -ne 0) { throw "Pinned NASM assembler setup failed" }
+          $fallbackDir = Join-Path $env:RUNNER_TEMP "chappy-verified-nasm-2.16.03"
+          if ($LASTEXITCODE -ne 0) {
+            # Chocolatey's community API can return 504. Download the SAME
+            # official NASM installer directly, verifying the fixed SHA-256
+            # also recorded in microsoft/winget-pkgs NASM.NASM 2.16.03.
+            $url = "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-installer-x64.exe"
+            $expectedSha = "657E1252676CFB26A008835C20A760F731C8E0414469A4ED0F83F0FB059CDD35"
+            $installer = Join-Path $env:RUNNER_TEMP "chappy-nasm-2.16.03-installer-x64.exe"
+            Invoke-WebRequest -Uri $url -OutFile $installer -MaximumRedirection 5 -ErrorAction Stop
+            $actualSha = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash
+            if ($actualSha -ne $expectedSha) {
+              throw "Pinned official NASM installer SHA-256 mismatch"
+            }
+            New-Item -ItemType Directory -Path $fallbackDir -Force | Out-Null
+            # Nullsoft /D destination is the final unquoted command argument.
+            $installed = Start-Process -FilePath $installer -ArgumentList @(
+              "/S", "/D=$fallbackDir"
+            ) -Wait -PassThru
+            if ($installed.ExitCode -ne 0) {
+              throw "Verified official NASM silent install failed"
+            }
+            Write-Host "Official NASM installer verified by SHA-256 and installed as CI-only tool"
+          }
           $nasm = @(
+            (Join-Path $fallbackDir "nasm.exe"),
             "C:\Program Files\NASM\nasm.exe",
             "C:\Program Files (x86)\NASM\nasm.exe",
             "C:\ProgramData\chocolatey\bin\nasm.exe"

@@ -322,6 +322,9 @@ internal sealed class DuplicateCleanupReviewWindow : Window
                 _preflightButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
                 _loadReviewButton.IsEnabled = _plan.DeleteCandidates.Count <= 1000;
                 foreach (var item in _choices) item.Box.IsEnabled = true;
+#if CHAPPY_TESTING
+                SyntheticRefresh();
+#endif
             }
         }
     }

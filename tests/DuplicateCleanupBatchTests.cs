@@ -70,6 +70,40 @@ internal static class DuplicateCleanupBatchTests
               plan.ReportRelativePath == "同名ファイル一覧 (1).txt",
             "A: existing collision collection and memo trigger nesting and report numbering");
 
+        // Production-readable final preflight is explicitly NON-MUTATING.
+        // It checks keeper and every candidate, even when the UI has checked
+        // only one candidate. Passing it can never authorize a file move.
+        var previewPass = DuplicateCleanupPreflight.Check(plan, group,
+            new[] { plan.DeleteCandidates[0].OriginalPath },
+            CancellationToken.None);
+        check(previewPass.Passed && previewPass.KeeperVerified &&
+              previewPass.CheckedCount == 1 &&
+              previewPass.VerifiedCount == 2 &&
+              previewPass.Candidates.Count == 2 &&
+              previewPass.Candidates.Single(x => x.CheckedByUser).VerifiedNow &&
+              !previewPass.CanMoveOrDelete &&
+              !DuplicateCleanupPreflight.CanModifyUserFiles &&
+              group.Files.All(x => File.Exists(x.Path)),
+            "C: final user review checks all original bytes but never grants mutation rights");
+        var zeroSelected = DuplicateCleanupPreflight.Check(plan, group,
+            Array.Empty<string>(), CancellationToken.None);
+        check(zeroSelected.Passed && zeroSelected.CheckedCount == 0 &&
+              zeroSelected.VerifiedCount == plan.DeleteCandidates.Count &&
+              !zeroSelected.CanMoveOrDelete,
+            "C: unchecked candidates are still verified, not marked for deletion");
+
+        string insertedCollision = Path.Combine(root, plan.CollectionRelativePath);
+        Directory.CreateDirectory(insertedCollision); // generated fixture only
+        var changedPlan = DuplicateCleanupPreflight.Check(plan, group,
+            new[] { plan.DeleteCandidates[0].OriginalPath },
+            CancellationToken.None);
+        check(!changedPlan.Passed && changedPlan.Summary.Contains("整理先",
+                  StringComparison.Ordinal) &&
+              !changedPlan.CanMoveOrDelete &&
+              File.Exists(plan.KeeperPath),
+            "C: a newly occupied collection folder invalidates earlier read-only plan");
+        Directory.Delete(insertedCollision);
+
         string id = DuplicateCleanupWorkflow.BeginSynthetic(testRoot, plan, group);
         check(group.Files.All(f => File.Exists(f.Path)) &&
               !File.Exists(Path.Combine(root, plan.ReportRelativePath)) &&
@@ -499,6 +533,14 @@ internal static class DuplicateCleanupBatchTests
         string denied = CreateRoot(testRoot, "stale-source", 2);
         var (deniedPlan, deniedGroup, deniedKeep, _) = Scan(denied);
         File.AppendAllText(deniedPlan.DeleteCandidates[0].OriginalPath, "changed");
+        var staleReview = DuplicateCleanupPreflight.Check(deniedPlan, deniedGroup,
+            new[] { deniedPlan.DeleteCandidates[0].OriginalPath },
+            CancellationToken.None);
+        check(!staleReview.Passed && staleReview.VerifiedCount == 0 &&
+              staleReview.CheckedCount == 1 &&
+              !staleReview.CanMoveOrDelete &&
+              File.Exists(deniedKeep.Path),
+            "C: post-scan candidate modification blocks review and never changes keeper");
         expectThrows(() => DuplicateCleanupWorkflow.BeginSynthetic(
             testRoot, deniedPlan, deniedGroup),
             "A: changed source after scan rejects journal start and does not stage data");

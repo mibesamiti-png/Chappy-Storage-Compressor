@@ -130,6 +130,49 @@ public static class DuplicateCleanupWorkflow
         Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".restore-intent.json");
     private static string RestoreReceiptPath(string root, string id, int index) =>
         Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") + ".restored.json");
+    // Existing restore-intent and receipt filenames are unchanged. These typed
+    // projections verify recorded data, not just the existence of JSON files.
+    private sealed record RestoreMarker(int Schema, string Id, int Index,
+        string SourcePath, string DestinationPath, string Sha256);
+    private static bool ValidRestoreIntent(string root, string id, int index, Candidate candidate)
+    {
+        string path = RestoreIntentPath(root, id, index);
+        if (!File.Exists(path)) return false;
+        try
+        {
+            var marker = JsonSerializer.Deserialize<RestoreMarker>(File.ReadAllBytes(path));
+            if (marker is null || marker.Schema != 1 || marker.Id != id ||
+                marker.Index != index ||
+                !string.Equals(marker.SourcePath, candidate.SourcePath,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(marker.DestinationPath, candidate.DestinationPath,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(marker.Sha256, candidate.Original.Sha256,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Restore intent does not match immutable cleanup plan");
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Restore intent is invalid JSON", ex);
+        }
+    }
+    private static bool ValidRestoreReceipt(string root, string id, int index, Candidate candidate)
+    {
+        string path = RestoreReceiptPath(root, id, index);
+        if (!File.Exists(path)) return false;
+        try
+        {
+            var recorded = JsonSerializer.Deserialize<FileEvidence>(File.ReadAllBytes(path));
+            if (recorded != candidate.Original)
+                throw new InvalidDataException("Restore receipt does not match immutable original");
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            throw new InvalidDataException("Restore receipt is invalid JSON", ex);
+        }
+    }
     private static string ReviewPath(string root, string id, int index, int seq) =>
         Path.Combine(EvidenceDir(root), id + ".item-" + index.ToString("D4") +
             ".review-" + seq.ToString("D4") + ".json");
@@ -278,7 +321,8 @@ public static class DuplicateCleanupWorkflow
 
     private static bool StagedAndValid(Intent x, Candidate c)
     {
-        return !File.Exists(c.SourcePath) && Matches(c.Original, c.DestinationPath);
+        return !File.Exists(c.SourcePath) && !Directory.Exists(c.SourcePath) &&
+            Matches(c.Original, c.DestinationPath);
     }
 
     private static bool ValidStageReceipt(string root, string id, int index, Candidate c)
@@ -344,7 +388,8 @@ public static class DuplicateCleanupWorkflow
                 throw new InvalidDataException("Staged receipt no longer matches the file");
             return;
         }
-        if (!File.Exists(c.SourcePath) && Matches(c.Original, c.DestinationPath))
+        if (!File.Exists(c.SourcePath) && !Directory.Exists(c.SourcePath) &&
+            Matches(c.Original, c.DestinationPath))
         {
             // The process may have died exactly after rename and before receipt.
             // Recover by verified ID+metadata+SHA, never by filename alone.
@@ -680,17 +725,21 @@ public static class DuplicateCleanupWorkflow
             throw new InvalidDataException("Stage/report evidence is missing or altered");
         string intent = RestoreIntentPath(root, id, index);
         string receipt = RestoreReceiptPath(root, id, index);
+        // Never promote a corrupted or foreign restore intent/receipt to
+        // an idempotent success or an interrupted-rename recovery.
+        bool restoreIntentValid = ValidRestoreIntent(root, id, index, c);
+        bool restoreReceiptValid = ValidRestoreReceipt(root, id, index, c);
         bool originalMatches = Matches(c.Original, c.SourcePath);
         bool stageMatches = StagedAndValid(x, c);
-        if (File.Exists(receipt))
+        if (restoreReceiptValid)
         {
-            if (!File.Exists(intent) || !originalMatches ||
-                File.Exists(c.DestinationPath))
+            if (!restoreIntentValid || !originalMatches ||
+                File.Exists(c.DestinationPath) || Directory.Exists(c.DestinationPath))
                 throw new InvalidDataException("Restored receipt conflicts with current NTFS file");
             return;
         }
-        if (File.Exists(intent) && originalMatches &&
-            !File.Exists(c.DestinationPath))
+        if (restoreIntentValid && originalMatches &&
+            !File.Exists(c.DestinationPath) && !Directory.Exists(c.DestinationPath))
         {
             // Recovery of a verified rename interrupted before its receipt.
             DurableJson(receipt, c.Original);
@@ -711,12 +760,9 @@ public static class DuplicateCleanupWorkflow
             !Safety.ByteEqual(x.Keeper.Path, c.DestinationPath,
                 CancellationToken.None))
             throw new InvalidDataException("Staged file/keeper changed before restoration");
-        if (!File.Exists(intent))
-            DurableJson(intent, new
-            {
-                Schema = 1, Id = id, Index = index,
-                c.SourcePath, c.DestinationPath, c.Original.Sha256
-            });
+        if (!restoreIntentValid)
+            DurableJson(intent, new RestoreMarker(1, id, index,
+                c.SourcePath, c.DestinationPath, c.Original.Sha256));
         checkpoint?.Invoke("after-restore-intent-before-rename");
 
         using var pinned = NativeFile.PinnedFile.Open(c.DestinationPath,
@@ -744,6 +790,17 @@ public static class DuplicateCleanupWorkflow
             bool doneRecycle = File.Exists(TrashReceiptPath(root, id, i));
             bool restoreIntent = File.Exists(RestoreIntentPath(root, id, i));
             bool restored = File.Exists(RestoreReceiptPath(root, id, i));
+            bool restoreEvidenceValid = true;
+            try
+            {
+                if (restoreIntent) _ = ValidRestoreIntent(root, id, i, c);
+                if (restored) _ = ValidRestoreReceipt(root, id, i, c);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or IOException or
+                UnauthorizedAccessException)
+            {
+                restoreEvidenceValid = false;
+            }
             bool originalValid = Matches(c.Original, c.SourcePath);
             bool stagedValid = StagedAndValid(x, c);
             bool reviewed = Review(x, i).Confirmed;
@@ -771,8 +828,9 @@ public static class DuplicateCleanupWorkflow
                             : !stagedReceipt && stagedValid
                                 ? "InterruptedAfterStageRecoverable"
                                 : "ManualReview";
-            // A stale keeper always prevents all further mutation.
-            if (!Matches(x.Keeper, x.Keeper.Path)) state = "ManualReview";
+            // Stale evidence or keeper cannot become a completed restoration.
+            if (!restoreEvidenceValid || !Matches(x.Keeper, x.Keeper.Path))
+                state = "ManualReview";
             return new Status(i, state, c.SourcePath, c.DestinationPath,
                 reviewed, "This synthetic status is not permission for product deletion.");
         }).ToArray();

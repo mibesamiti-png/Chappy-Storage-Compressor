@@ -163,10 +163,10 @@ internal static class DuplicateCleanupBatchTests
         catch (IOException) { crashSeen = true; }
         var first = plan.DeleteCandidates[0];
         string staged0 = Path.Combine(root, first.ProposedCollectionRelativePath);
-        var staleReview = DuplicateCleanupReviewStore.LoadSynthetic(
+        var staleSavedChecklist = DuplicateCleanupReviewStore.LoadSynthetic(
             plan, group, testRoot, CancellationToken.None);
-        check(staleReview.Exists && !staleReview.Valid &&
-              staleReview.CheckedPaths.Count == 0,
+        check(staleSavedChecklist.Exists && !staleSavedChecklist.Valid &&
+              staleSavedChecklist.CheckedPaths.Count == 0,
             "C: persisted review cannot be reinstated after original candidate is staged");
         var interrupted = DuplicateCleanupWorkflow.InspectSynthetic(testRoot, root, id);
         check(crashSeen && !File.Exists(first.OriginalPath) &&

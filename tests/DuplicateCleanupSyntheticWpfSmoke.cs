@@ -45,6 +45,11 @@ internal static class DuplicateCleanupSyntheticWpfSmoke
 
     private static void RunSta(string testParent, Action<bool, string> check)
     {
+        // Unlike an Application.Run message loop, this standalone console
+        // test has no SynchronizationContext by default. An async WPF click
+        // must always resume on its owning STA dispatcher, never a worker.
+        SynchronizationContext.SetSynchronizationContext(
+            new DispatcherSynchronizationContext(Dispatcher.CurrentDispatcher));
         string parent = Path.Combine(testParent,
             "ChappyStorageSmoke_DuplicateWpf_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(parent);

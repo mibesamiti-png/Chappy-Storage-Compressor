@@ -92,6 +92,26 @@ internal static class DuplicateCleanupBatchTests
               !zeroSelected.CanMoveOrDelete,
             "C: unchecked candidates are still verified, not marked for deletion");
 
+        // Even a read-only review must not accept a forged size estimate or
+        // candidate metadata from an old UI plan, despite unchanged file bytes.
+        var falsifiedTotal = plan with
+        {
+            LogicalCandidateBytes = checked(plan.LogicalCandidateBytes + 1)
+        };
+        var falsifiedCandidate = plan with
+        {
+            DeleteCandidates = plan.DeleteCandidates.Select((item, index) =>
+                index == 0 ? item with
+                {
+                    OriginalBytes = checked(item.OriginalBytes + 1)
+                } : item).ToArray()
+        };
+        check(!DuplicateCleanupPreflight.Check(falsifiedTotal, group,
+                  Array.Empty<string>(), CancellationToken.None).Passed &&
+              !DuplicateCleanupPreflight.Check(falsifiedCandidate, group,
+                  Array.Empty<string>(), CancellationToken.None).Passed,
+            "C: altered display totals or per-file sizes invalidate the saved scan plan");
+
         string insertedCollision = Path.Combine(root, plan.CollectionRelativePath);
         Directory.CreateDirectory(insertedCollision); // generated fixture only
         var changedPlan = DuplicateCleanupPreflight.Check(plan, group,
@@ -609,6 +629,41 @@ internal static class DuplicateCleanupBatchTests
               Directory.GetFileSystemEntries(denied)
                 .All(x => Path.GetFileName(x) != ".chappy-cleanup-evidence"),
             "A: stale-plan rejection leaves no orphan cleanup evidence");
+
+        // Regression: replacing a scanned name with an independently allocated
+        // NTFS file containing the SAME bytes/hash must not allow staging.
+        // Test both the selected keeper and the candidate with unchanged content.
+        foreach (bool swapKeeper in new[] { false, true })
+        {
+            string swappedRoot = CreateRoot(testRoot,
+                swapKeeper ? "swapped-keeper-same-hash" : "swapped-candidate-same-hash", 2);
+            var (swappedPlan, swappedGroup, _, swappedHash) = Scan(swappedRoot);
+            string original = swapKeeper ? swappedPlan.KeeperPath :
+                swappedPlan.DeleteCandidates[0].OriginalPath;
+            var scannedIdentity = swappedGroup.Files.Single(f =>
+                string.Equals(f.Path, original, StringComparison.OrdinalIgnoreCase)).Identity;
+            string replacement = original + ".separate-id";
+            File.Copy(original, replacement);
+            check(!NativeFile.GetIdentity(replacement).SameFile(scannedIdentity),
+                "A: replacement fixture has a distinct NTFS ID before source swap");
+            File.Delete(original); // disposable smoke fixture only
+            File.Move(replacement, original);
+            check(Hash(original) == swappedHash &&
+                  !NativeFile.GetIdentity(original).SameFile(scannedIdentity),
+                "A: scanned path now contains byte-exact foreign NTFS identity");
+            var swappedReview = DuplicateCleanupPreflight.Check(
+                swappedPlan, swappedGroup, Array.Empty<string>(), CancellationToken.None);
+            check(!swappedReview.Passed && !swappedReview.CanMoveOrDelete,
+                "A: read-only preflight refuses a same-hash foreign NTFS ID");
+            expectThrows(() => DuplicateCleanupWorkflow.BeginSynthetic(
+                testRoot, swappedPlan, swappedGroup),
+                "A: cleanup intent cannot start for replaced same-hash scan ID");
+            check(!Directory.Exists(Path.Combine(swappedRoot,
+                      ".chappy-cleanup-evidence")) &&
+                  File.Exists(swappedPlan.KeeperPath) &&
+                  File.Exists(swappedPlan.DeleteCandidates[0].OriginalPath),
+                "A: refused same-hash substitution leaves original names and no intent");
+        }
 
         // Never allow the generated test API on ordinary folders without a
         // sentinel and a unique temporary root.

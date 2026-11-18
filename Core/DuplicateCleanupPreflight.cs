@@ -115,6 +115,9 @@ public static class DuplicateCleanupPreflight
                 root, scannedGroup, plan.KeeperPath);
             if (!string.Equals(currentPlan.KeeperPath, plan.KeeperPath,
                     StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(currentPlan.KeeperRelativePath, plan.KeeperRelativePath,
+                    StringComparison.OrdinalIgnoreCase) ||
+                currentPlan.LogicalCandidateBytes != plan.LogicalCandidateBytes ||
                 !string.Equals(currentPlan.CollectionRelativePath,
                     plan.CollectionRelativePath, StringComparison.OrdinalIgnoreCase) ||
                 !string.Equals(currentPlan.ReportRelativePath,
@@ -126,7 +129,13 @@ public static class DuplicateCleanupPreflight
                         StringComparison.OrdinalIgnoreCase) ||
                     !string.Equals(item.ProposedCollectionRelativePath,
                         plan.DeleteCandidates[index].ProposedCollectionRelativePath,
-                        StringComparison.OrdinalIgnoreCase)).Any())
+                        StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(item.OriginalRelativePath,
+                        plan.DeleteCandidates[index].OriginalRelativePath,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    item.OriginalBytes != plan.DeleteCandidates[index].OriginalBytes ||
+                    !string.Equals(item.Reason,
+                        plan.DeleteCandidates[index].Reason, StringComparison.Ordinal)).Any())
                 return Fail(plan, selected, "整理先・連番・一覧メモの予定が変わりました");
         }
         catch (OperationCanceledException) { throw; }

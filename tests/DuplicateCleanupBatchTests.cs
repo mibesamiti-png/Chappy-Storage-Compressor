@@ -104,6 +104,49 @@ internal static class DuplicateCleanupBatchTests
             "C: a newly occupied collection folder invalidates earlier read-only plan");
         Directory.Delete(insertedCollision);
 
+        // Product-visible durable review, not product delete authority.
+        // All metadata writes are redirected to this owned smoke fixture.
+        var initiallyEmpty = DuplicateCleanupReviewStore.LoadSynthetic(
+            plan, group, testRoot, CancellationToken.None);
+        check(!initiallyEmpty.Exists && initiallyEmpty.Valid &&
+              initiallyEmpty.CheckedPaths.Count == 0 &&
+              !DuplicateCleanupReviewStore.CanMoveOrDeleteFiles,
+            "C: no saved reviews means no granted action or implicit confirmation");
+
+        string firstChecked = plan.DeleteCandidates[0].OriginalPath;
+        var savedReview = DuplicateCleanupReviewStore.SaveSynthetic(
+            plan, group, new[] { firstChecked }, testRoot, CancellationToken.None);
+        var loadedReview = DuplicateCleanupReviewStore.LoadSynthetic(
+            plan, group, testRoot, CancellationToken.None);
+        check(savedReview.Valid && loadedReview.Exists && loadedReview.Valid &&
+              loadedReview.CheckedPaths.SequenceEqual(new[] { firstChecked }) &&
+              !savedReview.CanMoveOrDelete && !loadedReview.CanMoveOrDelete &&
+              File.Exists(firstChecked) && Safety.SameSnapshot(keeper) &&
+              !Directory.Exists(Path.Combine(root, plan.CollectionRelativePath)),
+            "C: explicitly saved per-file metadata survives independent reload without moving source");
+
+        var revoked = DuplicateCleanupReviewStore.SaveSynthetic(
+            plan, group, Array.Empty<string>(), testRoot, CancellationToken.None);
+        check(revoked.Valid && DuplicateCleanupReviewStore.LoadSynthetic(
+                  plan, group, testRoot, CancellationToken.None).CheckedPaths.Count == 0,
+            "C: revoking every saved checkbox persists and grants no delete authority");
+        DuplicateCleanupReviewStore.SaveSynthetic(
+            plan, group, new[] { firstChecked }, testRoot, CancellationToken.None);
+        string reviewFile = Directory.EnumerateFiles(
+            Path.Combine(testRoot, "review-metadata-only"), "*.review.json").Single();
+        File.WriteAllText(reviewFile, "{}"); // generated metadata only
+        var invalidReview = DuplicateCleanupReviewStore.LoadSynthetic(
+            plan, group, testRoot, CancellationToken.None);
+        check(invalidReview.Exists && !invalidReview.Valid &&
+              invalidReview.CheckedPaths.Count == 0 &&
+              File.Exists(keeper.Path) && File.Exists(firstChecked),
+            "C: malformed persistent check record never restores consent or changes files");
+        DuplicateCleanupReviewStore.SaveSynthetic(
+            plan, group, new[] { firstChecked }, testRoot, CancellationToken.None);
+        check(DuplicateCleanupReviewStore.LoadSynthetic(
+                  plan, group, testRoot, CancellationToken.None).Valid,
+            "C: explicit new revalidation can safely overwrite app-generated review metadata");
+
         string id = DuplicateCleanupWorkflow.BeginSynthetic(testRoot, plan, group);
         check(group.Files.All(f => File.Exists(f.Path)) &&
               !File.Exists(Path.Combine(root, plan.ReportRelativePath)) &&
@@ -120,6 +163,11 @@ internal static class DuplicateCleanupBatchTests
         catch (IOException) { crashSeen = true; }
         var first = plan.DeleteCandidates[0];
         string staged0 = Path.Combine(root, first.ProposedCollectionRelativePath);
+        var staleSavedChecklist = DuplicateCleanupReviewStore.LoadSynthetic(
+            plan, group, testRoot, CancellationToken.None);
+        check(staleSavedChecklist.Exists && !staleSavedChecklist.Valid &&
+              staleSavedChecklist.CheckedPaths.Count == 0,
+            "C: persisted review cannot be reinstated after original candidate is staged");
         var interrupted = DuplicateCleanupWorkflow.InspectSynthetic(testRoot, root, id);
         check(crashSeen && !File.Exists(first.OriginalPath) &&
               File.Exists(staged0) &&

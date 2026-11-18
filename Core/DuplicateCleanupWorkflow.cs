@@ -223,6 +223,18 @@ public static class DuplicateCleanupWorkflow
         using var lease = MutationLease.Acquire();
         string root = OwnedRoot(testRoot, plan.Root);
         ExistingEvidenceIsEmpty(root);
+        // Bind the transaction to the ORIGINAL scan snapshots before writing
+        // any intent. A foreign file can have identical bytes/SHA but a
+        // different NTFS FileIndex after the user has finished reviewing.
+        // The existing product read-only verifier checks every candidate,
+        // including unchecked ones, plus keeper, ACL and proposed destinations.
+        var preflight = DuplicateCleanupPreflight.Check(plan, group,
+            Array.Empty<string>(), CancellationToken.None);
+        if (!preflight.Passed || !preflight.KeeperVerified ||
+            preflight.VerifiedCount != plan.DeleteCandidates.Count ||
+            preflight.CheckedCount != 0 || preflight.CanMoveOrDelete)
+            throw new InvalidDataException(
+                "Cleanup scan identity or collection plan changed; re-scan before staging");
         var fresh = DuplicateCleanupPreview.Inspect(root, group, plan.KeeperPath);
         if (fresh.CollectionRelativePath != plan.CollectionRelativePath ||
             fresh.ReportRelativePath != plan.ReportRelativePath ||

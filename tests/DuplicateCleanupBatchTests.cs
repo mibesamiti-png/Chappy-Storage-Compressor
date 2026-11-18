@@ -665,6 +665,108 @@ internal static class DuplicateCleanupBatchTests
                 "A: refused same-hash substitution leaves original names and no intent");
         }
 
+        // Resume/Undo evidence is an assertion about an EXACT staged/original
+        // identity. Corrupt JSON must not be accepted solely by filename.
+        string receiptRoot = CreateRoot(testRoot, "restore-record-integrity", 2);
+        var (receiptPlan, receiptGroup, receiptKeeper, receiptHash) = Scan(receiptRoot);
+        string receiptId = DuplicateCleanupWorkflow.BeginSynthetic(
+            testRoot, receiptPlan, receiptGroup);
+        DuplicateCleanupWorkflow.StageSynthetic(testRoot, receiptRoot, receiptId, 0);
+        DuplicateCleanupWorkflow.WriteReportSynthetic(testRoot, receiptRoot, receiptId);
+        DuplicateCleanupWorkflow.RestoreSynthetic(testRoot, receiptRoot, receiptId, 0);
+        string receiptOriginal = receiptPlan.DeleteCandidates[0].OriginalPath;
+        check(DuplicateCleanupWorkflow.InspectSynthetic(
+                  testRoot, receiptRoot, receiptId)[0].State == "RestoredOriginal" &&
+              Hash(receiptOriginal) == receiptHash,
+            "C: verified restore intent and receipt support idempotent completed state");
+        string receiptFolder = Path.Combine(receiptRoot, ".chappy-cleanup-evidence");
+        string restoreIntentRecord = Path.Combine(
+            receiptFolder, receiptId + ".item-0000.restore-intent.json");
+        string restoredRecord = Path.Combine(
+            receiptFolder, receiptId + ".item-0000.restored.json");
+        byte[] validIntentBytes = File.ReadAllBytes(restoreIntentRecord);
+        File.WriteAllText(restoreIntentRecord, "{}"); // generated journal corruption
+        expectThrows(() => DuplicateCleanupWorkflow.RestoreSynthetic(
+            testRoot, receiptRoot, receiptId, 0),
+            "C: malformed restore intent cannot authorize already-restored success");
+        check(DuplicateCleanupWorkflow.InspectSynthetic(
+                  testRoot, receiptRoot, receiptId)[0].State == "ManualReview" &&
+              Hash(receiptOriginal) == receiptHash && Safety.SameSnapshot(receiptKeeper),
+            "C: corrupted restore intent forces manual review without changing original");
+        File.WriteAllBytes(restoreIntentRecord, validIntentBytes);
+        File.WriteAllText(restoredRecord, "{}"); // generated receipt corruption
+        expectThrows(() => DuplicateCleanupWorkflow.RestoreSynthetic(
+            testRoot, receiptRoot, receiptId, 0),
+            "C: malformed completed restore receipt is not treated as an idempotent success");
+        check(DuplicateCleanupWorkflow.InspectSynthetic(
+                  testRoot, receiptRoot, receiptId)[0].State == "ManualReview" &&
+              Hash(receiptOriginal) == receiptHash && Safety.SameSnapshot(receiptKeeper),
+            "C: corrupted completed receipt cannot promote an unverified restored state");
+
+        // A foreign DIRECTORY at the vacated original name is occupancy too.
+        // Never treat File.Exists(false) alone as proof the source name is free.
+        string occupiedDirectoryRoot = CreateRoot(testRoot, "directory-occupies-origin", 2);
+        var (directoryPlan, directoryGroup, directoryKeeper, directoryHash) =
+            Scan(occupiedDirectoryRoot);
+        string directoryId = DuplicateCleanupWorkflow.BeginSynthetic(
+            testRoot, directoryPlan, directoryGroup);
+        DuplicateCleanupWorkflow.StageSynthetic(
+            testRoot, occupiedDirectoryRoot, directoryId, 0);
+        DuplicateCleanupWorkflow.WriteReportSynthetic(
+            testRoot, occupiedDirectoryRoot, directoryId);
+        string directoryOrigin = directoryPlan.DeleteCandidates[0].OriginalPath;
+        string directoryStage = Path.Combine(occupiedDirectoryRoot,
+            directoryPlan.DeleteCandidates[0].ProposedCollectionRelativePath);
+        Directory.CreateDirectory(directoryOrigin); // generated foreign occupant only
+        check(DuplicateCleanupWorkflow.InspectSynthetic(
+                  testRoot, occupiedDirectoryRoot, directoryId)[0].State == "ManualReview",
+            "C: foreign directory at the original name invalidates staged status");
+        expectThrows(() => DuplicateCleanupWorkflow.ConfirmSynthetic(
+            testRoot, occupiedDirectoryRoot, directoryId, 0, true),
+            "C: confirmation refuses a folder occupying the original file name");
+        expectThrows(() => DuplicateCleanupWorkflow.RecycleSimulatedSynthetic(
+            testRoot, occupiedDirectoryRoot, directoryId, 0),
+            "C: synthetic recycle refuses a folder at the original name");
+        expectThrows(() => DuplicateCleanupWorkflow.RestoreSynthetic(
+            testRoot, occupiedDirectoryRoot, directoryId, 0),
+            "C: restore refuses an occupied original file name without deleting occupant");
+        check(Directory.Exists(directoryOrigin) &&
+              File.Exists(directoryStage) && Hash(directoryStage) == directoryHash &&
+              Safety.SameSnapshot(directoryKeeper),
+            "C: foreign original-name directory and staged original remain intact");
+        Directory.Delete(directoryOrigin); // generated test occupant only
+        DuplicateCleanupWorkflow.RestoreSynthetic(
+            testRoot, occupiedDirectoryRoot, directoryId, 0);
+        check(DuplicateCleanupWorkflow.InspectSynthetic(
+                  testRoot, occupiedDirectoryRoot, directoryId)[0].State == "RestoredOriginal",
+            "C: verified restore resumes after external test occupant is explicitly cleared");
+
+        string orphanDirectoryRoot = CreateRoot(testRoot, "directory-before-stage-receipt", 2);
+        var (orphanPlan, orphanGroup, orphanKeeper, orphanHash) = Scan(orphanDirectoryRoot);
+        string orphanId = DuplicateCleanupWorkflow.BeginSynthetic(
+            testRoot, orphanPlan, orphanGroup);
+        bool interruptedStage = false;
+        try
+        {
+            DuplicateCleanupWorkflow.StageSynthetic(
+                testRoot, orphanDirectoryRoot, orphanId, 0,
+                checkpoint: _ => throw new IOException("injected stage receipt interruption"));
+        }
+        catch (IOException) { interruptedStage = true; }
+        string orphanOriginal = orphanPlan.DeleteCandidates[0].OriginalPath;
+        string orphanStaged = Path.Combine(orphanDirectoryRoot,
+            orphanPlan.DeleteCandidates[0].ProposedCollectionRelativePath);
+        Directory.CreateDirectory(orphanOriginal); // generated test occupant only
+        expectThrows(() => DuplicateCleanupWorkflow.StageSynthetic(
+            testRoot, orphanDirectoryRoot, orphanId, 0),
+            "C: interrupted stage cannot fabricate a receipt with occupied original name");
+        check(interruptedStage && Directory.Exists(orphanOriginal) &&
+              File.Exists(orphanStaged) && Hash(orphanStaged) == orphanHash &&
+              !File.Exists(Path.Combine(orphanDirectoryRoot,
+                  ".chappy-cleanup-evidence", orphanId + ".item-0000.staged.json")) &&
+              Safety.SameSnapshot(orphanKeeper),
+            "C: occupied original stops recovery before durable stage receipt is created");
+
         // Never allow the generated test API on ordinary folders without a
         // sentinel and a unique temporary root.
         expectThrows(() => DuplicateCleanupWorkflow.BeginSynthetic(

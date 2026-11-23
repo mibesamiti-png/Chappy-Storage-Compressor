@@ -115,12 +115,13 @@ public partial class MainWindow : Window
         BrowseButton.IsEnabled = !busy;
         ScanButton.IsEnabled = !busy;
         MergeButton.IsEnabled = false; // destructive merge remains permanently locked.
-        DedupePlanButton.IsEnabled = !busy && _lastScan is { Groups.Count: > 0 };
+        DedupePlanButton.IsEnabled = !busy && _lastScan is { DiscoveryOnly: false, Groups.Count: > 0 };
         SelectedMergeReviewButton.IsEnabled = !busy &&
-            _lastScan is not null && GroupsGrid.SelectedItems.Count > 0;
+            _lastScan is { DiscoveryOnly: false } && GroupsGrid.SelectedItems.Count > 0;
         GroupsGrid.IsEnabled = !busy;
-        CompletedLedgerButton.IsEnabled = !busy;
-        MediaReportButton.IsEnabled = !busy && _lastScan != null;
+        CompletedLedgerButton.IsEnabled = !busy && _lastScan?.DiscoveryOnly != true;
+        CleanupHistoryButton.IsEnabled = !busy && _lastScan?.DiscoveryOnly != true;
+        MediaReportButton.IsEnabled = !busy && _lastScan is { DiscoveryOnly: false };
         DetailsButton.IsEnabled = !busy && GroupsGrid.SelectedItems.Count == 1;
         StopButton.IsEnabled = busy;
         RecoveryButton.IsEnabled = !busy;
@@ -138,7 +139,8 @@ public partial class MainWindow : Window
         ReplacementReadinessButton.IsEnabled = !busy;
         CopyOnlyPreparationButton.IsEnabled = !busy;
         JpegRepairButton.IsEnabled = !busy;
-        StoreButton.IsEnabled = !busy;
+        StoreButton.IsEnabled = !busy && _lastScan?.DiscoveryOnly != true;
+        DiscoveryOnlyCheck.IsEnabled = !busy;
         MediaOnlyCheck.IsEnabled = !busy;
         TimeDifferenceCheck.IsEnabled = !busy;
         PathBox.IsEnabled = !busy;
@@ -156,6 +158,10 @@ public partial class MainWindow : Window
         MergeButton.IsEnabled = false;
         SelectedMergeReviewButton.IsEnabled = false;
         MediaReportButton.IsEnabled = false;
+        DedupePlanButton.IsEnabled = false;
+        SelectedMergeReviewButton.IsEnabled = false;
+        CompletedLedgerButton.IsEnabled = true;
+        CleanupHistoryButton.IsEnabled = true;
         DetailsButton.IsEnabled = false;
     }
 
@@ -167,7 +173,9 @@ public partial class MainWindow : Window
     private void OptionsChanged(object sender, RoutedEventArgs e)
     {
         if (!IsInitialized || _busy) return;
-        if (_lastScan != null && _lastScan.MediaOnly != (MediaOnlyCheck.IsChecked == true))
+        if (_lastScan != null &&
+            (_lastScan.MediaOnly != (MediaOnlyCheck.IsChecked == true) ||
+             (DiscoveryOnlyCheck.IsChecked == true && !_lastScan.DiscoveryOnly)))
         {
             ClearScan();
         }
@@ -179,7 +187,7 @@ public partial class MainWindow : Window
         if (MergeButton != null) MergeButton.IsEnabled = false; // R1.5: never enable from selection.
         if (SelectedMergeReviewButton != null)
             SelectedMergeReviewButton.IsEnabled = !_busy &&
-                _lastScan is not null && GroupsGrid.SelectedItems.Count > 0;
+                _lastScan is { DiscoveryOnly: false } && GroupsGrid.SelectedItems.Count > 0;
         if (DetailsButton != null) DetailsButton.IsEnabled = !_busy && GroupsGrid.SelectedItems.Count == 1;
     }
 
@@ -187,7 +195,7 @@ public partial class MainWindow : Window
     {
         using var dialog = new Forms.FolderBrowserDialog
         {
-            Description = "重複を探したいフォルダを選択してください（すべての通常ファイル形式に対応）",
+            Description = "重複検索：フォルダ／ドライブ直下を選択（exFAT・ドライブ全体は検索専用）",
             ShowNewFolderButton = false,
         };
         if (dialog.ShowDialog() == Forms.DialogResult.OK) PathBox.Text = dialog.SelectedPath;
@@ -195,16 +203,18 @@ public partial class MainWindow : Window
 
     private async void Scan_Click(object sender, RoutedEventArgs e)
     {
-        string root;
-        try { root = Safety.ValidateRoot(PathBox.Text); }
+        Safety.ScanTarget target;
+        try { target = Safety.ResolveScanTarget(PathBox.Text,
+            forceDiscovery: DiscoveryOnlyCheck.IsChecked == true); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "対象フォルダを確認", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
+        string root = target.Root;
         ClearScan();
         _lastRoot = root;
         _work = new CancellationTokenSource();
         Busy(true);
         JobProgress.IsIndeterminate = true; // Inventory has no known total.
         ProgressText.Text = "読み取り専用スキャン中";
-        Log("スキャン開始: " + root);
+        Log($"スキャン開始: {root}（{target.Format} / {(target.DiscoveryOnly ? "検索専用・操作不可" : "NTFS厳格検査")}）");
         bool mediaOnly = MediaOnlyCheck.IsChecked == true;
         var token = _work.Token;
         // Hash progress is separate from messages: no per-chunk log flood.
@@ -228,14 +238,17 @@ public partial class MainWindow : Window
         });
         try
         {
-            var result = await Task.Run(() => Scanner.Run(root, mediaOnly, progress,
-                token, hashProgress));
+            var result = await Task.Run(() => target.DiscoveryOnly
+                ? ReadOnlyDiscoveryScanner.Run(root, mediaOnly, progress, token, hashProgress)
+                : Scanner.Run(root, mediaOnly, progress, token, hashProgress));
             _lastScan = result;
             RefreshRows();
             ProgressText.Text = "スキャン完了";
             JobProgress.Value = 100;
             Log($"スキャン完了。検出 {result.FileCount:N0} 件、スキップ {result.Skipped:N0} 件、アクセス等のエラー {result.Errors:N0} 件、完全一致 {result.Groups.Count:N0} グループ。");
-            Log($"R2.16: サイズによる一次候補 {result.FileCount:N0} 件中、NTFS厳密検査 {result.DeepInspectedFiles:N0} 件、SHA-256試行 {result.HashAttemptedFiles:N0} 件。単独サイズは内容を読み込まずスキップ。");
+            Log(result.DiscoveryOnly
+                ? $"検索専用: サイズ一次調査 {result.FileCount:N0}件、再確認 {result.DeepInspectedFiles:N0}件、SHA-256 {result.HashAttemptedFiles:N0}件。NTFS ID/ACL/ADSは未検証、重複整理や削除の許可なし。"
+                : $"R2.16: サイズによる一次候補 {result.FileCount:N0} 件中、NTFS厳密検査 {result.DeepInspectedFiles:N0} 件、SHA-256試行 {result.HashAttemptedFiles:N0} 件。単独サイズは内容を読み込まずスキップ。");
             foreach (var item in result.SkipReasons.OrderByDescending(x => x.Value))
                 Log($"除外内訳: {item.Key} — {item.Value:N0}件");
             foreach (var item in result.ErrorReasons.OrderByDescending(x => x.Value))
@@ -259,14 +272,17 @@ public partial class MainWindow : Window
         _rows.Clear();
         if (_lastScan is null) return;
         bool allowTime = TimeDifferenceCheck.IsChecked == true;
-        foreach (var group in _lastScan.Groups.SelectMany(g =>
-            g.PartitionForSafeMerge(allowTime)))
+        var displayGroups = _lastScan.DiscoveryOnly
+            ? _lastScan.Groups
+            : _lastScan.Groups.SelectMany(g => g.PartitionForSafeMerge(allowTime));
+        foreach (var group in displayGroups)
         {
             _rows.Add(new GroupRow
             {
                 Group = group,
                 RepresentativeDisplay = Path.GetRelativePath(_lastScan.Root, group.Representative.Path),
-                Status = group.Files.Count < 2 ?
+                Status = _lastScan.DiscoveryOnly ? "検索のみ・変更不可" :
+                    group.Files.Count < 2 ?
                     "対象外: 完全一致でも同じ安全条件の相手がいません" :
                     group.BlockReason(allowTime) is string reason ?
                         "対象外: " + reason : "統合可能",
@@ -278,6 +294,20 @@ public partial class MainWindow : Window
         GroupCountText.Text = _lastScan.Groups.Count.ToString("N0");
         var safe = _rows.Where(x => x.Status == "統合可能").ToList();
         SafeCountText.Text = safe.Count.ToString("N0");
+        if (_lastScan.DiscoveryOnly)
+        {
+            long theoretical = _lastScan.Groups.Sum(g => g.Savings);
+            SavingsText.Text = GroupRow.HumanSize(theoretical);
+            SafeCountText.Text = "0（検索のみ）";
+            ReadOnlyDashboardText.Text =
+                $"【{_lastScan.VolumeFormat}・検索専用】完全一致 {_lastScan.Groups.Count:N0}組、" +
+                $"調査 {_lastScan.FileCount:N0}件／除外 {_lastScan.Skipped:N0}件／" +
+                $"読取エラー {_lastScan.Errors:N0}件。\\n" +
+                $"重複の余分な論理容量（推定）: {GroupRow.HumanSize(theoretical)}。" +
+                " NTFS固有のID・権限・ADSは未検証。整理/削除/統合/Undoには利用できません。\\n" +
+                "実際の空き容量回復：0 B。リンク・システム領域は検索対象外です。";
+            return;
+        }
         SavingsText.Text = GroupRow.HumanSize(safe.Sum(x => x.Group.Savings));
         ReadOnlyDashboardText.Text =
             $"【直近スキャンのみ】完全一致 {_lastScan.Groups.Count:N0}組・" +
@@ -381,7 +411,7 @@ public partial class MainWindow : Window
     // calls DedupeEngine.Run or any mutating Undo routine in shipped builds.
     private async void DedupePlan_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy || _lastScan is null) return;
+        if (_busy || _lastScan is null || _lastScan.DiscoveryOnly) return;
         var scanned = _lastScan;
         bool allowTime = TimeDifferenceCheck.IsChecked == true;
         _work = new CancellationTokenSource();
@@ -433,7 +463,7 @@ public partial class MainWindow : Window
 
     private async void SelectedMergeReview_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy || _lastScan is null || GroupsGrid.SelectedItems.Count == 0)
+        if (_busy || _lastScan is null || _lastScan.DiscoveryOnly || GroupsGrid.SelectedItems.Count == 0)
             return;
         ScanResult scan = _lastScan;
         string root = scan.Root;
@@ -680,7 +710,7 @@ public partial class MainWindow : Window
     // Does not create hardlinks or replace original files.
     private async void MediaReport_Click(object sender, RoutedEventArgs e)
     {
-        if (_busy || _lastScan == null) return;
+        if (_busy || _lastScan == null || _lastScan.DiscoveryOnly) return;
         var scan = _lastScan;
         bool allowTimestampDifference = TimeDifferenceCheck.IsChecked == true;
         _work = new CancellationTokenSource();
@@ -798,7 +828,8 @@ public partial class MainWindow : Window
             group.Files.Any(file => row.Group.Files.Any(selected =>
                 string.Equals(file.Path, selected.Path, StringComparison.OrdinalIgnoreCase))))
             ?? row.Group;
-        new DuplicateGroupDetailsWindow(complete, _lastScan!.Root) { Owner = this }.ShowDialog();
+        new DuplicateGroupDetailsWindow(complete,
+            _lastScan!.DiscoveryOnly ? null : _lastScan.Root) { Owner = this }.ShowDialog();
     }
 
     private async void PngPreview_Click(object sender, RoutedEventArgs e)

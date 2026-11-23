@@ -50,8 +50,10 @@ internal static class UiInteractionSmoke
             // Resolve real WPF named controls from the loaded XAML namescope.
             var mainTabs = Named<TabControl>(window, "MainTabs");
             var mediaOnly = Named<CheckBox>(window, "MediaOnlyCheck");
+            var discoveryOnly = Named<CheckBox>(window, "DiscoveryOnlyCheck");
             Require(mainTabs.Items.Count == 3 && mainTabs.SelectedIndex == 0 &&
                     mediaOnly.IsChecked == false &&
+                    discoveryOnly.IsChecked == false &&
                     ((TabItem)mainTabs.Items[0]).Header?.ToString() == "重複整理" &&
                     ((TabItem)mainTabs.Items[1]).Header?.ToString() == "画像圧縮" &&
                     ((TabItem)mainTabs.Items[2]).Header?.ToString() == "履歴・復元",
@@ -253,6 +255,30 @@ internal static class UiInteractionSmoke
                     File.ReadAllText(existingReport) == "Existing user memo: do not overwrite.",
                 "UI: real routed save/reload restores checked metadata only; no file mutations");
             reviewWindow.Close();
+
+            // The production WPF Search button must route explicitly selected
+            // NTFS read-only mode through the same exFAT/root discovery engine.
+            // No physical exFAT device is available in hosted Windows CI.
+            discoveryOnly.IsChecked = true;
+            pathBox.Text = allFileRoot;
+            RoutedClick(scanButton);
+            PumpUntil(() => scanButton.IsEnabled &&
+                progressText.Text == "スキャン完了", TimeSpan.FromSeconds(25));
+            Require(groupsGrid.Items.Count == 1 &&
+                    dashboardText.Text.Contains("検索専用", StringComparison.Ordinal) &&
+                    !dedupePlanButton.IsEnabled && !selectedMergeReviewButton.IsEnabled &&
+                    !Named<Button>(window, "MediaReportButton").IsEnabled &&
+                    !mergeButton.IsEnabled && !completedLedgerButton.IsEnabled &&
+                    OracleHash(textFile) == originalTextSha &&
+                    OracleHash(binaryFile) == originalBinSha,
+                "WPF: search-only scan detects exact duplicates without enabling NTFS actions");
+            groupsGrid.SelectedIndex = 0;
+            Require(!selectedMergeReviewButton.IsEnabled &&
+                    !mergeButton.IsEnabled,
+                "WPF: selecting discovery-only results cannot unlock cleanup or merge");
+            discoveryOnly.IsChecked = false;
+            Require(groupsGrid.Items.Count == 0,
+                "WPF: switching from search-only to NTFS strict mode invalidates old results");
 
             string originals = Path.Combine(testRoot, "synthetic-originals");
             Directory.CreateDirectory(originals);

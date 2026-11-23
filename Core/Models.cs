@@ -17,6 +17,8 @@ public sealed class FileSnapshot
     public required FileIdentity Identity { get; init; }
     public required byte[] SecurityDescriptor { get; init; }
     public string? Sha256 { get; set; }
+    // Search-only snapshots do not prove NTFS ID/ACL/ADS; never use for merge.
+    public bool SearchOnly { get; init; }
 }
 
 public sealed class DuplicateGroup
@@ -25,6 +27,7 @@ public sealed class DuplicateGroup
     public required List<FileSnapshot> Files { get; init; }
     public FileSnapshot Representative => Files[0];
     public long Savings => Representative.Length * (Files.Count - 1);
+    public bool SearchOnly => Files.Any(f => f.SearchOnly);
 
     /// <summary>
     /// B1: preserve a byte-exact scan group but partition its *hypothetical*
@@ -37,6 +40,7 @@ public sealed class DuplicateGroup
     /// </summary>
     public IReadOnlyList<DuplicateGroup> PartitionForSafeMerge(bool allowTimestampDifference)
     {
+        if (SearchOnly) return [this]; // No NTFS merging eligibility in discovery mode.
         var parts = new List<List<FileSnapshot>>();
         foreach (FileSnapshot file in Files)
         {
@@ -84,6 +88,7 @@ public sealed class DuplicateGroup
 
     public string? BlockReason(bool allowTimestampDifference)
     {
+        if (SearchOnly) return "検索専用（統合不可）";
         if (Files.Count < 2) return "重複なし";
         if (Files.Any(f => f.Identity.LinkCount != 1)) return "既存ハードリンクあり";
         var a = Representative;
@@ -104,6 +109,8 @@ public sealed class ScanResult
 {
     public required string Root { get; init; }
     public required bool MediaOnly { get; init; }
+    public bool DiscoveryOnly { get; init; }
+    public string VolumeFormat { get; init; } = "NTFS";
     public required List<DuplicateGroup> Groups { get; init; }
     public int FileCount { get; init; }
     public int Skipped { get; init; }

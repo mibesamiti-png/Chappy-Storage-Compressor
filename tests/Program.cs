@@ -2404,6 +2404,7 @@ static class Program
             R214PersonalBatchPreflightTests.Run(root, Check, ExpectThrows);
             R215ReconciledCapacityTests.Run(root, Check, ExpectThrows);
             R216MediaScannerBenchmarks.Run(root, Check);
+            ReadOnlyDiscoveryScanTests.Run(root, Check, ExpectThrows);
             R217SameSizeScannerBenchmarks.Run(root, Check);
             R217ValidImageBatchProfile.Run(root, Check);
             R217PinnedJpegtranProfile.Run(root, Check);

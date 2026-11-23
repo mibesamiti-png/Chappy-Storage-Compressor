@@ -49,6 +49,65 @@ public static class Safety
     }
 
     /// <summary>
+    /// Scan admission is not mutation admission. NTFS nested folder scans
+    /// keep their original strict Capture/ACL path. exFAT and drive roots
+    /// (or an explicit search-only choice) use an isolated zero-write scanner.
+    /// </summary>
+    public sealed record ScanTarget(string Root, string Format, bool DiscoveryOnly);
+
+    public static bool ExcludedFromDiscovery(string name) =>
+        ForbiddenNames.Contains(name) ||
+        name.Equals(StoreName, StringComparison.OrdinalIgnoreCase) ||
+        name.Equals(".chappy-cleanup-evidence", StringComparison.OrdinalIgnoreCase);
+
+    public static ScanTarget ResolveScanTarget(string input, bool forceDiscovery = false)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+            throw new InvalidOperationException("検索するフォルダまたはドライブを選択してください。");
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(input));
+        if (full.StartsWith(@"\\", StringComparison.Ordinal))
+            throw new InvalidOperationException("ネットワーク共有・UNCパスは対象外です。");
+        if (!Directory.Exists(full))
+            throw new DirectoryNotFoundException("フォルダが見つかりません: " + full);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full)!);
+        var drive = new DriveInfo(Path.GetPathRoot(full)!);
+        if (!drive.IsReady || drive.DriveType is not (DriveType.Fixed or DriveType.Removable))
+            throw new InvalidOperationException("利用可能なローカルドライブのみ検索できます。");
+        var format = drive.DriveFormat;
+        if (!format.Equals("NTFS", StringComparison.OrdinalIgnoreCase) &&
+            !format.Equals("exFAT", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("検索対象はNTFSまたはexFATです: " + format);
+
+        bool wholeDrive = full.Equals(root, StringComparison.OrdinalIgnoreCase);
+        if (!forceDiscovery && !wholeDrive &&
+            format.Equals("NTFS", StringComparison.OrdinalIgnoreCase))
+        {
+            // Do not change the original strict NTFS mutation safety boundary.
+            return new ScanTarget(ValidateRoot(full), format, false);
+        }
+
+        // A dedicated read-only root path admits a drive root; it never
+        // loosens ValidateRoot, which all existing mutation code still uses.
+        var ancestor = full;
+        while (!ancestor.Equals(root, StringComparison.OrdinalIgnoreCase))
+        {
+            if (ExcludedFromDiscovery(Path.GetFileName(ancestor)))
+                throw new InvalidOperationException("管理用・システム領域は検索できません。");
+            var attributes = File.GetAttributes(ancestor);
+            if ((attributes & (FileAttributes.ReparsePoint |
+                FileAttributes.System | FileAttributes.Offline)) != 0)
+                throw new InvalidOperationException("リンク・システムフォルダを経由できません。");
+            string? parent = Path.GetDirectoryName(ancestor);
+            if (parent == null || parent == ancestor)
+                throw new InvalidOperationException("検索先の親階層を確認できません。");
+            ancestor = Path.TrimEndingDirectorySeparator(parent);
+        }
+        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("ドライブルートのリンクを経由できません。");
+        return new ScanTarget(full, format, true);
+    }
+
+    /// <summary>
     /// B2 shared admission boundary: never allow Core mutation to follow a
     /// supplied snapshot outside the selected NTFS root or through an
     /// unverified parent junction/reparse point. No writes and no symbolic

@@ -175,7 +175,9 @@ public partial class MainWindow : Window
         if (!IsInitialized || _busy) return;
         if (_lastScan != null &&
             (_lastScan.MediaOnly != (MediaOnlyCheck.IsChecked == true) ||
-             (DiscoveryOnlyCheck.IsChecked == true && !_lastScan.DiscoveryOnly)))
+             Safety.ResolveScanTarget(_lastScan.Root,
+                 forceDiscovery: DiscoveryOnlyCheck.IsChecked == true).DiscoveryOnly
+                != _lastScan.DiscoveryOnly))
         {
             ClearScan();
         }

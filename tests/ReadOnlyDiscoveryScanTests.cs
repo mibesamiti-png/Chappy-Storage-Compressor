@@ -43,9 +43,11 @@ internal static class ReadOnlyDiscoveryScanTests
         File.SetAttributes(readonlyCopy, FileAttributes.ReadOnly);
         var nearMatch = Path.Combine(copies, "near-match.bin");
         var nearOther = Path.Combine(keep, "near-other.bin");
-        File.WriteAllBytes(nearMatch, data);
-        data[^1] ^= 0x1F;
-        File.WriteAllBytes(nearOther, data);
+        var distinct = new byte[data.Length];
+        new Random(77303).NextBytes(distinct);
+        File.WriteAllBytes(nearMatch, distinct);
+        distinct[^1] ^= 0x1F;
+        File.WriteAllBytes(nearOther, distinct);
         File.SetAttributes(nearMatch, FileAttributes.Hidden);
         var baseline = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .ToDictionary(x => x, Hash, StringComparer.OrdinalIgnoreCase);

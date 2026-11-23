@@ -74,12 +74,18 @@
               <TextBlock Text="検索フォルダ" Foreground="#BDBDBD" FontSize="12" Margin="0,0,0,8"/>
               <DockPanel LastChildFill="True">
                 <Button x:Name="BrowseButton" DockPanel.Dock="Right" Content="📁 選択"
-                        Click="Browse_Click" ToolTip="重複を探したいフォルダを選びます。"/>
+                        Click="Browse_Click" ToolTip="NTFS・exFATのフォルダ、またはドライブ直下（例 E:\）を選びます。"/>
                 <TextBox x:Name="PathBox" Height="39" Background="#252525" Foreground="#F5F5F5"
                          BorderBrush="#3B3B3B" Padding="10,6" FontSize="14"
                          VerticalContentAlignment="Center" TextChanged="PathChanged"
                          ToolTip="選択したフォルダの下にある通常ファイルを検索。削除はしません。"/>
               </DockPanel>
+              <CheckBox x:Name="DiscoveryOnlyCheck" Margin="0,10,0,2"
+                        Content="検索だけ（NTFSフォルダでも整理・統合の候補判定をしない）"
+                        Checked="OptionsChanged" Unchecked="OptionsChanged"
+                        ToolTip="exFATとドライブ全体では自動的に検索専用になります。元ファイルは変更しません。"/>
+              <TextBlock Text="exFAT・ドライブ全体（E:\ など）は自動的に検索専用。管理領域とリンク先を除外します。"
+                         FontSize="11" Foreground="#BDBDBD" TextWrapping="Wrap" Margin="0,0,0,1"/>
               <Button x:Name="ScanButton" Content="⌕  重複ファイルを検索"
                       Click="Scan_Click" Background="#303030" BorderBrush="#404040"
                       Height="44" Margin="0,12,0,0" FontSize="14"

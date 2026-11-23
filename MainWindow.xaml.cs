@@ -304,9 +304,9 @@ public partial class MainWindow : Window
             ReadOnlyDashboardText.Text =
                 $"【{_lastScan.VolumeFormat}・検索専用】完全一致 {_lastScan.Groups.Count:N0}組、" +
                 $"調査 {_lastScan.FileCount:N0}件／除外 {_lastScan.Skipped:N0}件／" +
-                $"読取エラー {_lastScan.Errors:N0}件。\\n" +
+                $"読取エラー {_lastScan.Errors:N0}件。\n" +
                 $"重複の余分な論理容量（推定）: {GroupRow.HumanSize(theoretical)}。" +
-                " NTFS固有のID・権限・ADSは未検証。整理/削除/統合/Undoには利用できません。\\n" +
+                " NTFS固有のID・権限・ADSは未検証。整理/削除/統合/Undoには利用できません。\n" +
                 "実際の空き容量回復：0 B。リンク・システム領域は検索対象外です。";
             return;
         }

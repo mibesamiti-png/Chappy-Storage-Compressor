@@ -19,6 +19,12 @@ public static class ReadOnlyDiscoveryScanner
               FileAttributes.System | FileAttributes.Offline |
               FileAttributes.Device | FileAttributes.Encrypted)) == 0;
 
+    // Directory attributes always include FileAttributes.Directory.
+    // Do NOT pass directory metadata through Allowed(file), which rejects it.
+    private static bool AllowedDirectory(FileAttributes a) =>
+        (a & (FileAttributes.ReparsePoint | FileAttributes.System |
+              FileAttributes.Offline | FileAttributes.Device)) == 0;
+
     private static bool Same(Entry entry)
     {
         var info = new FileInfo(entry.Path);
@@ -73,7 +79,7 @@ public static class ReadOnlyDiscoveryScanner
                     { Skip("システム・管理フォルダ"); continue; }
                     try
                     {
-                        if (!Allowed(File.GetAttributes(child)))
+                        if (!AllowedDirectory(File.GetAttributes(child)))
                         { Skip("リンク・システムフォルダ"); continue; }
                         folders.Push(child);
                     }
